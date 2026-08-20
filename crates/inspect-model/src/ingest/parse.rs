@@ -516,6 +516,43 @@ entity Book {
     }
 
     #[test]
+    fn an_external_entitys_fields_get_their_notes_too() {
+        // `external entity Staff { … }` is its own declaration kind, and it is
+        // governed by a spec somebody else owns — which makes the note above a
+        // field one of the few things this spec says about it.
+        let source = "\
+external entity Staff {
+    -- the roster this is keyed against
+    payroll_id: String
+}
+";
+        let at = source.find("payroll_id:").expect("in the fixture");
+        let items = json!([
+            {"kind": {"Assignment": {"name": named("payroll_id")}},
+             "span": {"start": at, "end": at}},
+        ]);
+        let mut into = Ingestion::empty("test");
+        into.graph.nodes.push(Node::new("lending", NodeKind::Entity, "Staff").with(
+            NodeDetail::Entity(crate::graph::EntityDetail {
+                kind: EntityKind::External,
+                fields: vec![EntityField::new("payroll_id", "String")],
+                transitions: Vec::new(),
+                parent: None,
+            }),
+        ));
+        ingest(
+            &document(json!([{"Block": block_at("ExternalEntity", "Staff", source, items)}]), 3),
+            "lending",
+            "lending.allium",
+            source,
+            &mut into,
+        );
+
+        let detail = into.graph.nodes[0].detail.as_entity().expect("an entity");
+        assert_eq!(detail.fields[0].note, ["the roster this is keyed against"]);
+    }
+
+    #[test]
     fn a_module_records_its_name_path_and_language_version() {
         let graph = ingested(json!([]));
         assert_eq!(graph.modules.len(), 1);
