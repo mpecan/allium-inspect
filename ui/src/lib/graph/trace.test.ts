@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Edge } from "../api/Edge";
 import type { EdgeKind } from "../api/EdgeKind";
-import { isMeaningful, journey, neighbourhood, origins, walk } from "./trace";
+import { isMeaningful, journey, narrow, neighbourhood, origins, walk } from "./trace";
 
 function edge(from: string, to: string, kind: EdgeKind = "triggers"): Edge {
   return { from, to, kind, label: `${from}->${to}`, span: null };
@@ -162,5 +162,54 @@ describe("isMeaningful", () => {
 
   it("accepts a trace that actually goes somewhere", () => {
     expect(isMeaningful(journey(chain, "surface:MemberShelf"))).toBe(true);
+  });
+});
+
+describe("narrow", () => {
+  const nodes = [
+    { id: "surface:MemberShelf" },
+    { id: "trigger:MemberBorrows" },
+    { id: "rule:BorrowCopy" },
+    { id: "entity:Loan" },
+    { id: "trigger:CopyBorrowed" },
+    { id: "rule:NotifyDesk" },
+    { id: "entity:Member" },
+    { id: "rule:Unrelated" },
+  ];
+
+  it("leaves the view alone when nothing is being traced", () => {
+    // Reflow is opt-in, and off it must be exactly as if it were not there.
+    const same = narrow(nodes, chain, null);
+    expect(same.nodes).toBe(nodes);
+    expect(same.edges).toBe(chain);
+  });
+
+  it("keeps only what the trace reached", () => {
+    const trace = journey(chain, "surface:MemberShelf");
+    const kept = narrow(nodes, chain, trace).nodes.map((node) => node.id);
+    expect(kept).not.toContain("rule:Unrelated");
+    expect(kept).toContain("rule:NotifyDesk");
+    expect(kept).toHaveLength(trace.nodes.size);
+  });
+
+  it("keeps every edge between the nodes it kept, not only the ones walked", () => {
+    // `Loan -field-> Member` is not causal, so the walk did not follow it. Both
+    // ends are on the chain, though, and how the traced constructs relate is
+    // part of the answer — dropping it would draw a chain simpler than the spec.
+    const trace = neighbourhood(chain, "entity:Loan");
+    const { edges } = narrow(nodes, chain, trace);
+    expect(edges.map((edge) => edge.label)).toContain("entity:Loan->entity:Member");
+  });
+
+  it("drops an edge with only one end on the chain", () => {
+    // An arrow into empty space is worse than no arrow, and reflow creates
+    // exactly that opportunity by removing the other end.
+    const trace = journey(chain, "trigger:CopyBorrowed");
+    const { nodes: kept, edges } = narrow(nodes, chain, trace);
+    const present = new Set(kept.map((node) => node.id));
+    expect(edges.length).toBeGreaterThan(0);
+    for (const edge of edges) {
+      expect(present.has(edge.from) && present.has(edge.to)).toBe(true);
+    }
   });
 });

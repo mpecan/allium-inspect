@@ -4,11 +4,12 @@
   import {
     isMeaningful,
     journey,
+    narrow,
     neighbourhood,
     origins,
     type Trace,
   } from "./lib/graph/trace";
-  import { ownerOf, project } from "./lib/graph/views";
+  import { inView, ownerOf, project } from "./lib/graph/views";
   import Inspector from "./lib/panels/Inspector.svelte";
   import SourceStrip from "./lib/panels/SourceStrip.svelte";
   import Rail from "./lib/Rail.svelte";
@@ -34,6 +35,11 @@
   let hidden = $state.raw<Set<string>>(new Set());
   let traceMode = $state<"off" | "forward" | "backward" | "near">("off");
   let sourceOpen = $state(false);
+  // Off by default. Re-laying out on every click would move the picture out
+  // from under a reader who was only looking something up.
+  let reflow = $state(false);
+  let reveal = $state.raw<{ id: string; nth: number } | null>(null);
+  let revealed = 0;
   let sources = $state.raw<Map<string, ModuleSource>>(new Map());
 
   $effect(() => {
@@ -90,6 +96,12 @@
     selectedId !== null && traceMode !== "off" && trace === null,
   );
 
+  /**
+   * What the canvas draws: the whole view, or — with reflow on — only what the
+   * trace reached, laid out again over that.
+   */
+  const drawn = $derived(narrow(visibleNodes, visibleEdges, reflow ? trace : null));
+
   const selectedModule = $derived(
     selected ? modules.find((module) => module.name === selected.module) : undefined,
   );
@@ -137,6 +149,39 @@
     }
   }
 
+  /** The views a graph node could be drawn in, in the order the rail lists them. */
+  const VIEWS: ViewKind[] = ["domain", "flow", "lifecycle", "journey"];
+
+  /**
+   * Show `id`, wherever it is.
+   *
+   * A search result can name a construct in a hidden module, or one this view
+   * does not draw, or one laid out well off the screen. Selecting it and
+   * leaving all three in the way would look like nothing happened, so each is
+   * cleared in turn before the canvas is asked to move to it.
+   */
+  function find(id: string) {
+    const node = nodes.find((candidate) => candidate.id === id);
+    if (!node) {
+      return;
+    }
+    if (hidden.has(node.module)) {
+      const next = new Set(hidden);
+      next.delete(node.module);
+      hidden = next;
+    }
+    if (mode === "simulate" || !inView(node, view)) {
+      const home = VIEWS.find((candidate) => inView(node, candidate));
+      if (home) {
+        view = home;
+        mode = home;
+      }
+    }
+    select(id);
+    revealed += 1;
+    reveal = { id, nth: revealed };
+  }
+
   /** Resolve a bare construct name from a finding to a node id. */
   function selectByName(name: string) {
     const match = nodes.find((node) => node.name === name);
@@ -164,6 +209,10 @@
     onmodule={toggleModule}
     ontrace={(mode) => (traceMode = mode)}
     {traceIsEmpty}
+    {nodes}
+    onfind={find}
+    {reflow}
+    onreflow={() => (reflow = !reflow)}
   />
 
   {#if mode === "simulate"}
@@ -185,10 +234,11 @@
     {:else}
       <Canvas
         {view}
-        nodes={visibleNodes}
-        edges={visibleEdges}
+        nodes={drawn.nodes}
+        edges={drawn.edges}
         {severities}
         selected={selectedId}
+        {reveal}
         {trace}
         onselect={select}
       />

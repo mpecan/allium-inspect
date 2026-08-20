@@ -40,6 +40,17 @@ Two things follow from reading the set as a set:
 | **Journey** | what follows from an action, traced forward or backward |
 | **Simulate** | fire a trigger against a world and watch |
 
+`/` opens search, which matches a construct's name, its kind or the module it
+is in — and opening a result clears whatever was in the way, turning its module
+back on and switching to a view that draws it.
+
+Tracing dims what the chain did not reach. **Reflow**, which is off until asked
+for, instead draws only what it did and lays that out again: following
+`MeshExchange` forward goes from twelve lit boxes among three hundred to a
+thirty-seven node chain that reads left to right. It is opt-in because it moves
+the picture, and a reader who was only looking something up did not ask for the
+picture to move.
+
 Selecting anything shows its source, anchored to the byte span the parser
 reported. The spec text gets permanent space along the bottom rather than a
 tooltip: in a spec explorer the text is the artifact and the graph is one way of

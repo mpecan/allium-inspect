@@ -6,8 +6,10 @@
   // here, and a five-word subtitle costs less than the click it saves.
 
   import type { Module } from "./api/Module";
+  import type { Node } from "./api/Node";
   import type { Mode, ViewKind } from "./client";
   import { ANSWERS } from "./graph/views";
+  import Search from "./Search.svelte";
 
   type TraceMode = "off" | "forward" | "backward" | "near";
 
@@ -22,9 +24,15 @@
     traceIsEmpty: boolean;
     findings: number;
     version: string;
+    /** Every construct in the spec set, for search — not only the drawn ones. */
+    nodes: Node[];
+    /** Whether a trace re-lays the canvas out over what it reached. */
+    reflow: boolean;
     onmode: (mode: Mode) => void;
     onmodule: (name: string) => void;
     ontrace: (mode: TraceMode) => void;
+    onfind: (id: string) => void;
+    onreflow: () => void;
   }
 
   const {
@@ -36,9 +44,13 @@
     traceIsEmpty,
     findings,
     version,
+    nodes,
+    reflow,
     onmode,
     onmodule,
     ontrace,
+    onfind,
+    onreflow,
   }: Props = $props();
 
   const VIEWS: { kind: ViewKind; name: string }[] = [
@@ -61,6 +73,8 @@
     <h1>allium<span>inspect</span></h1>
     {#if version}<p class="address">{version}</p>{/if}
   </header>
+
+  <Search {nodes} onpick={onfind} />
 
   <section>
     <h2>View</h2>
@@ -112,6 +126,16 @@
         </li>
       {/each}
     </ul>
+    <label class="reflow" class:disabled={!hasSelection || traceMode === "off"}>
+      <input
+        type="checkbox"
+        checked={reflow}
+        disabled={!hasSelection || traceMode === "off"}
+        onchange={onreflow}
+      />
+      <span>Reflow</span>
+      <span class="reflow-hint">draw only what the trace reached</span>
+    </label>
     {#if traceIsEmpty}
       <p class="prose caveat empty-trace">
         Nothing follows from this one in this view. Try another direction, or
@@ -270,6 +294,26 @@
 
   .empty-trace {
     color: var(--boundary);
+  }
+
+  /* Sits with the trace buttons because it changes what they do, and is off
+   * until asked because re-laying the canvas out moves the picture out from
+   * under a reader who was only looking something up. */
+  .reflow {
+    display: flex;
+    align-items: baseline;
+    gap: var(--gap-2);
+    margin-top: var(--gap-2);
+    font-size: var(--t-small);
+    cursor: pointer;
+  }
+  .reflow.disabled {
+    cursor: default;
+    color: var(--ink-faint);
+  }
+  .reflow-hint {
+    font-size: var(--t-micro);
+    color: var(--ink-faint);
   }
 
   .caveat {

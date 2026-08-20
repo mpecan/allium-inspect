@@ -118,3 +118,31 @@ export function neighbourhood(edges: Edge[], node: string): Trace {
 export function isMeaningful(trace: Trace): boolean {
   return trace.nodes.size > 1;
 }
+
+/**
+ * A view narrowed to what `trace` reached.
+ *
+ * Dimming answers "which of these three hundred?" by leaving all three hundred
+ * on the canvas. This answers it by removing the rest, so the layout can run
+ * again over what is left and the chain reads as a chain. It is opt-in because
+ * it moves the picture, and a reader who was only looking something up did not
+ * ask for the picture to move.
+ *
+ * Every edge *between* the reached nodes is kept, not only the ones the walk
+ * followed. How the traced constructs relate to each other is part of the
+ * answer, and dropping those edges would draw a chain simpler than the spec's.
+ */
+export function narrow<N extends { id: string }>(
+  nodes: N[],
+  edges: Edge[],
+  trace: Trace | null,
+): { nodes: N[]; edges: Edge[] } {
+  if (trace === null) {
+    return { nodes, edges };
+  }
+  const reached = trace.nodes;
+  return {
+    nodes: nodes.filter((node) => reached.has(node.id)),
+    edges: edges.filter((edge) => reached.has(edge.from) && reached.has(edge.to)),
+  };
+}

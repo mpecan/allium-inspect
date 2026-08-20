@@ -36,11 +36,13 @@
     edges: Edge[];
     severities: Map<string, Severity>;
     selected: string | null;
+    /** A node to move the viewport to, and a count so asking twice moves twice. */
+    reveal: { id: string; nth: number } | null;
     trace: Trace | null;
     onselect: (id: string | null) => void;
   }
 
-  const { view, nodes, edges, severities, selected, trace, onselect }: Props =
+  const { view, nodes, edges, severities, selected, reveal, trace, onselect }: Props =
     $props();
 
   const elk = new ELK();
@@ -119,7 +121,8 @@
         style: `stroke: ${traced ? "var(--edge-active)" : "var(--edge)"}; stroke-width: ${
           traced ? 1.8 : 1
         }; opacity: ${lit ? 0.55 : 0.12};`,
-        labelStyle: "fill: var(--ink); font-size: 9px;",
+        // The label is an HTML element, so the emphasis is `color`.
+        labelStyle: traced ? "color: var(--ink);" : undefined,
       } satisfies FlowEdge;
     });
   });
@@ -158,7 +161,7 @@
         bgColor="var(--ground-canvas)"
         patternColor="var(--ground-canvas-grid)"
       />
-      <Settle ids={flowNodes.map((node) => node.id)} />
+      <Settle ids={flowNodes.map((node) => node.id)} focus={reveal} />
       <Controls showLock={false} />
       <MiniMap
         nodeColor={minimapColour}
@@ -222,15 +225,21 @@
 
   /* Edge labels are drawn only on a traced path, so they can afford to be
    * legible rather than apologetic. The plate behind them is styled here
-   * because the edge type has no prop for it: left alone it ships as opaque
-   * white, which on a dark canvas reads as a hole rather than a label. */
-  .canvas :global(.svelte-flow__edge-text) {
+   * because the edge type has no prop for it: left alone it ships as an opaque
+   * white block, which on a dark canvas is a hole rather than a label — and
+   * with the label's own colour on top of it, an unreadable one.
+   *
+   * These are HTML rather than SVG, so it is `background` and `color`, not
+   * `fill`. */
+  .canvas :global(.svelte-flow__edge-label) {
+    padding: 0 3px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
     font-family: var(--font-mono);
-    fill: var(--ink);
-  }
-  .canvas :global(.svelte-flow__edge-textbg) {
-    fill: var(--ground-canvas);
-    fill-opacity: 0.9;
+    font-size: 9px;
+    line-height: 1.5;
+    color: var(--ink-dim);
+    background: var(--ground-canvas);
   }
 
   .canvas :global(.svelte-flow__attribution) {

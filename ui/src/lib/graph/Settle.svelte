@@ -17,6 +17,11 @@
   // off, would otherwise leave the reader looking at the empty space where the
   // old graph used to be.
   //
+  // Framing one node is the same job, which is why it is here rather than in a
+  // component of its own: a search result can be anywhere in a three-hundred
+  // node layout, and two components each calling `fitView` would take it in
+  // turns to undo each other.
+  //
   // Must be rendered inside <SvelteFlow>, which is where the store lives.
 
   import { untrack } from "svelte";
@@ -26,9 +31,27 @@
   interface Props {
     /** The ids currently drawn. */
     ids: string[];
+    /**
+     * One node to frame instead of all of them, and a count so that asking for
+     * the same node twice frames it twice.
+     */
+    focus: { id: string; nth: number } | null;
   }
 
-  const { ids }: Props = $props();
+  const { ids, focus }: Props = $props();
+
+  /**
+   * Closest the canvas will zoom on its own.
+   *
+   * A reflowed trace can be two constructs, and fitting two boxes to a
+   * 1500-pixel canvas draws them at four times life size — which reads as a
+   * mistake rather than as a small answer. Zooming in past this stays the
+   * reader's decision.
+   */
+  const CLOSE = 1.1;
+
+  /** The last focus honoured, so a later reshape frames everything again. */
+  let framed = 0;
 
   const store = useStore();
   const update = useUpdateNodeInternals();
@@ -44,6 +67,9 @@
 
   $effect(() => {
     void drawn;
+    // Tracked, so asking to frame a node that is already drawn is enough on its
+    // own to move the viewport.
+    const wanted = focus;
     const targets = untrack(() => ids);
     if (targets.length === 0) {
       return;
@@ -60,8 +86,25 @@
     const settle = (left: number) => {
       frame = requestAnimationFrame(() => {
         untrack(() => {
-          if (store.nodesInitialized) {
-            void store.fitView();
+          // Measured *and* showing what was asked for. `nodesInitialized` alone
+          // still reads true for the set the canvas is about to replace, and
+          // framing against that set frames the wrong thing once and never
+          // retries.
+          const showing =
+            store.nodesInitialized &&
+            store.nodeLookup.size === targets.length &&
+            (wanted === null || store.nodeLookup.has(wanted.id));
+          if (showing) {
+            if (wanted !== null && wanted.nth > framed) {
+              framed = wanted.nth;
+              void store.fitView({
+                nodes: [{ id: wanted.id }],
+                maxZoom: CLOSE,
+                duration: 220,
+              });
+            } else {
+              void store.fitView({ maxZoom: CLOSE });
+            }
             return;
           }
           update(targets);
