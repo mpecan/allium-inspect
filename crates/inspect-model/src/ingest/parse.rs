@@ -42,7 +42,7 @@ pub fn ingest(document: &Value, module: &str, path: &str, source: &str, into: &m
             }
             "Variant" => {
                 ingest_variant(inner, module, &mut into.graph);
-                attach_declaration(inner, module, NodeKind::Entity, source, &mut into.graph);
+                attach_declaration(inner, module, NodeKind::Variant, source, &mut into.graph);
             }
             "Use" => {
                 if let Some(import) = read_import(inner) {
@@ -314,11 +314,205 @@ mod tests {
         ingested_with(declarations).0
     }
 
+    /// Ingest against real source, so the prose pass has something to slice.
+    fn ingested_over(declarations: Value, source: &str) -> SpecGraph {
+        let mut into = Ingestion::empty("test");
+        ingest(&document(declarations, 3), "lending", "lending.allium", source, &mut into);
+        into.graph
+    }
+
+    /// A block of `kind` named `name`, spanning `source` from its own line.
+    ///
+    /// The CLI reports a declaration's span from the keyword, which is the
+    /// start of the line it is on — so that is where the fixture starts too.
+    fn block_at(kind: &str, name: &str, source: &str, items: Value) -> Value {
+        // The last occurrence: the note above it mentions the name too, and
+        // the first one is in there.
+        let at = source.rfind(name).unwrap_or_default();
+        let start = source[..at].rfind('\n').map_or(0, |newline| newline + 1);
+        json!({
+            "kind": kind,
+            "name": {"span": {"start": 0, "end": 0}, "name": name},
+            "span": {"start": start, "end": source.len()},
+            "items": items,
+        })
+    }
+
+    fn prose_of(graph: &SpecGraph, name: &str) -> crate::graph::Prose {
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.name == name)
+            .map(|node| node.prose.clone())
+            .unwrap_or_default()
+    }
+
     /// Both halves, for the tests that care what the simulator was given.
     fn ingested_with(declarations: Value) -> (SpecGraph, crate::program::Program) {
         let mut into = Ingestion::empty("test");
         ingest(&document(declarations, 3), "lending", "lending.allium", "", &mut into);
         (into.graph, into.program)
+    }
+
+    /// The kinds the model pass owns already exist by the time parse runs.
+    fn seeded(module: &str, kind: NodeKind, name: &str) -> Node {
+        Node::new(module, kind, name)
+    }
+
+    #[test]
+    fn every_kind_the_parse_pass_declares_gets_the_note_above_it() {
+        // One place for all of them, because a paragraph above a declaration
+        // means the same thing whatever is declared — and each kind is a match
+        // arm, which is a place to forget one.
+        for (kind, name, keyword) in [
+            ("Rule", "BorrowCopy", "rule"),
+            ("Surface", "Desk", "surface"),
+            ("Actor", "Reader", "actor"),
+            ("Value", "Money", "value"),
+        ] {
+            let source = format!("-- why {name} exists\n{keyword} {name} {{\n}}\n");
+            let graph = ingested_over(
+                json!([{"Block": block_at(kind, name, &source, json!([]))}]),
+                &source,
+            );
+            assert_eq!(
+                prose_of(&graph, name).note,
+                [format!("why {name} exists")],
+                "{kind} lost its note"
+            );
+        }
+    }
+
+    #[test]
+    fn every_kind_the_model_pass_declares_gets_one_too() {
+        // These nodes exist before this pass runs, so the note has to find one
+        // rather than make one.
+        for (kind, name, keyword, node_kind) in [
+            ("Entity", "Book", "entity", NodeKind::Entity),
+            ("ExternalEntity", "Staff", "external entity", NodeKind::Entity),
+            ("Enum", "Medium", "enum", NodeKind::Enum),
+        ] {
+            let source = format!("-- why {name} exists\n{keyword} {name} {{\n}}\n");
+            let mut into = Ingestion::empty("test");
+            into.graph.nodes.push(seeded("lending", node_kind, name));
+            ingest(
+                &document(json!([{"Block": block_at(kind, name, &source, json!([]))}]), 3),
+                "lending",
+                "lending.allium",
+                &source,
+                &mut into,
+            );
+            assert_eq!(
+                prose_of(&into.graph, name).note,
+                [format!("why {name} exists")],
+                "{kind} lost its note"
+            );
+        }
+    }
+
+    #[test]
+    fn a_config_block_is_found_under_the_name_the_graph_calls_it() {
+        // It declares no name of its own, so the node is called after the
+        // keyword and looking it up by a declared name would find nothing.
+        let source = "-- what the numbers mean\nconfig {\n}\n";
+        let mut into = Ingestion::empty("test");
+        into.graph.nodes.push(seeded("lending", NodeKind::Config, "config"));
+        let block = json!({
+            "kind": "Config",
+            "span": {"start": source.find("config").expect("in the fixture"), "end": source.len()},
+            "items": [],
+        });
+        ingest(
+            &document(json!([{"Block": block}]), 3),
+            "lending",
+            "lending.allium",
+            source,
+            &mut into,
+        );
+        assert_eq!(prose_of(&into.graph, "config").note, ["what the numbers mean"]);
+    }
+
+    #[test]
+    fn an_invariant_and_a_variant_get_their_notes_too() {
+        // Neither is a `Block`, so neither goes through the same door — and a
+        // variant is its own node kind, which is a second thing to get wrong.
+        let source = "-- why it must hold\ninvariant NoOverdue {\n}\n";
+        let graph = ingested_over(
+            json!([{"Invariant": {
+                "name": named("NoOverdue"),
+                "span": {"start": source.find("invariant").expect("in the fixture"), "end": source.len()},
+            }}]),
+            source,
+        );
+        assert_eq!(prose_of(&graph, "NoOverdue").note, ["why it must hold"]);
+
+        let source = "-- the paper kind\nvariant Paperback of Book {\n}\n";
+        let graph = ingested_over(
+            json!([{"Variant": {
+                "name": named("Paperback"),
+                "parent": named("Book"),
+                "items": [],
+                "span": {"start": source.find("variant").expect("in the fixture"), "end": source.len()},
+            }}]),
+            source,
+        );
+        assert_eq!(prose_of(&graph, "Paperback").note, ["the paper kind"]);
+    }
+
+    #[test]
+    fn a_declaration_kind_that_declares_no_construct_is_passed_over() {
+        // An `OpenQuestion` is prose about what is deliberately undecided. It
+        // has no node, so there is nothing to attach a note to.
+        let source = "-- pondering\nopen question WhoPays {\n}\n";
+        let graph = ingested_over(
+            json!([{"Block": block_at("OpenQuestion", "WhoPays", source, json!([]))}]),
+            source,
+        );
+        assert!(graph.nodes.iter().all(|node| node.prose.is_empty()));
+    }
+
+    #[test]
+    fn a_field_gets_the_note_written_above_it_and_no_other() {
+        // Matched by name, because the model pass built the field list from a
+        // different document in an order of its own.
+        let source = "\
+entity Book {
+    title: String
+
+    -- why there is no `lost`
+    status: on_shelf | on_loan
+}
+";
+        let at = |needle: &str| source.find(needle).expect("in the fixture");
+        let items = json!([
+            {"kind": {"Assignment": {"name": named("title")}},
+             "span": {"start": at("title:"), "end": at("title:")}},
+            {"kind": {"Assignment": {"name": named("status")}},
+             "span": {"start": at("status:"), "end": at("status:")}},
+        ]);
+        let mut into = Ingestion::empty("test");
+        into.graph.nodes.push(Node::new("lending", NodeKind::Entity, "Book").with(
+            NodeDetail::Entity(crate::graph::EntityDetail {
+                kind: EntityKind::Internal,
+                fields: vec![EntityField::new("title", "String"), EntityField::new("status", "")],
+                transitions: Vec::new(),
+                parent: None,
+            }),
+        ));
+        ingest(
+            &document(json!([{"Block": block_at("Entity", "Book", source, items)}]), 3),
+            "lending",
+            "lending.allium",
+            source,
+            &mut into,
+        );
+
+        let detail = into.graph.nodes[0].detail.as_entity().expect("an entity");
+        let note = |name: &str| {
+            detail.fields.iter().find(|field| field.name == name).expect("the field").note.clone()
+        };
+        assert_eq!(note("status"), ["why there is no `lost`"]);
+        assert!(note("title").is_empty(), "the first field has nothing above it");
     }
 
     #[test]

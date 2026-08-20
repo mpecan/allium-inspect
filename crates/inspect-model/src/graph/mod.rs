@@ -471,6 +471,16 @@ impl SpecGraph {
 mod tests {
     use super::*;
 
+    #[test]
+    fn prose_is_empty_only_when_both_halves_are() {
+        // Either one alone is worth showing, and the panel asks this before
+        // deciding whether to draw a block at all.
+        assert!(Prose::default().is_empty());
+        assert!(!Prose { note: vec!["a".to_owned()], guidance: Vec::new() }.is_empty());
+        assert!(!Prose { note: Vec::new(), guidance: vec!["b".to_owned()] }.is_empty());
+        assert!(!Prose { note: vec!["a".to_owned()], guidance: vec!["b".to_owned()] }.is_empty());
+    }
+
     fn graph() -> SpecGraph {
         let mut graph = SpecGraph::new("allium 3.5.3");
         graph.nodes.push(Node::new("catalogue", NodeKind::Entity, "Book"));
