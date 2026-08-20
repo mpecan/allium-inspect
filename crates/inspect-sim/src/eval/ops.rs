@@ -77,9 +77,9 @@ pub fn compare(inner: &Json, env: &Env<'_>) -> Evaluation {
             None => {
                 unresolved.push(Unresolved {
                     reason: format!(
-                        "a {} cannot be ordered against a {}",
-                        left.value.kind(),
-                        right.value.kind()
+                        "{} cannot be ordered against {}",
+                        left.value.described(),
+                        right.value.described()
                     ),
                     expression: span_of(inner)
                         .and_then(|span| span.slice(env.source))
@@ -163,9 +163,9 @@ pub fn arithmetic(inner: &Json, env: &Env<'_>) -> Evaluation {
     if value.is_unknown() && !left.value.is_unknown() && !right.value.is_unknown() {
         unresolved.push(Unresolved {
             reason: format!(
-                "`{operator}` is not defined between a {} and a {}",
-                left.value.kind(),
-                right.value.kind()
+                "`{operator}` is not defined between {} and {}",
+                left.value.described(),
+                right.value.described()
             ),
             expression: span_of(inner).and_then(|span| span.slice(env.source)).map(str::to_owned),
             span: span_of(inner),

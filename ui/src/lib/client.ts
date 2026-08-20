@@ -6,12 +6,16 @@
 // which URL carries which one, and what to do when a request fails.
 
 import type { Diagnostic } from "./api/Diagnostic";
+import type { Event } from "./api/Event";
+import type { StepOutcome } from "./api/StepOutcome";
+import type { World } from "./api/World";
+import type { Setup } from "./sim/setup";
 import type { Finding } from "./api/Finding";
 import type { NodeId } from "./api/NodeId";
 import type { Obligation } from "./api/Obligation";
 import type { SpecGraph } from "./api/SpecGraph";
 
-export type { Diagnostic, Finding, NodeId, Obligation, SpecGraph };
+export type { Diagnostic, Event, Finding, NodeId, Obligation, SpecGraph, StepOutcome, World };
 
 /** A request that did not produce the document it was supposed to. */
 export class ApiError extends Error {
@@ -32,8 +36,13 @@ export interface ModuleSource {
   text: string;
 }
 
-/** Which projection of the graph to draw. */
+/** Which projection of the graph to draw.
+ *
+ * `simulate` is not a projection — it replaces the canvas rather than filtering
+ * it — but it is a mode the rail switches between, so it lives in the same type.
+ */
 export type ViewKind = "domain" | "flow" | "lifecycle" | "journey";
+export type Mode = ViewKind | "simulate";
 
 /**
  * `fetch`, narrowed to the shape this client uses.
@@ -43,7 +52,7 @@ export type ViewKind = "domain" | "flow" | "lifecycle" | "journey";
  */
 export type Fetcher = (
   input: string,
-  init?: { signal?: AbortSignal },
+  init?: RequestInit & { signal?: AbortSignal },
 ) => Promise<Response>;
 
 /**
@@ -72,11 +81,37 @@ export class InspectClient {
     );
   }
 
-  private async json<T>(path: string, signal?: AbortSignal): Promise<T> {
+  /** A seeded world, and what can be done to it. */
+  async setup(signal?: AbortSignal): Promise<Setup> {
+    return this.json<Setup>("/api/sim/setup", signal);
+  }
+
+  /**
+   * Fire `event` against `world`.
+   *
+   * The world goes out and the world comes back: the server keeps no session,
+   * so a step is a pure function call over HTTP and going back is the client
+   * simply holding on to the world it had.
+   */
+  async step(world: World, event: Event, signal?: AbortSignal): Promise<StepOutcome> {
+    return this.json<StepOutcome>("/api/sim/step", signal, { world, event });
+  }
+
+  private async json<T>(path: string, signal?: AbortSignal, body?: unknown): Promise<T> {
     const url = `${this.base}${path}`;
+    const init: RequestInit & { signal?: AbortSignal } =
+      body === undefined
+        ? { signal }
+        : {
+            signal,
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(body),
+          };
+
     let response: Response;
     try {
-      response = await this.fetcher(url, { signal });
+      response = await this.fetcher(url, init);
     } catch (cause) {
       // A rejected fetch is the server having gone away — the user stopped the
       // process, or the machine slept. Saying that is more useful than

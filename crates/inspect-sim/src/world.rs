@@ -67,12 +67,16 @@ pub struct World {
     /// Configuration in force, keyed `module.parameter`.
     pub config: BTreeMap<String, Value>,
     /// The current time, in milliseconds. Advanced only by the user.
+    ///
+    /// `number` on the wire; see the note on [`Value::Int`].
+    #[ts(type = "number")]
     pub now: i64,
     /// The next ordinal for each entity type, so ids never repeat.
     ///
     /// Carried in the world rather than derived from what exists, so that
     /// removing an instance does not make the next creation reuse its id — two
     /// different things in one trace must never share a name.
+    #[ts(type = "Record<string, number>")]
     pub next_ordinal: BTreeMap<String, u64>,
 }
 

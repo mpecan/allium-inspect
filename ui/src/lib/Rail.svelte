@@ -6,13 +6,15 @@
   // here, and a five-word subtitle costs less than the click it saves.
 
   import type { Module } from "./api/Module";
-  import type { ViewKind } from "./client";
+  import type { Mode, ViewKind } from "./client";
   import { ANSWERS } from "./graph/views";
 
   type TraceMode = "off" | "forward" | "backward" | "near";
 
   interface Props {
-    view: ViewKind;
+    /// Which mode is showing. The rail switches between them; `view` in the app
+    /// remembers the last *graph* one so leaving the simulator returns to it.
+    mode: Mode;
     modules: Module[];
     hidden: Set<string>;
     traceMode: TraceMode;
@@ -20,13 +22,13 @@
     traceIsEmpty: boolean;
     findings: number;
     version: string;
-    onview: (view: ViewKind) => void;
+    onmode: (mode: Mode) => void;
     onmodule: (name: string) => void;
     ontrace: (mode: TraceMode) => void;
   }
 
   const {
-    view,
+    mode,
     modules,
     hidden,
     traceMode,
@@ -34,7 +36,7 @@
     traceIsEmpty,
     findings,
     version,
-    onview,
+    onmode,
     onmodule,
     ontrace,
   }: Props = $props();
@@ -67,18 +69,30 @@
         <li>
           <button
             type="button"
-            class:current={view === option.kind}
-            aria-current={view === option.kind ? "page" : undefined}
-            onclick={() => onview(option.kind)}
+            class:current={mode === option.kind}
+            aria-current={mode === option.kind ? "page" : undefined}
+            onclick={() => onmode(option.kind)}
           >
             <span class="view-name">{option.name}</span>
             <span class="view-answers">{ANSWERS[option.kind]}</span>
           </button>
         </li>
       {/each}
+      <li>
+        <button
+          type="button"
+          class:current={mode === "simulate"}
+          aria-current={mode === "simulate" ? "page" : undefined}
+          onclick={() => onmode("simulate")}
+        >
+          <span class="view-name">Simulate</span>
+          <span class="view-answers">fire a trigger and watch</span>
+        </button>
+      </li>
     </ul>
   </section>
 
+  {#if mode !== "simulate"}
   <section>
     <h2>Trace</h2>
     <ul class="traces">
@@ -111,6 +125,8 @@
       </p>
     {/if}
   </section>
+
+  {/if}
 
   <section>
     <h2>Modules</h2>

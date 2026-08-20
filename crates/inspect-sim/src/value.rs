@@ -62,7 +62,12 @@ pub enum Value {
     /// Absent, and known to be absent. Distinct from [`Value::Unknown`].
     Null,
     Bool(bool),
-    Int(i64),
+    // `number`, not the `bigint` ts-rs would infer from `i64`. What actually
+    // crosses the wire is a JSON number, which JavaScript parses as a double —
+    // declaring it `bigint` would describe a value nothing ever sends and make
+    // every arithmetic use of it a type error. Milliseconds stay exact well past
+    // any timescale a specification talks about.
+    Int(#[ts(type = "number")] i64),
     /// A decimal. Compared with a tolerance; see [`Value::compare`].
     Float(f64),
     Str(String),
@@ -70,11 +75,11 @@ pub enum Value {
     Enum(String),
     /// Milliseconds. A duration is not an integer: `21.days` and `21` are
     /// different things and comparing them is a spec error worth surfacing.
-    Duration(i64),
+    Duration(#[ts(type = "number")] i64),
     /// Milliseconds since an arbitrary origin. The simulator's clock has no
     /// calendar — `now` is a number the user advances, and nothing here needs
     /// to know what year it is.
-    Timestamp(i64),
+    Timestamp(#[ts(type = "number")] i64),
     /// A reference to another instance.
     Ref(EntityId),
     /// An ordered collection. Ordered so a trace is reproducible; the language's
@@ -103,6 +108,18 @@ impl Value {
             Value::Unknown => Truth::Unknown,
             _ => Truth::Unknown,
         }
+    }
+
+    /// This value's kind with its article: `an integer`, `a duration`.
+    ///
+    /// The messages read as sentences to a person, and "a unknown cannot be
+    /// ordered against a integer" is the sort of thing that makes a reader
+    /// distrust everything else on the panel.
+    #[must_use]
+    pub fn described(&self) -> String {
+        let kind = self.kind();
+        let article = if kind.starts_with(['a', 'e', 'i', 'o', 'u']) { "an" } else { "a" };
+        format!("{article} {kind}")
     }
 
     /// The name of this value's kind, for messages.
@@ -383,6 +400,18 @@ mod tests {
     fn counting_something_that_is_not_a_collection_has_no_answer() {
         assert_eq!(Value::Int(3).count(), None);
         assert_eq!(Value::Unknown.count(), None);
+    }
+
+    #[test]
+    fn every_kind_gets_the_right_article() {
+        // "a unknown cannot be ordered against a integer" is the sort of thing
+        // that makes a reader distrust everything else on the panel.
+        assert_eq!(Value::Unknown.described(), "an unknown");
+        assert_eq!(Value::Int(0).described(), "an integer");
+        assert_eq!(Value::Duration(0).described(), "a duration");
+        assert_eq!(Value::Str(String::new()).described(), "a string");
+        assert_eq!(Value::Enum(String::new()).described(), "a state");
+        assert_eq!(Value::Ref(EntityId::new("E", 1)).described(), "a reference");
     }
 
     #[test]

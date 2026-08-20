@@ -554,3 +554,127 @@ fn an_instance_added_by_hand_is_readable_the_same_way() {
     let env = env(&world, "lending").bind("m", Value::Ref(EntityId("Seeded".to_owned())));
     assert_eq!(value_of(&field(ident("m"), "open_loan_count"), &env), Value::Int(9));
 }
+
+// --- quantification ------------------------------------------------------
+
+fn quantify(binding: &str, collection: Json, body: Json, filter: Option<Json>) -> Json {
+    json!({"For": {
+        "span": {"start": 0, "end": 0},
+        "binding": {"Single": {"span": {"start": 0, "end": 0}, "name": binding}},
+        "collection": collection,
+        "filter": filter,
+        "body": body,
+    }})
+}
+
+#[test]
+fn an_invariant_holds_when_every_element_satisfies_it() {
+    // The shape of every invariant a real spec writes.
+    let world = library();
+    let env = env(&world, "catalogue");
+    let all_have_a_status =
+        quantify("c", ident("Copies"), compare(ident("status"), "NotEq", null()), None);
+    assert_eq!(truth_of(&all_have_a_status, &env), Truth::True);
+}
+
+#[test]
+fn an_invariant_fails_when_one_element_does_not() {
+    let world = library();
+    let env = env(&world, "catalogue");
+    let all_available =
+        quantify("c", ident("Copies"), compare(ident("status"), "Eq", ident("available")), None);
+    assert_eq!(truth_of(&all_available, &env), Truth::False, "one copy is on loan");
+}
+
+#[test]
+fn a_collection_is_named_in_the_plural() {
+    // `for m in Members` — without resolving the plural every invariant ranges
+    // over nothing and holds vacuously, which is a checker that always passes.
+    let world = library();
+    let env = env(&world, "lending");
+    let over_members =
+        quantify("m", ident("Members"), compare(ident("name"), "NotEq", null()), None);
+    assert_eq!(truth_of(&over_members, &env), Truth::True);
+
+    let never_true = quantify("m", ident("Members"), compare(ident("name"), "Eq", null()), None);
+    assert_eq!(
+        truth_of(&never_true, &env),
+        Truth::False,
+        "if it ranged over nothing this would be vacuously true"
+    );
+}
+
+#[test]
+fn an_invariant_over_an_empty_collection_is_vacuously_true() {
+    // A spec with no loans does not violate a rule about loans.
+    let world = library();
+    let env = env(&world, "lending");
+    let over_nothing = quantify("l", ident("Loans"), compare(number("1"), "Eq", number("2")), None);
+    assert_eq!(truth_of(&over_nothing, &env), Truth::True);
+}
+
+#[test]
+fn a_filter_narrows_what_is_claimed_about() {
+    // `for c in Copies where status = on_loan: …` says nothing about the rest.
+    let world = library();
+    let env = env(&world, "catalogue");
+    let claim = compare(
+        ident("shelfmark"),
+        "Eq",
+        json!({"StringLiteral": {"span": {"start": 0, "end": 0}, "value": "QA77"}}),
+    );
+    let filter = compare(ident("status"), "Eq", ident("on_loan"));
+    assert_eq!(
+        truth_of(&quantify("c", ident("Copies"), claim.clone(), Some(filter)), &env),
+        Truth::True
+    );
+    assert_eq!(
+        truth_of(&quantify("c", ident("Copies"), claim, None), &env),
+        Truth::False,
+        "without the filter the other copy is a counterexample"
+    );
+}
+
+#[test]
+fn an_element_the_body_cannot_decide_leaves_the_whole_claim_undecided() {
+    let world = library();
+    let env = env(&world, "catalogue");
+    let claim = compare(ident("mystery"), "Eq", number("1"));
+    let node = quantify("c", ident("Copies"), claim, None);
+    assert_eq!(truth_of(&node, &env), Truth::Unknown);
+    assert!(!reasons(&node, &env).is_empty(), "and says which element it was");
+}
+
+#[test]
+fn one_definite_counterexample_settles_it_even_among_undecided_elements() {
+    // Kleene's conjunction: a false anywhere settles the claim regardless of
+    // what the rest turn out to be.
+    let world = library();
+    let env = env(&world, "catalogue");
+    let body = logical(
+        compare(ident("status"), "Eq", ident("available")),
+        "And",
+        compare(ident("mystery"), "Eq", number("1")),
+    );
+    assert_eq!(truth_of(&quantify("c", ident("Copies"), body, None), &env), Truth::False);
+}
+
+#[test]
+fn quantifying_over_something_that_is_not_a_collection_says_so() {
+    let world = library();
+    let env = env(&world, "catalogue").bind("n", Value::Int(3));
+    let node = quantify("x", ident("n"), compare(number("1"), "Eq", number("1")), None);
+    assert_eq!(truth_of(&node, &env), Truth::Unknown);
+    assert!(reasons(&node, &env).iter().any(|r| r.contains("has no elements")));
+}
+
+#[test]
+fn the_bound_name_is_usable_as_well_as_the_bare_fields() {
+    // `for c in Copies: c.status = available` and `… : status = available` are
+    // both written in real specs.
+    let world = library();
+    let env = env(&world, "catalogue");
+    let by_name =
+        quantify("c", ident("Copies"), compare(field(ident("c"), "status"), "NotEq", null()), None);
+    assert_eq!(truth_of(&by_name, &env), Truth::True);
+}

@@ -164,6 +164,7 @@ pub fn eval(node: &Json, env: &Env<'_>) -> Evaluation {
         "Where" | "With" => filtered(inner, env),
         "Conditional" => conditional(inner, env),
         "In" => membership(inner, env),
+        "For" => quantified(inner, env),
         // Everything else is real Allium this evaluator does not model. Named
         // rather than lumped together, because "a `Pipe` was not evaluated" is
         // something a reader can act on and "unsupported" is not.
@@ -185,6 +186,15 @@ fn ident(inner: &Json, env: &Env<'_>) -> Evaluation {
     }
     if env.world.count_of(&name) > 0 {
         return Evaluation::known(collection_of(&name, env));
+    }
+    // `for m in Members` names the collection, which is the entity pluralised.
+    // Every invariant a real spec writes is quantified this way, so without
+    // this they all range over nothing and hold vacuously — a checker that
+    // always passes, which is worse than one that admits it cannot check.
+    if let Some(entity) = singular(&name)
+        && env.world.count_of(&entity) > 0
+    {
+        return Evaluation::known(collection_of(&entity, env));
     }
     // Capitalised: a type that exists in the spec but has no instances. An
     // empty collection is the right answer — `exists Membership{...}` over a
@@ -209,6 +219,18 @@ fn qualified(inner: &Json, env: &Env<'_>) -> Evaluation {
         return Evaluation::unknown("a qualified name with no name", inner, env.source);
     }
     Evaluation::known(collection_of(&name, env))
+}
+
+/// The entity a plural collection name refers to.
+///
+/// `Loans` -> `Loan`, `Copies` -> `Copy`. Only proposed: the caller uses it only
+/// when the world holds instances of that name, so an over-eager reduction
+/// costs nothing and `Staff` — already plural — falls through unchanged.
+fn singular(collection: &str) -> Option<String> {
+    if let Some(stem) = collection.strip_suffix("ies") {
+        return Some(format!("{stem}y"));
+    }
+    collection.strip_suffix('s').filter(|stem| !stem.is_empty()).map(ToOwned::to_owned)
 }
 
 /// Every instance of `entity`, as references.
@@ -244,7 +266,7 @@ fn member(inner: &Json, env: &Env<'_>) -> Evaluation {
                 unresolved,
             },
             None => Evaluation::unknown(
-                format!("`{}` is a {}, which has no count", field, base.value.kind()),
+                format!("`{field}` is {}, which has no count", base.value.described()),
                 inner,
                 env.source,
             )
@@ -292,7 +314,7 @@ fn member(inner: &Json, env: &Env<'_>) -> Evaluation {
         }
         Value::Unknown => Evaluation { value: Value::Unknown, unresolved },
         other => Evaluation::unknown(
-            format!("`{field}` was read from a {}, which has no fields", other.kind()),
+            format!("`{field}` was read from {}, which has no fields", other.described()),
             inner,
             env.source,
         )
@@ -326,7 +348,7 @@ fn filtered(inner: &Json, env: &Env<'_>) -> Evaluation {
     };
     let Value::Set(items) = &base.value else {
         return Evaluation::unknown(
-            format!("a {} cannot be filtered", base.value.kind()),
+            format!("{} cannot be filtered", base.value.described()),
             inner,
             env.source,
         )
@@ -351,6 +373,78 @@ fn filtered(inner: &Json, env: &Env<'_>) -> Evaluation {
         }
     }
     Evaluation { value: Value::Set(kept), unresolved }
+}
+
+/// `for x in Collection: condition` — universal quantification.
+///
+/// This is what every invariant in a real spec is made of. Read as *all*
+/// elements satisfy the body, so an empty collection is vacuously true: a spec
+/// with no loans does not violate a rule about loans.
+///
+/// The same node appears in an `ensures` clause, where it means iteration
+/// rather than a claim. Which it is depends on the context, not the syntax:
+/// `apply` handles the postcondition case and this one handles the assertion.
+fn quantified(inner: &Json, env: &Env<'_>) -> Evaluation {
+    let Some(collection) = inner.get("collection").or_else(|| inner.get("source")) else {
+        return Evaluation::unknown("an iteration with nothing to iterate", inner, env.source);
+    };
+    let Some(body) = inner.get("body") else {
+        return Evaluation::unknown("an iteration with no body", inner, env.source);
+    };
+
+    let name = inner
+        .get("binding")
+        .and_then(|binding| match tagged(binding) {
+            // `{"Single": {"name": "m"}}` — the one-variable form, which is
+            // every quantifier a real spec writes.
+            Some((_, single)) => name_of(single),
+            None => name_of(binding),
+        })
+        .unwrap_or_else(|| "it".to_owned());
+
+    let over = eval(collection, env);
+    let mut unresolved = over.unresolved;
+    let Value::Set(items) = over.value else {
+        return Evaluation {
+            value: Value::Unknown,
+            unresolved: {
+                unresolved.push(Unresolved {
+                    reason: format!(
+                        "`{name}` ranges over {}, which has no elements",
+                        over.value.described()
+                    ),
+                    expression: span_of(collection)
+                        .and_then(|span| span.slice(env.source))
+                        .map(str::to_owned),
+                    span: span_of(inner),
+                });
+                unresolved
+            },
+        };
+    };
+
+    let mut verdicts = Vec::new();
+    for item in &items {
+        let mut scope = element_scope(env, item);
+        scope.bindings.insert(name.clone(), item.clone());
+
+        // `for l in Loans where status = open:` narrows what is claimed about.
+        if let Some(filter) = inner.get("filter").filter(|filter| !filter.is_null()) {
+            let keep = eval(filter, &scope);
+            let holds = keep.truth();
+            unresolved.extend(keep.unresolved);
+            if holds != Truth::True {
+                continue;
+            }
+        }
+
+        let held = eval(body, &scope);
+        let verdict = held.truth();
+        unresolved.extend(held.unresolved);
+        verdicts.push(verdict);
+    }
+
+    Evaluation { value: truth_value(Truth::all(verdicts)), unresolved }
 }
 
 /// A scope in which `item`'s own fields are visible without naming it.

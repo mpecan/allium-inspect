@@ -17,8 +17,10 @@ entities: { [key in EntityId]: Instance },
 config: { [key in string]: Value }, 
 /**
  * The current time, in milliseconds. Advanced only by the user.
+ *
+ * `number` on the wire; see the note on [`Value::Int`].
  */
-now: bigint, 
+now: number, 
 /**
  * The next ordinal for each entity type, so ids never repeat.
  *
@@ -26,4 +28,4 @@ now: bigint,
  * removing an instance does not make the next creation reuse its id — two
  * different things in one trace must never share a name.
  */
-next_ordinal: { [key in string]: bigint }, };
+next_ordinal: Record<string, number>, };

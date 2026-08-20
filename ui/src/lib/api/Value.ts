@@ -4,4 +4,4 @@ import type { EntityId } from "./EntityId";
 /**
  * A value in a simulated world.
  */
-export type Value = { "kind": "null" } | { "kind": "bool", "value": boolean } | { "kind": "int", "value": bigint } | { "kind": "float", "value": number } | { "kind": "str", "value": string } | { "kind": "enum", "value": string } | { "kind": "duration", "value": bigint } | { "kind": "timestamp", "value": bigint } | { "kind": "ref", "value": EntityId } | { "kind": "set", "value": Array<Value> } | { "kind": "unknown" };
+export type Value = { "kind": "null" } | { "kind": "bool", "value": boolean } | { "kind": "int", "value": number } | { "kind": "float", "value": number } | { "kind": "str", "value": string } | { "kind": "enum", "value": string } | { "kind": "duration", "value": number } | { "kind": "timestamp", "value": number } | { "kind": "ref", "value": EntityId } | { "kind": "set", "value": Array<Value> } | { "kind": "unknown" };

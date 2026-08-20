@@ -12,10 +12,12 @@
   import Inspector from "./lib/panels/Inspector.svelte";
   import SourceStrip from "./lib/panels/SourceStrip.svelte";
   import Rail from "./lib/Rail.svelte";
+  import Simulator from "./lib/sim/Simulator.svelte";
   import {
     ApiError,
     InspectClient,
     type ModuleSource,
+    type Mode,
     type SpecGraph,
     type ViewKind,
   } from "./lib/client";
@@ -25,6 +27,8 @@
 
   let graph = $state.raw<SpecGraph | null>(null);
   let failure = $state<string | null>(null);
+  let mode = $state<Mode>("domain");
+  // The last graph view chosen, so leaving the simulator returns you to it.
   let view = $state<ViewKind>("domain");
   let selectedId = $state<string | null>(null);
   let hidden = $state.raw<Set<string>>(new Set());
@@ -142,19 +146,29 @@
 
 <div class="shell">
   <Rail
-    {view}
+    {mode}
     {modules}
     {hidden}
     {traceMode}
     hasSelection={selectedId !== null}
     findings={graph?.findings.length ?? 0}
     version={graph?.allium_version ?? ""}
-    onview={(next) => (view = next)}
+    onmode={(next) => {
+      mode = next;
+      if (next !== "simulate") {
+        view = next;
+      }
+    }}
     onmodule={toggleModule}
     ontrace={(mode) => (traceMode = mode)}
     {traceIsEmpty}
   />
 
+  {#if mode === "simulate"}
+    <div class="stage">
+      <Simulator {client} />
+    </div>
+  {:else}
   <main>
     {#if failure}
       <div class="failure">
@@ -186,7 +200,9 @@
       ontoggle={() => (sourceOpen = !sourceOpen)}
     />
   </main>
+  {/if}
 
+  {#if mode !== "simulate"}
   <Inspector
     node={selected}
     position={selectedPosition}
@@ -213,6 +229,7 @@
     ) ?? []}
     onselect={selectByName}
   />
+  {/if}
 </div>
 
 <style>
@@ -220,6 +237,17 @@
     display: grid;
     grid-template-columns: var(--sidebar) minmax(0, 1fr) var(--inspector);
     height: 100%;
+  }
+
+  /* The simulator replaces the canvas and the inspector both, so the shell
+   * gives it everything but the rail. */
+  .shell:has(.stage) {
+    grid-template-columns: var(--sidebar) minmax(0, 1fr);
+  }
+
+  .stage {
+    min-width: 0;
+    min-height: 0;
   }
 
   main {
