@@ -37,7 +37,8 @@
   --ground-source-gutter: #efeade;
   --ink-source: #2a2721;
   --ink-source-dim: #7d7869;
-  --source-highlight: #ffe9a8;
+  --source-highlight: #ffe08a;
+  --source-highlight-edge: #d9a520;
 
   /* --- ink ----------------------------------------------------------- */
   --ink: #e4e7ec;

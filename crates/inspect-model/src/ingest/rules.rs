@@ -27,7 +27,7 @@ use crate::{
         Edge, EdgeKind, Node, NodeDetail, NodeId, NodeKind, RuleClause, RuleDetail, SpecGraph,
         TriggerDetail, TriggerSource,
     },
-    ingest::json,
+    ingest::{json, text},
     span::Span,
 };
 
@@ -99,35 +99,17 @@ pub fn ingest(block: &Value, module: &str, source: &str, graph: &mut SpecGraph) 
 /// the author would not recognise.
 fn clause_text(clause: &Value, clause_span: Option<Span>, source: &str) -> String {
     let value_span = clause.get("value").and_then(expression_span);
-    value_span.or(clause_span).and_then(|span| span.slice(source)).map(collapse).unwrap_or_default()
+    value_span
+        .or(clause_span)
+        .and_then(|span| span.slice(source))
+        .map(text::one_line)
+        .unwrap_or_default()
 }
 
 /// The span of an expression node, whatever its tag.
 fn expression_span(value: &Value) -> Option<Span> {
     let (_, inner) = json::tagged(value)?;
     json::span(inner, "span")
-}
-
-/// Squeeze a multi-line clause onto one line for a label.
-///
-/// Multi-line `ensures` blocks are common and their indentation is meaningful
-/// in the file and meaningless in a 200-pixel node. The full text with its
-/// original layout is still reachable through the clause's span.
-fn collapse(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut spaced = true;
-    for character in text.chars() {
-        if character.is_whitespace() {
-            if !spaced {
-                out.push(' ');
-                spaced = true;
-            }
-        } else {
-            out.push(character);
-            spaced = false;
-        }
-    }
-    out.trim_end().to_owned()
 }
 
 /// The trigger a `when` clause names, and how it happens.
@@ -342,22 +324,6 @@ mod tests {
         let (name, detail) = trigger_from_when(&json!({"SomethingNew": {}}));
         assert!(name.is_empty());
         assert_eq!(detail.source, TriggerSource::External);
-    }
-
-    #[test]
-    fn collapse_puts_a_multi_line_clause_on_one_line() {
-        let text = "Loan.created(\n    copy: copy,\n    member: member\n)";
-        assert_eq!(collapse(text), "Loan.created( copy: copy, member: member )");
-    }
-
-    #[test]
-    fn collapse_leaves_a_single_line_alone() {
-        assert_eq!(collapse("copy.status = available"), "copy.status = available");
-    }
-
-    #[test]
-    fn collapse_of_whitespace_only_text_is_empty() {
-        assert_eq!(collapse("   \n\t "), "");
     }
 
     // --- whole-rule ingestion -------------------------------------------

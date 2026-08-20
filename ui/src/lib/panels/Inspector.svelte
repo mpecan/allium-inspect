@@ -69,7 +69,7 @@
       <section>
         <h3>Fields</h3>
         <dl class="fields">
-          {#each detail.fields as field (field.name)}
+          {#each detail.fields as field, index (index)}
             <dt class:derived={field.derived} class:navigable={field.relationship}>
               {field.name}
             </dt>
@@ -87,7 +87,7 @@
         <section>
           <h3>Lifecycle · {lifecycle.field}</h3>
           <ul class="transitions">
-            {#each lifecycle.edges as step (step.from + step.to)}
+            {#each lifecycle.edges as step, index (index)}
               <li>
                 <span>{step.from}</span>
                 <span class="arrow" aria-hidden="true">→</span>
@@ -121,10 +121,10 @@
         <section>
           <h3>Effects</h3>
           <ul class="effects">
-            {#each detail.creates as entity (entity)}
+            {#each detail.creates as entity, index (index)}
               <li><span class="keyword">creates</span>{entity}</li>
             {/each}
-            {#each detail.emits as trigger (trigger)}
+            {#each detail.emits as trigger, index (index)}
               <li><span class="keyword">emits</span>{trigger}</li>
             {/each}
           </ul>
@@ -152,10 +152,11 @@
       </section>
     {:else if node.detail.type === "surface"}
       {@const detail = node.detail}
+      {#if detail.provides.length > 0}
       <section>
         <h3>Provides</h3>
         <ul class="clauses">
-          {#each detail.provides as operation (operation.trigger)}
+          {#each detail.provides as operation, index (index)}
             <li>
               <code>{operation.trigger}({operation.parameters.join(", ")})</code>
               {#if operation.when}
@@ -165,15 +166,16 @@
           {/each}
         </ul>
       </section>
+      {/if}
       {#if detail.exposes.length > 0}
         <section>
           <h3>Exposes</h3>
           <ul class="effects">
-            {#each detail.exposes as exposed (exposed)}<li>{exposed}</li>{/each}
+            {#each detail.exposes as exposed, index (index)}<li>{exposed}</li>{/each}
           </ul>
         </section>
       {/if}
-      {#each detail.guarantees as guarantee (guarantee)}
+      {#each detail.guarantees as guarantee, index (index)}
         <section>
           <h3>Guarantee</h3>
           <p class="name-line">{guarantee}</p>
@@ -200,14 +202,14 @@
       <section>
         <h3>Values</h3>
         <ul class="effects">
-          {#each node.detail.values as value (value)}<li>{value}</li>{/each}
+          {#each node.detail.values as value, index (index)}<li>{value}</li>{/each}
         </ul>
       </section>
     {:else if node.detail.type === "config"}
       <section>
         <h3>Parameters</h3>
         <dl class="fields">
-          {#each node.detail.parameters as parameter (parameter.name)}
+          {#each node.detail.parameters as parameter, index (index)}
             <dt>{parameter.name}</dt>
             <dd>{parameter.default_expr ?? parameter.type_expr}</dd>
           {/each}
@@ -274,7 +276,7 @@
               <span class="prose">{finding.summary}</span>
               {#if finding.rules.length > 0}
                 <span class="rule-links">
-                  {#each finding.rules as rule (rule)}
+                  {#each finding.rules as rule, index (index)}
                     <button type="button" onclick={() => onselect(rule)}>
                       {rule}
                     </button>

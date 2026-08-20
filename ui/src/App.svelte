@@ -1,8 +1,14 @@
 <script lang="ts">
-  import type { Node } from "./lib/api/Node";
   import type { Severity } from "./lib/api/Severity";
   import Canvas from "./lib/graph/Canvas.svelte";
-  import { journey, neighbourhood, origins, type Trace } from "./lib/graph/trace";
+  import {
+    isMeaningful,
+    journey,
+    neighbourhood,
+    origins,
+    type Trace,
+  } from "./lib/graph/trace";
+  import { project } from "./lib/graph/views";
   import Inspector from "./lib/panels/Inspector.svelte";
   import SourceStrip from "./lib/panels/SourceStrip.svelte";
   import Rail from "./lib/Rail.svelte";
@@ -48,13 +54,9 @@
   const edges = $derived(graph?.edges ?? []);
   const modules = $derived(graph?.modules ?? []);
 
-  const visibleNodes = $derived(
-    nodes.filter((node) => !hidden.has(node.module) && inView(node, view)),
-  );
-  const visibleIds = $derived(new Set(visibleNodes.map((node) => node.id)));
-  const visibleEdges = $derived(
-    edges.filter((edge) => visibleIds.has(edge.from) && visibleIds.has(edge.to)),
-  );
+  const visible = $derived(project(view, nodes, edges, hidden));
+  const visibleNodes = $derived(visible.nodes);
+  const visibleEdges = $derived(visible.edges);
 
   const severities = $derived<Map<string, Severity>>(
     graph ? worstByNode(graph) : new Map(),
@@ -66,10 +68,23 @@
     if (!selectedId || traceMode === "off") {
       return null;
     }
-    if (traceMode === "forward") return journey(visibleEdges, selectedId);
-    if (traceMode === "backward") return origins(visibleEdges, selectedId);
-    return neighbourhood(visibleEdges, selectedId);
+    const walked =
+      traceMode === "forward"
+        ? journey(visibleEdges, selectedId)
+        : traceMode === "backward"
+          ? origins(visibleEdges, selectedId)
+          : neighbourhood(visibleEdges, selectedId);
+
+    // A trace of one node is the selection itself. Dimming three hundred boxes
+    // to highlight the one already highlighted tells the reader nothing and
+    // costs them the context — so the canvas stays as it was and the rail says
+    // there was nothing to follow.
+    return isMeaningful(walked) ? walked : null;
   });
+
+  const traceIsEmpty = $derived(
+    selectedId !== null && traceMode !== "off" && trace === null,
+  );
 
   const selectedModule = $derived(
     selected ? modules.find((module) => module.name === selected.module) : undefined,
@@ -98,26 +113,6 @@
         /* The strip falls back to showing nothing; the graph is still usable. */
       });
   });
-
-  /** Which constructs belong in a given view. */
-  function inView(node: Node, kind: ViewKind): boolean {
-    switch (kind) {
-      case "domain":
-        return ["entity", "value", "variant", "enum", "config", "external"].includes(
-          node.kind,
-        );
-      case "flow":
-        return ["rule", "trigger", "entity", "value", "variant"].includes(node.kind);
-      case "lifecycle":
-        return (
-          node.kind === "entity" &&
-          node.detail.type === "entity" &&
-          node.detail.transitions.length > 0
-        );
-      case "journey":
-        return ["surface", "actor", "trigger", "rule", "entity"].includes(node.kind);
-    }
-  }
 
   function toggleModule(name: string) {
     const next = new Set(hidden);
@@ -157,6 +152,7 @@
     onview={(next) => (view = next)}
     onmodule={toggleModule}
     ontrace={(mode) => (traceMode = mode)}
+    {traceIsEmpty}
   />
 
   <main>

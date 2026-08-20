@@ -101,6 +101,11 @@ pub fn type_reference(value: &Value) -> Option<String> {
         ("Ident", inner) => string(inner, "name"),
         ("Binding", inner) => type_reference(inner.get("value")?),
         ("Where", inner) => type_reference(inner.get("source")?),
+        // `Copy with book = this` and `Membership where status = active` both
+        // narrow a relationship. What they narrow is the type.
+        ("With", inner) => type_reference(
+            inner.get("source").or_else(|| inner.get("left")).or_else(|| inner.get("value"))?,
+        ),
         ("GenericType", inner) => {
             // `Set<Book>` refers to `Book`; the container is not a construct.
             inner
@@ -169,6 +174,17 @@ mod tests {
             "condition": {"Ident": {"name": "x"}},
         }});
         assert_eq!(type_reference(&filtered).as_deref(), Some("Member"));
+    }
+
+    #[test]
+    fn a_narrowed_relationship_resolves_to_what_it_narrows() {
+        // `conversations: membership/Membership with member = this` is a
+        // relationship to `Membership`; the narrowing says which ones.
+        let value = json!({"With": {
+            "source": {"QualifiedName": {"qualifier": "membership", "name": "Membership"}},
+            "condition": {"Ident": {"name": "active"}},
+        }});
+        assert_eq!(type_reference(&value).as_deref(), Some("membership/Membership"));
     }
 
     #[test]

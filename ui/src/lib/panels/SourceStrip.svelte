@@ -60,6 +60,7 @@
             >{#each view.lines as line (line.number)}<span
                 class="line"
                 class:highlit={line.highlit}
+                class:opens={line.opens}
                 ><span class="gutter">{line.number}</span>{line.text}
 </span>{/each}</code
           ></pre>
@@ -157,11 +158,18 @@
     white-space: pre;
   }
 
-  /* The declaration itself, marked the way a highlighter marks a page rather
-   * than the way an editor marks a selection: the ground changes, the ink does
-   * not, so the text stays exactly as readable inside the span as outside it. */
+  /* The declaration, marked as a *range* rather than a wash. A forty-line rule
+   * flooded with highlighter is not easier to read than one without — the
+   * marking has to say where the construct begins and ends without competing
+   * with the text it is pointing at. So: a rule down the left edge for the
+   * extent, a faint tint behind it, and a stronger band on the opening line
+   * where the eye should land. */
   .highlit {
-    background: var(--source-highlight);
+    background: color-mix(in srgb, var(--source-highlight) 34%, transparent);
+    box-shadow: inset 3px 0 0 var(--source-highlight-edge);
+  }
+  .highlit.opens {
+    background: color-mix(in srgb, var(--source-highlight) 78%, transparent);
   }
 
   .gutter {

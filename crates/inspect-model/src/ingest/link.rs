@@ -474,6 +474,32 @@ mod tests {
     }
 
     #[test]
+    fn a_cross_module_search_matches_the_name_and_not_merely_the_kind() {
+        // The search that joins an emission to the module declaring the trigger
+        // looks in every module. Matching on kind alone would attach the
+        // emission to whichever trigger happened to be found first.
+        let mut graph = SpecGraph::new("test");
+        graph.modules.push(module("catalogue", Vec::new()));
+        graph.modules.push(module("lending", Vec::new()));
+        graph.nodes.push(Node::new("catalogue", NodeKind::Trigger, "SomethingElse"));
+        graph.nodes.push(Node::new("lending", NodeKind::Rule, "R"));
+        graph.edges.push(Edge::new(
+            NodeId::new("lending", NodeKind::Rule, "R"),
+            NodeId::new("lending", NodeKind::Trigger, "CopyLost"),
+            EdgeKind::Emits,
+            "CopyLost",
+        ));
+        link(&mut graph);
+
+        let edge = graph.edges.iter().find(|e| e.kind == EdgeKind::Emits).expect("an edge");
+        assert_eq!(
+            edge.to,
+            NodeId::new("lending", NodeKind::External, "CopyLost"),
+            "an unrelated trigger must not be adopted just because it is a trigger"
+        );
+    }
+
+    #[test]
     fn an_edge_whose_target_names_nothing_at_all_is_left_alone() {
         // `relocate` needs both a module and a name to search with. A malformed
         // id has neither, and inventing an external node for it would put an

@@ -201,43 +201,88 @@ else
 fi
 
 # --- mutation debt --------------------------------------------------------
+#
+# Driven inside a scratch repository of its own. The escalation is a function of
+# how much Rust has changed since a commit, so testing it against *this* working
+# tree would make the result depend on whatever happens to be uncommitted — the
+# gate would pass or fail for reasons unrelated to whether it works.
+
 expect_fail "mutation debt with no receipt" "not found" \
     env INSPECT_MUTATION_RECEIPT="$scratch/absent.txt" bash "$here/check-mutation-debt.sh"
 
-if [ -n "$head_sha" ]; then
-    printf '# scratch\n%s 40/40 0 %s\n' "$head_sha" "$stamp" > "$scratch/mutation-receipt.txt"
+repo="$scratch/repo"
+mkdir -p "$repo/src"
+git -C "$repo" init -q
+git -C "$repo" config user.email selftest@example.com
+git -C "$repo" config user.name "Gate Self-Test"
+printf 'fn main() {}\n' > "$repo/src/main.rs"
+git -C "$repo" add src/main.rs
+git -C "$repo" -c commit.gpgsign=false commit -qm "base"
+base_sha="$(git -C "$repo" rev-parse HEAD)"
 
-    # A receipt at HEAD has zero drift, so every bound is clear.
-    INSPECT_MUTATION_RECEIPT="$scratch/mutation-receipt.txt" \
-        expect_pass "mutation debt at the receipt's own commit" \
-        bash "$here/check-mutation-debt.sh"
+receipt="$scratch/repo-receipt.txt"
+printf '# scratch\n%s 40/40 0 %s\n' "$base_sha" "$stamp" > "$receipt"
 
-    # Zero-line and zero-commit bounds turn any drift at all into a failure,
-    # which is how the escalation is exercised without inventing history.
-    INSPECT_MUTATION_RECEIPT="$scratch/mutation-receipt.txt" \
-        INSPECT_MUTATION_WARN_LINES=0 INSPECT_MUTATION_FAIL_LINES=0 INSPECT_MUTATION_MAX_COMMITS=0 \
-        expect_pass "mutation debt with zero bounds and zero drift" \
-        bash "$here/check-mutation-debt.sh"
+# Run a gate with the scratch repository as the working directory.
+in_repo() {
+    ( cd "$repo" && INSPECT_MUTATION_RECEIPT="$receipt" "$@" )
+}
 
-    printf '# scratch\nHEAD 40/40 0 %s\n' "$stamp" > "$scratch/mutation-head.txt"
-    INSPECT_MUTATION_RECEIPT="$scratch/mutation-head.txt" \
-        expect_fail "mutation debt with a symbolic 'HEAD' commit" "not hexadecimal" \
-        bash "$here/check-mutation-debt.sh"
+expect_pass "mutation debt with nothing changed since the receipt" \
+    in_repo bash "$here/check-mutation-debt.sh"
 
-    printf '# scratch\n%s\n' "$head_sha" > "$scratch/mutation-short.txt"
-    INSPECT_MUTATION_RECEIPT="$scratch/mutation-short.txt" \
-        expect_fail "mutation debt with a truncated receipt" "malformed" \
-        bash "$here/check-mutation-debt.sh"
+# Twenty lines of new Rust, uncommitted. The gate has to see them: `just check`
+# runs before the commit exists, so a metric that only counted committed lines
+# would report zero for the change it is being asked about.
+printf 'fn added() {\n%s}\n' "$(for _ in $(seq 1 18); do echo '    let _ = 1;'; done)" \
+    > "$repo/src/added.rs"
 
-    # A warn threshold above the fail threshold is unsatisfiable: it can only
-    # ever warn, never block, so the gate would silently stop being one.
-    INSPECT_MUTATION_RECEIPT="$scratch/mutation-receipt.txt" \
-        INSPECT_MUTATION_WARN_LINES=900 INSPECT_MUTATION_FAIL_LINES=100 \
-        expect_fail "mutation debt with warn above fail" "must not exceed" \
-        bash "$here/check-mutation-debt.sh"
+expect_fail "mutation debt over the line budget, uncommitted" "Rust lines have changed" \
+    in_repo env INSPECT_MUTATION_WARN_LINES=5 INSPECT_MUTATION_FAIL_LINES=10 \
+    bash "$here/check-mutation-debt.sh"
+
+checks=$((checks + 1))
+warned="$(in_repo env INSPECT_MUTATION_WARN_LINES=5 INSPECT_MUTATION_FAIL_LINES=500 \
+    bash "$here/check-mutation-debt.sh" 2>&1)" && status=0 || status=$?
+if [ "$status" -eq 0 ] && printf '%s' "$warned" | grep -q "WARN"; then
+    echo "ok:   mutation debt warns between the two thresholds without blocking"
 else
-    skip "mutation debt against a real commit (5 checks)"
+    echo "FAIL: mutation debt did not warn between the thresholds (exit $status)"
+    echo "$warned" | sed 's/^/      /'
+    failures=$((failures + 1))
 fi
+
+# A docs-only change must not accrue mutation debt: nothing about the Rust the
+# last run measured has moved.
+git -C "$repo" add src/added.rs
+git -C "$repo" -c commit.gpgsign=false commit -qm "add rust"
+printf '# notes\n' > "$repo/README.md"
+git -C "$repo" add README.md
+git -C "$repo" -c commit.gpgsign=false commit -qm "docs"
+printf '# scratch\n%s 40/40 0 %s\n' "$(git -C "$repo" rev-parse HEAD~1)" "$stamp" > "$receipt"
+expect_pass "mutation debt ignores a commit that touches no Rust" \
+    in_repo env INSPECT_MUTATION_MAX_COMMITS=0 bash "$here/check-mutation-debt.sh"
+
+printf '# scratch\nHEAD 40/40 0 %s\n' "$stamp" > "$scratch/mutation-head.txt"
+expect_fail "mutation debt with a symbolic 'HEAD' commit" "not hexadecimal" \
+    env INSPECT_MUTATION_RECEIPT="$scratch/mutation-head.txt" bash "$here/check-mutation-debt.sh"
+
+printf '# scratch\n%s\n' "$base_sha" > "$scratch/mutation-short.txt"
+expect_fail "mutation debt with a truncated receipt" "malformed" \
+    env INSPECT_MUTATION_RECEIPT="$scratch/mutation-short.txt" bash "$here/check-mutation-debt.sh"
+
+# A warn threshold above the fail threshold is unsatisfiable: it can only ever
+# warn, never block, so the gate would silently stop being one.
+expect_fail "mutation debt with warn above fail" "must not exceed" \
+    in_repo env INSPECT_MUTATION_WARN_LINES=900 INSPECT_MUTATION_FAIL_LINES=100 \
+    bash "$here/check-mutation-debt.sh"
+
+# A receipt naming a commit from somewhere else entirely.
+printf '# scratch\n%s 40/40 0 %s\n' "0123456789abcdef0123456789abcdef01234567" "$stamp" \
+    > "$scratch/mutation-elsewhere.txt"
+expect_fail "mutation debt naming a commit this repository does not have" "not in this repository" \
+    env INSPECT_MUTATION_RECEIPT="$scratch/mutation-elsewhere.txt" \
+    bash "$here/check-mutation-debt.sh"
 
 # --- file sizes -----------------------------------------------------------
 INSPECT_FILE_SOFT=1 INSPECT_FILE_HARD=2 \

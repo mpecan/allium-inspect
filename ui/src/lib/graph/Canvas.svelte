@@ -103,17 +103,21 @@
     );
     return edges.map((edge, index) => {
       const key = `${edge.from}->${edge.to}`;
-      const lit = trace === null || onPath.has(key);
+      const traced = trace !== null && onPath.has(key);
+      const lit = trace === null || traced;
       return {
         id: `e${index}:${key}`,
         source: edge.from,
         target: edge.to,
-        label: edge.label,
-        animated: trace !== null && onPath.has(key),
-        style: `stroke: ${lit ? "var(--edge-active)" : "var(--edge)"}; stroke-width: ${
-          trace !== null && onPath.has(key) ? 1.8 : 1
-        }; opacity: ${lit ? 1 : 0.18};`,
-        labelStyle: `fill: var(--ink-faint); font-size: 9px; opacity: ${lit ? 1 : 0.15};`,
+        // Labelled only on a traced path. A real spec set has hundreds of
+        // edges, and a label on every one covers the graph it is describing —
+        // the reader is following one chain, and that is the one worth naming.
+        label: traced ? edge.label : undefined,
+        animated: traced,
+        style: `stroke: ${traced ? "var(--edge-active)" : "var(--edge)"}; stroke-width: ${
+          traced ? 1.8 : 1
+        }; opacity: ${lit ? 0.55 : 0.12};`,
+        labelStyle: "fill: var(--ink); font-size: 9px;",
       } satisfies FlowEdge;
     });
   });
@@ -153,7 +157,14 @@
         patternColor="var(--ground-canvas-grid)"
       />
       <Controls showLock={false} />
-      <MiniMap nodeColor={minimapColour} pannable zoomable />
+      <MiniMap
+        nodeColor={minimapColour}
+        bgColor="var(--ground-panel)"
+        maskColor="color-mix(in srgb, var(--ground-canvas) 78%, transparent)"
+        nodeStrokeWidth={0}
+        pannable
+        zoomable
+      />
     </SvelteFlow>
   {/if}
 </div>
@@ -194,6 +205,29 @@
     background: var(--ground-panel);
     border: 1px solid var(--line);
     border-radius: var(--radius);
+  }
+  /* The minimap ships an opaque light background and a light mask; both read
+   * as a hole punched in the canvas until they are told otherwise. */
+  .canvas :global(.svelte-flow__minimap-svg) {
+    background: var(--ground-panel);
+  }
+  .canvas :global(.svelte-flow__minimap-mask) {
+    fill: color-mix(in srgb, var(--ground-canvas) 72%, transparent);
+    stroke: var(--line-strong);
+    stroke-width: 1;
+  }
+
+  /* Edge labels are drawn only on a traced path, so they can afford to be
+   * legible rather than apologetic. The plate behind them is styled here
+   * because the edge type has no prop for it: left alone it ships as opaque
+   * white, which on a dark canvas reads as a hole rather than a label. */
+  .canvas :global(.svelte-flow__edge-text) {
+    font-family: var(--font-mono);
+    fill: var(--ink);
+  }
+  .canvas :global(.svelte-flow__edge-textbg) {
+    fill: var(--ground-canvas);
+    fill-opacity: 0.9;
   }
 
   .canvas :global(.svelte-flow__attribution) {

@@ -6,7 +6,14 @@
 //! file with no asset path to resolve.
 //!
 //! Simulation is stateless on purpose: the browser owns the world and posts it
-//! with each step. There are no sessions and no shared mutable state, so every
-//! handler is a pure function of its request body and tests need no socket.
+//! with each step. There are no sessions and no shared mutable state beyond the
+//! current inspection, which is replaced wholesale on a reload rather than
+//! mutated in place.
 
 #![forbid(unsafe_code)]
+
+mod routes;
+mod state;
+
+pub use routes::{router, serve};
+pub use state::{AppState, Inspection, ModuleSource};

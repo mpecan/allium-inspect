@@ -55,7 +55,15 @@ fn ingest_entity(value: &Value, module: &str, graph: &mut SpecGraph) {
     // in a way a stored field is not, which is exactly what the flags record.
     for relationship in json::array(value, "relationships") {
         let Some(field_name) = json::string(relationship, "name") else { continue };
-        let target = json::string_or_empty(relationship, "target");
+        // `model` reads one file, so a relationship crossing a module boundary
+        // comes back as the literal target `unknown`. That is the CLI reporting
+        // a limit of its own scope, not a type of that name — and resolving it
+        // is the whole reason this tool reads the spec set as a set. The name is
+        // dropped here and the parse pass supplies the real one.
+        let target = match json::string_or_empty(relationship, "target").as_str() {
+            "unknown" | "" => String::new(),
+            named => named.to_owned(),
+        };
         let mut field = EntityField::new(field_name, target.clone());
         field.relationship = true;
         upsert_field(&mut fields, field);
@@ -276,6 +284,18 @@ mod tests {
         assert!(!names_a_type("attachment != null"));
         assert!(!names_a_type("receipts where kind = read -> reporter"));
         assert!(!names_a_type("delivered_to.count"));
+    }
+
+    #[test]
+    fn a_capitalised_name_holding_punctuation_is_not_a_type() {
+        // The character test has to accept `_` specifically rather than reject
+        // one particular character: `A-B` is capitalised and unqualified, so
+        // this is the only check standing between it and being resolved as a
+        // type nothing declares.
+        assert!(!names_a_type("A-B"));
+        assert!(!names_a_type("A B"));
+        assert!(!names_a_type("A.B"));
+        assert!(names_a_type("A_B"), "an underscore is part of a name");
     }
 
     #[test]

@@ -7,6 +7,7 @@
 
   import type { Module } from "./api/Module";
   import type { ViewKind } from "./client";
+  import { ANSWERS } from "./graph/views";
 
   type TraceMode = "off" | "forward" | "backward" | "near";
 
@@ -16,6 +17,7 @@
     hidden: Set<string>;
     traceMode: TraceMode;
     hasSelection: boolean;
+    traceIsEmpty: boolean;
     findings: number;
     version: string;
     onview: (view: ViewKind) => void;
@@ -29,6 +31,7 @@
     hidden,
     traceMode,
     hasSelection,
+    traceIsEmpty,
     findings,
     version,
     onview,
@@ -36,11 +39,11 @@
     ontrace,
   }: Props = $props();
 
-  const VIEWS: { kind: ViewKind; name: string; answers: string }[] = [
-    { kind: "domain", name: "Domain", answers: "what the spec holds" },
-    { kind: "flow", name: "Flow", answers: "what happens, and in what order" },
-    { kind: "lifecycle", name: "Lifecycle", answers: "how each entity changes state" },
-    { kind: "journey", name: "Journey", answers: "what follows from an action" },
+  const VIEWS: { kind: ViewKind; name: string }[] = [
+    { kind: "domain", name: "Domain" },
+    { kind: "flow", name: "Flow" },
+    { kind: "lifecycle", name: "Lifecycle" },
+    { kind: "journey", name: "Journey" },
   ];
 
   const TRACES: { mode: TraceMode; label: string; hint: string }[] = [
@@ -69,7 +72,7 @@
             onclick={() => onview(option.kind)}
           >
             <span class="view-name">{option.name}</span>
-            <span class="view-answers">{option.answers}</span>
+            <span class="view-answers">{ANSWERS[option.kind]}</span>
           </button>
         </li>
       {/each}
@@ -95,11 +98,18 @@
         </li>
       {/each}
     </ul>
-    <p class="prose caveat">
-      A trace is derived from which triggers a surface offers and which each rule
-      emits. Allium has no journey construct, so this is what follows — not what
-      a person does.
-    </p>
+    {#if traceIsEmpty}
+      <p class="prose caveat empty-trace">
+        Nothing follows from this one in this view. Try another direction, or
+        the Flow view, which carries more of the chain.
+      </p>
+    {:else}
+      <p class="prose caveat">
+        A trace is derived from which triggers a surface offers and which each
+        rule emits. Allium has no journey construct, so this is what follows —
+        not what a person does.
+      </p>
+    {/if}
   </section>
 
   <section>
@@ -240,6 +250,10 @@
   .traces button:disabled {
     opacity: 0.4;
     cursor: not-allowed;
+  }
+
+  .empty-trace {
+    color: var(--boundary);
   }
 
   .caveat {

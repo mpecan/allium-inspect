@@ -76,11 +76,46 @@ fn ingest_block(block: &Value, module: &str, source: &str, graph: &mut SpecGraph
         // its own declaration, and matching only `Entity` left every external
         // entity without a span — so the source panel was blank for exactly the
         // entities whose governing spec a reader most wants to go and find.
-        "Entity" | "ExternalEntity" => locate(block, module, NodeKind::Entity, span, graph),
+        "Entity" | "ExternalEntity" => {
+            locate(block, module, NodeKind::Entity, span, graph);
+            retype(block, module, NodeKind::Entity, graph);
+        }
         "Enum" => locate(block, module, NodeKind::Enum, span, graph),
         "Config" => locate_named(module, NodeKind::Config, "config", span, graph),
         "Value" => ingest_value(block, module, span, graph),
         _ => {}
+    }
+}
+
+/// Fill in the declared type of any field the model pass left untyped.
+///
+/// `allium model` reads one file, so a relationship pointing into another module
+/// comes back with the target it cannot name — literally `unknown`, which the
+/// model pass discards. The AST has what the author actually wrote,
+/// `membership/Membership with member = this`, and resolving that across the
+/// spec set is the point of reading the files as a set.
+///
+/// Only empty types are filled. Where `model` did resolve a type it had more
+/// context than a single assignment carries, and re-reading the syntax over the
+/// top of that would be a downgrade.
+fn retype(block: &Value, module: &str, kind: NodeKind, graph: &mut SpecGraph) {
+    let Some(name) = json::declared_name(block) else { return };
+    let declared = value_fields(block);
+    if declared.is_empty() {
+        return;
+    }
+
+    let id = NodeId::new(module, kind, &name);
+    let Some(node) = graph.nodes.iter_mut().find(|node| node.id == id) else { return };
+    let NodeDetail::Entity(detail) = &mut node.detail else { return };
+
+    for field in &mut detail.fields {
+        if !field.type_expr.is_empty() {
+            continue;
+        }
+        if let Some(source) = declared.iter().find(|other| other.name == field.name) {
+            field.type_expr.clone_from(&source.type_expr);
+        }
     }
 }
 
@@ -192,7 +227,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::graph::EntityKind;
+    use crate::graph::{EntityField, EntityKind};
 
     fn named(name: &str) -> Value {
         json!({"span": {"start": 0, "end": 0}, "name": name})
@@ -281,6 +316,59 @@ mod tests {
 
         assert_eq!(graph.nodes.len(), 1, "the node is located, not duplicated");
         assert_eq!(graph.nodes[0].span, Some(Span::new(100, 400)));
+    }
+
+    #[test]
+    fn a_relationship_model_could_not_resolve_is_typed_from_the_source() {
+        // The case this pass exists for. `allium model` reads one file, so a
+        // relationship crossing a module boundary comes back with no target it
+        // can name; the model pass drops that and this supplies the type the
+        // author wrote, which the linker can then resolve across the set.
+        let mut graph = SpecGraph::new("test");
+        let mut untyped = EntityField::new("conversations", "");
+        untyped.relationship = true;
+        graph.nodes.push(Node::new("identity", NodeKind::Entity, "Identity").with(
+            NodeDetail::Entity(crate::graph::EntityDetail {
+                kind: EntityKind::Internal,
+                fields: vec![untyped, EntityField::new("name", "String")],
+                transitions: Vec::new(),
+                parent: None,
+            }),
+        ));
+
+        let declarations = json!([{"Block": {
+            "span": {"start": 0, "end": 80},
+            "kind": "Entity",
+            "name": named("Identity"),
+            "items": [
+                {"kind": {"Assignment": {
+                    "name": named("conversations"),
+                    "value": {"With": {
+                        "source": {"QualifiedName": {"qualifier": "membership", "name": "Membership"}},
+                        "condition": {"Ident": {"name": "active"}},
+                    }},
+                }}},
+                {"kind": {"Assignment": {
+                    "name": named("name"),
+                    "value": {"Ident": {"name": "SomethingElse"}},
+                }}},
+            ],
+        }}]);
+        ingest(&document(declarations, 3), "identity", "identity.allium", "", &mut graph);
+
+        let detail = graph
+            .node(&NodeId::new("identity", NodeKind::Entity, "Identity"))
+            .and_then(|node| node.detail.as_entity())
+            .expect("the entity");
+        assert_eq!(
+            detail.field("conversations").map(|f| f.type_expr.as_str()),
+            Some("membership/Membership")
+        );
+        assert_eq!(
+            detail.field("name").map(|f| f.type_expr.as_str()),
+            Some("String"),
+            "a type the model pass did resolve is not overwritten by the syntax"
+        );
     }
 
     #[test]

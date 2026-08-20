@@ -85,12 +85,31 @@ rust_commits_since() {
     git rev-list --count "$1"..HEAD -- '*.rs'
 }
 
-# Added + modified Rust lines between a receipt's commit and HEAD.
+# Added + modified Rust lines between a receipt's commit and the working tree.
 #
-# This is the metric the mutation cadence is driven by. `--numstat` gives
-# added and deleted per file; deletions are counted too, because removing a
-# tested branch changes what the suite covers just as surely as adding one.
+# This is the metric the mutation cadence is driven by. `--numstat` gives added
+# and deleted per file; deletions are counted too, because removing a tested
+# branch changes what the suite covers just as surely as adding one.
+#
+# Against the working tree, not `..HEAD`. The gate runs inside `just check`,
+# which is what you run *before* committing — so at that moment the change being
+# judged is not in HEAD yet. Comparing to HEAD would report zero debt for a
+# thousand uncommitted lines and then start counting them only once they were
+# already in.
+# Untracked files are counted separately, because `git diff` does not see them
+# at all. A brand new module — the single most likely thing to need mutation
+# testing — would otherwise contribute nothing to the metric until the moment it
+# was staged, which is precisely when the gate has already been asked.
 rust_lines_changed_since() {
-    git diff --numstat "$1"..HEAD -- '*.rs' |
-        awk '$1 != "-" { added += $1; deleted += $2 } END { print added + deleted + 0 }'
+    local tracked untracked
+    tracked="$(
+        git diff --numstat "$1" -- '*.rs' |
+            awk '$1 != "-" { added += $1; deleted += $2 } END { print added + deleted + 0 }'
+    )"
+    untracked="$(
+        git ls-files --others --exclude-standard -z -- '*.rs' |
+            xargs -0 -r cat 2>/dev/null |
+            wc -l | tr -d ' '
+    )"
+    echo $(( tracked + untracked ))
 }

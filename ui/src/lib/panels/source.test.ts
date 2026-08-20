@@ -14,13 +14,20 @@ const SPEC = [
   "", // 9
 ].join("\n");
 
-/** The span of `needle` in the fixture. */
-function spanOf(needle: string) {
-  const start = SPEC.indexOf(needle);
-  if (start < 0) {
+const encoder = new TextEncoder();
+
+/** The *byte* span of `needle` in `text`, as the parser would report it. */
+function spanIn(text: string, needle: string) {
+  const at = text.indexOf(needle);
+  if (at < 0) {
     throw new Error(`the fixture does not contain ${needle}`);
   }
-  return { start, end: start + needle.length };
+  const start = encoder.encode(text.slice(0, at)).length;
+  return { start, end: start + encoder.encode(needle).length };
+}
+
+function spanOf(needle: string) {
+  return spanIn(SPEC, needle);
 }
 
 describe("sliceLines", () => {
@@ -67,6 +74,18 @@ describe("sliceLines", () => {
     expect(view.lines.at(-1)?.number).toBeLessThanOrEqual(9);
   });
 
+  it("marks the line the declaration opens on, for the eye to land on", () => {
+    // A forty-line rule flooded with highlighter is no easier to read than one
+    // without; the opening line is where the reader actually starts.
+    const view = sliceLines(SPEC, spanOf("entity Book {\n    title"), 40);
+    const opens = view.lines.filter((line) => line.opens).map((line) => line.number);
+    expect(opens).toEqual([5]);
+  });
+
+  it("marks no opening line when nothing is highlighted", () => {
+    expect(sliceLines(SPEC, null, 40).lines.some((line) => line.opens)).toBe(false);
+  });
+
   it("shows nothing when nothing is selected", () => {
     // Line 1 of a file whose selection is elsewhere is a quiet lie about
     // where you are.
@@ -100,9 +119,41 @@ describe("sliceLines", () => {
     expect(view.lines.filter((line) => line.highlit).map((l) => l.number)).toEqual([5]);
   });
 
+  it("resolves a span by bytes, not by string index", () => {
+    // The bug this function exists to avoid. The parser counts bytes;
+    // JavaScript strings are indexed in UTF-16 units. They agree for ASCII —
+    // which is why it looks fine until a spec has an em-dash in a comment, and
+    // then every highlight below it silently shifts.
+    const text = [
+      "-- a comment — with an em-dash", // 3 bytes for the dash, 1 unit
+      "-- another — one",
+      "entity Book {",
+      "    title: String",
+      "}",
+      "",
+    ].join("\n");
+
+    const view = sliceLines(text, spanIn(text, "entity Book {"), 40);
+    const opens = view.lines.filter((line) => line.opens);
+    expect(opens).toHaveLength(1);
+    expect(opens[0]?.text).toBe("entity Book {");
+    expect(view.firstLine).toBe(3);
+  });
+
+  it("drifts by exactly the byte surplus when given a string index instead", () => {
+    // Stated as a test so the failure mode is documented rather than merely
+    // avoided: two em-dashes ahead of the declaration put a naive lookup four
+    // bytes early, which is a whole line in a dense file.
+    const text = "-- — —\nentity Book {\n";
+    const byteSpan = spanIn(text, "entity Book {");
+    const stringIndex = text.indexOf("entity Book {");
+    expect(byteSpan.start - stringIndex).toBe(4);
+    expect(sliceLines(text, byteSpan, 40).firstLine).toBe(2);
+  });
+
   it("counts lines correctly past multi-byte characters", () => {
     const text = "-- naïve\nentity A {}\n";
-    const view = sliceLines(text, { start: text.indexOf("entity"), end: text.length }, 40);
+    const view = sliceLines(text, spanIn(text, "entity A {}"), 40);
     expect(view.firstLine).toBe(2);
   });
 });

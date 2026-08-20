@@ -254,6 +254,30 @@ mod tests {
     }
 
     #[test]
+    fn a_declaration_ending_exactly_where_a_line_begins_does_not_claim_it() {
+        // Spans are half-open, so a node ending at the first byte of a line
+        // stops before that line. Treating the boundary as overlap would let
+        // every declaration claim the line after it — which, for a file of
+        // back-to-back declarations, is every diagnostic in the file.
+        use crate::graph::{Node, NodeKind};
+        let source = "entity A {}\nentity B {}\n";
+        let second = source.find("entity B").expect("present");
+        let mut graph = SpecGraph::new("test");
+        graph.nodes.push(Node::new("m", NodeKind::Entity, "A").at(Some(Span::new(0, second))));
+
+        ingest_diagnostics(
+            &json!({"diagnostics": [{
+                "severity": "warning", "message": "m",
+                "location": {"file": "m.allium", "line": 2, "col": 1},
+            }]}),
+            "m",
+            &mut graph,
+        );
+        attribute(&mut graph, "m", source);
+        assert_eq!(graph.diagnostics[0].node, None, "A ends before line 2 begins");
+    }
+
+    #[test]
     fn a_diagnostic_between_declarations_is_attributed_to_neither() {
         // Line 4 is the blank line. Reaching for the nearest node would badge a
         // construct the reader would then look at and find nothing wrong with.

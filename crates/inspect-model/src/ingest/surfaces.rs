@@ -21,7 +21,7 @@ use crate::{
         ActorDetail, Edge, EdgeKind, InvariantDetail, Node, NodeDetail, NodeId, NodeKind,
         SpecGraph, SurfaceDetail, SurfaceOperation,
     },
-    ingest::json,
+    ingest::{json, text},
     span::Span,
 };
 
@@ -231,9 +231,11 @@ fn binding_and_type(value: Option<&Value>) -> (Option<String>, Option<String>) {
         Some(("Binding", inner)) => {
             (json::declared_name(inner), inner.get("value").and_then(json::type_reference))
         }
-        // A `context` clause may narrow with `where`, in which case the type is
-        // the filter's source.
-        Some(("Where", inner)) => (None, inner.get("source").and_then(json::type_reference)),
+        // A `context` clause may narrow with `where`, and a `facing` clause
+        // occasionally does too. Both fall through here rather than getting an
+        // arm of their own: `type_reference` already unwraps a filter to its
+        // source, so a separate arm would be a second copy of that rule waiting
+        // to disagree with the first.
         _ => (None, value.and_then(json::type_reference)),
     }
 }
@@ -278,10 +280,10 @@ fn operation(item: &Value, source: &str) -> Option<SurfaceOperation> {
     Some(SurfaceOperation { trigger, parameters, when: guard })
 }
 
-/// The source text an expression node covers.
+/// The source text an expression node covers, comments removed.
 fn expression_text(value: &Value, source: &str) -> Option<String> {
     let span = expression_span(value)?;
-    span.slice(source).map(|text| text.split_whitespace().collect::<Vec<_>>().join(" "))
+    span.slice(source).map(text::one_line).filter(|line| !line.is_empty())
 }
 
 fn expression_span(value: &Value) -> Option<Span> {

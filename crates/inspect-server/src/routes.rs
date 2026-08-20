@@ -1,0 +1,322 @@
+//! The routes, and the embedded UI behind them.
+//!
+//! Everything with behaviour worth arguing about lives in `inspect-model`, so
+//! these handlers are deliberately dull: read the current inspection, serialise
+//! part of it, return it. The one judgement call here is what a request for a
+//! module nobody loaded should say, and the answer is the list of modules that
+//! *are* loaded — a 404 whose body names the alternatives is the difference
+//! between a dead end and a correction.
+
+use axum::{
+    Json, Router,
+    extract::{Path, State},
+    http::{StatusCode, Uri, header},
+    response::{IntoResponse, Response},
+    routing::get,
+};
+use rust_embed::RustEmbed;
+use serde::Serialize;
+
+use crate::state::{AppState, ModuleSource};
+
+/// Whether an asset's name carries a content hash.
+///
+/// Vite emits `assets/index-C1TlQqgo.js`: a name that changes whenever the
+/// bytes do, which is exactly the condition under which caching forever is
+/// safe.
+fn is_fingerprinted(path: &str) -> bool {
+    path.starts_with("assets/")
+}
+
+/// The built UI, baked into the binary.
+///
+/// `allium-inspect` is one file people copy onto a machine and run; an assets
+/// directory it had to find at runtime would be one more thing to get wrong.
+#[derive(RustEmbed)]
+#[folder = "assets/"]
+struct Assets;
+
+/// What `/api/health` answers.
+#[derive(Serialize)]
+struct Health {
+    ok: bool,
+    allium_version: String,
+    modules: Vec<String>,
+    /// Why the last reload failed, when it did.
+    error: Option<String>,
+}
+
+/// The router, with `state` behind every API route.
+pub fn router(state: AppState) -> Router {
+    Router::new()
+        .route("/api/health", get(health))
+        .route("/api/spec", get(spec))
+        .route("/api/spec/source/{module}", get(source))
+        .fallback(assets)
+        .with_state(state)
+}
+
+/// Serve until the process is stopped.
+///
+/// Here rather than in the binary so `axum` stays one crate's concern. The
+/// binary decides *which* port; how to answer on it is this crate's business.
+///
+/// # Errors
+///
+/// Returns whatever the server stopped with.
+pub async fn serve(listener: tokio::net::TcpListener, state: AppState) -> std::io::Result<()> {
+    axum::serve(listener, router(state)).await
+}
+
+async fn health(State(state): State<AppState>) -> Json<Health> {
+    let inspection = state.get();
+    Json(Health {
+        ok: state.error().is_none(),
+        allium_version: inspection.graph.allium_version.clone(),
+        modules: inspection.modules().map(ToOwned::to_owned).collect(),
+        error: state.error(),
+    })
+}
+
+async fn spec(State(state): State<AppState>) -> Json<inspect_model::SpecGraph> {
+    Json(state.get().graph.clone())
+}
+
+async fn source(
+    State(state): State<AppState>,
+    Path(module): Path<String>,
+) -> Result<Json<ModuleSource>, Response> {
+    let inspection = state.get();
+    match inspection.source(&module) {
+        Some(source) => Ok(Json(source.clone())),
+        None => {
+            let known: Vec<&str> = inspection.modules().collect();
+            Err((
+                StatusCode::NOT_FOUND,
+                format!(
+                    "no module named `{module}` is loaded. Loaded modules: {}",
+                    if known.is_empty() { "none".to_owned() } else { known.join(", ") }
+                ),
+            )
+                .into_response())
+        }
+    }
+}
+
+/// Serve the embedded UI, falling back to `index.html`.
+///
+/// The fallback is what makes a link to a construct work: the UI keeps the
+/// selection in the path, so a reload of `/entity/Book` has to reach the app
+/// rather than 404 on a file that was never going to exist.
+async fn assets(uri: Uri) -> Response {
+    let path = uri.path().trim_start_matches('/');
+    let path = if path.is_empty() { "index.html" } else { path };
+
+    match Assets::get(path).or_else(|| Assets::get("index.html")) {
+        Some(file) => {
+            let mime = file.metadata.mimetype();
+            // Vite fingerprints every asset it emits, so those may be cached
+            // forever — the name changes when the contents do. `index.html` is
+            // the one file with a stable name, so it must never be cached: it
+            // is what names the current bundle, and a stale copy of it pins the
+            // browser to a build that is no longer on disk. That is not a
+            // theoretical concern here, where rebuilding the UI while the tool
+            // is open is the normal way to work on it.
+            let caching = if is_fingerprinted(path) {
+                "public, max-age=31536000, immutable"
+            } else {
+                "no-cache"
+            };
+            ([(header::CONTENT_TYPE, mime), (header::CACHE_CONTROL, caching)], file.data)
+                .into_response()
+        }
+        None => (
+            StatusCode::NOT_FOUND,
+            "The UI was not built into this binary. Run `just build`, which runs \
+             `just ui-build` first.",
+        )
+            .into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::body::{Body, to_bytes};
+    use http::Request;
+    use serde_json::Value;
+    use tower::ServiceExt;
+
+    use super::*;
+    use crate::state::Inspection;
+
+    /// A server over the two fixture modules, with no socket involved.
+    fn server() -> Router {
+        router(AppState::new(fixture_inspection()))
+    }
+
+    fn fixture_inspection() -> Inspection {
+        Inspection::from_parts(
+            inspect_model::SpecGraph::new("allium 3.5.3"),
+            vec![ModuleSource {
+                module: "catalogue".to_owned(),
+                path: "specs/catalogue.allium".to_owned(),
+                text: "entity Book {}\n".to_owned(),
+            }],
+        )
+    }
+
+    async fn get(app: Router, uri: &str) -> (StatusCode, String) {
+        let response = app
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).expect("a request"))
+            .await
+            .expect("a response");
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), 1 << 20).await.expect("a body");
+        (status, String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    #[tokio::test]
+    async fn health_reports_the_cli_and_the_modules() {
+        let (status, body) = get(server(), "/api/health").await;
+        assert_eq!(status, StatusCode::OK);
+        let json: Value = serde_json::from_str(&body).expect("JSON");
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["allium_version"], "allium 3.5.3");
+        assert_eq!(json["modules"][0], "catalogue");
+        assert_eq!(json["error"], Value::Null);
+    }
+
+    #[tokio::test]
+    async fn health_reports_a_failed_reload_rather_than_claiming_to_be_well() {
+        // The graph on screen is from before the edit; saying `ok` would let a
+        // reader trust a picture the current file no longer produces.
+        let state = AppState::new(fixture_inspection());
+        state.set_error(Some("expected '{', found 'external'".to_owned()));
+        let (_, body) = get(router(state), "/api/health").await;
+        let json: Value = serde_json::from_str(&body).expect("JSON");
+        assert_eq!(json["ok"], false);
+        assert!(json["error"].as_str().expect("a message").contains("expected"));
+    }
+
+    #[tokio::test]
+    async fn the_spec_route_returns_the_graph() {
+        let (status, body) = get(server(), "/api/spec").await;
+        assert_eq!(status, StatusCode::OK);
+        let json: Value = serde_json::from_str(&body).expect("JSON");
+        assert_eq!(json["allium_version"], "allium 3.5.3");
+        assert!(json["nodes"].is_array());
+    }
+
+    #[tokio::test]
+    async fn a_modules_source_is_served_with_its_path() {
+        let (status, body) = get(server(), "/api/spec/source/catalogue").await;
+        assert_eq!(status, StatusCode::OK);
+        let json: Value = serde_json::from_str(&body).expect("JSON");
+        assert_eq!(json["module"], "catalogue");
+        assert_eq!(json["path"], "specs/catalogue.allium");
+        assert_eq!(json["text"], "entity Book {}\n");
+    }
+
+    #[tokio::test]
+    async fn an_unknown_module_is_told_which_ones_are_loaded() {
+        // A 404 whose body names the alternatives is the difference between a
+        // dead end and a correction.
+        let (status, body) = get(server(), "/api/spec/source/nonesuch").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(body.contains("nonesuch"), "{body}");
+        assert!(body.contains("catalogue"), "the loaded modules are named: {body}");
+    }
+
+    #[tokio::test]
+    async fn a_module_name_needing_escaping_is_still_found() {
+        let state = AppState::new(Inspection::from_parts(
+            inspect_model::SpecGraph::new("v"),
+            vec![ModuleSource {
+                module: "odd name".to_owned(),
+                path: "odd name.allium".to_owned(),
+                text: String::new(),
+            }],
+        ));
+        let (status, _) = get(router(state), "/api/spec/source/odd%20name").await;
+        assert_eq!(status, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn a_state_swap_is_visible_to_the_next_request() {
+        let state = AppState::new(fixture_inspection());
+        let app = router(state.clone());
+        state.replace(Inspection::from_parts(
+            inspect_model::SpecGraph::new("allium 4.0.0"),
+            Vec::new(),
+        ));
+        let (_, body) = get(app, "/api/spec").await;
+        let json: Value = serde_json::from_str(&body).expect("JSON");
+        assert_eq!(json["allium_version"], "allium 4.0.0");
+    }
+
+    #[tokio::test]
+    async fn replacing_the_inspection_clears_a_previous_failure() {
+        let state = AppState::new(fixture_inspection());
+        state.set_error(Some("broken".to_owned()));
+        state.replace(fixture_inspection());
+        assert_eq!(state.error(), None);
+    }
+
+    #[test]
+    fn only_fingerprinted_assets_may_be_cached_forever() {
+        // `index.html` is the one file with a stable name, and it is what names
+        // the current bundle. Caching it pins the browser to a build that is no
+        // longer on disk — which is what happens every time the UI is rebuilt
+        // while the tool is open.
+        assert!(is_fingerprinted("assets/index-C1TlQqgo.js"));
+        assert!(is_fingerprinted("assets/index-BTEsh_lV.css"));
+        assert!(!is_fingerprinted("index.html"));
+        assert!(!is_fingerprinted(""));
+    }
+
+    /// A request, returning the status, the body, and one header.
+    async fn get_with_header(app: Router, uri: &str, header: &str) -> (StatusCode, String, String) {
+        let response = app
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).expect("a request"))
+            .await
+            .expect("a response");
+        let status = response.status();
+        let value = response
+            .headers()
+            .get(header)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_owned();
+        let bytes = to_bytes(response.into_body(), 1 << 20).await.expect("a body");
+        (status, String::from_utf8_lossy(&bytes).into_owned(), value)
+    }
+
+    #[tokio::test]
+    async fn the_ui_is_either_served_uncached_or_says_how_to_build_it() {
+        // Written to hold in both states on purpose. The assets are embedded at
+        // compile time, so whether they exist depends on whether `just
+        // ui-build` ran before `cargo build` — and a test that only passes in
+        // one of those states fails for a reason that has nothing to do with
+        // the behaviour it is describing.
+        let (status, body, caching) = get_with_header(server(), "/", "cache-control").await;
+        if status == StatusCode::NOT_FOUND {
+            assert!(body.contains("just build"), "the message names the fix: {body}");
+        } else {
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(
+                caching, "no-cache",
+                "index.html names the current bundle, so caching it pins the browser to an old one"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn an_unknown_path_falls_through_to_the_app() {
+        // The UI keeps the selection in the path, so reloading a link to a
+        // construct has to reach the app rather than 404 on a file that was
+        // never going to exist.
+        let (status, _, _) = get_with_header(server(), "/entity/Book", "cache-control").await;
+        let (root, _, _) = get_with_header(server(), "/", "cache-control").await;
+        assert_eq!(status, root, "a deep link is served exactly as the root is");
+    }
+}

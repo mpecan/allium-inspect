@@ -49,18 +49,28 @@ export function worstByModule(graph: SpecGraph): Map<string, Severity> {
   return worst;
 }
 
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+
 /**
  * The one-based line and column of a span's start.
  *
- * Counted in characters, not bytes: a byte column puts the caret in the wrong
- * place on any line holding a non-ASCII character, and spec prose holds plenty.
- * The offsets themselves are bytes, as the parser reports them.
+ * Two different units meet here and neither can be assumed. The parser reports
+ * *byte* offsets; JavaScript indexes strings in UTF-16 units; a person reading
+ * an editor's status bar expects a column counted in *characters*. All three
+ * agree for ASCII, which is why conflating them survives every test written
+ * against an ASCII fixture and then puts the caret in the wrong place on the
+ * first line of prose containing an em-dash.
+ *
+ * So the prefix is cut in bytes and then decoded, and the column is counted in
+ * characters over what comes back.
  */
 export function positionOf(text: string, span: Span | null): Position | null {
   if (!span) {
     return null;
   }
-  const upto = text.slice(0, Math.min(span.start, text.length));
+  const bytes = encoder.encode(text);
+  const upto = decoder.decode(bytes.slice(0, Math.min(Math.max(span.start, 0), bytes.length)));
   const lines = upto.split("\n");
   const last = lines.at(-1) ?? "";
   return { line: lines.length, column: [...last].length + 1 };
