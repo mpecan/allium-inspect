@@ -2,84 +2,105 @@
 
 *A design. Nothing here is built yet.*
 
+Second draft, after answers on the open questions. What changed is the direction
+of the whole thing: a journey is not a test written after a spec, it is the
+**demand written first**, and the spec is filled in to satisfy it.
+
+> Think of it the other way around: I write the journeys and then fill the spec
+> to fulfil them.
+
+That inverts everything below. A step naming a surface the spec does not have is
+not an error — it is a requirement nobody has met yet, and saying so is the most
+useful thing the tool can do.
+
 ## The gap
 
-Allium says what each rule does when its trigger happens. It says nothing
-anywhere about what a person does next, and it has no construct for saying it.
+Allium says what each rule does when its trigger happens. It says nothing about
+what a person does next, and has no construct for saying it.
 
-This tool already draws a **Journey** view, and the rail is careful about what
-that view actually is:
+This tool draws a **Journey** view, and the rail is careful about what it is:
 
 > A trace is derived from which triggers a surface offers and which each rule
 > emits. Allium has no journey construct, so this is what follows — not what a
 > person does.
 
-The difference is not a detail. A derived trace follows causation through the
-system: this trigger fires that rule, which emits that trigger, which fires the
-next. A journey follows a *person*: they act, they wait a day, somebody else
-acts, they come back and look at a screen, and what they see decides what they
-do next. Between two triggers on a causal chain there can be a decision, a
-different actor, a night's sleep, or nothing at all — and the causal chain has no
-way to tell those apart.
+A derived trace follows causation: this trigger fires that rule, which emits
+that trigger. A journey follows a *person*: they act, they wait a day, somebody
+else acts, they come back and look at a screen, and what they see decides what
+they do next. Between two triggers on a causal chain there can be a decision, a
+different actor, or a night's sleep, and the chain cannot tell those apart.
 
-So the tool can show what the system does and cannot show what anyone gets.
+`friend-mesh`'s own `docs/journeys.md` says why this matters, about a codebase
+rather than a spec, and the sentence transfers exactly:
 
-## The insight this design rests on
+> the design has been recorded *feature-first* — a roster, an invite ticket, a
+> self-group — and features do not tell you what is missing. A journey does: it
+> walks from an intent to an outcome and **stops dead at the first step nobody
+> built**.
 
-The engine already exists.
+A specification is recorded construct-first for the same reason and has the same
+blind spot. Journeys are how you find out what it does not let anyone do.
 
-`step(spec, world, event)` takes a world and a trigger, applies the rules that
-wait for it, checks every invariant, and reports what changed, what it could not
-decide, and which state-condition rules the change just made possible. The clock
-is a field you advance. A run is deterministic and replayable.
+## Two harnesses, one shape
 
-That is a journey execution engine with no journeys in it. What is missing is
-not machinery — it is a *script*.
+`just journeys` in `friend-mesh` walks a real app on two real devices: boot the
+simulators, launch, attach to the webview, walk thirteen numbered steps, assert
+the accessibility node that proves the app got there, photograph it.
 
-Which means a journey should not be prose about the spec. It should be an
-**executable claim about what an actor can do, checked against the spec**, and
-the tool should be able to answer: does this specification actually support this?
+What is designed here is the same walk one level up — through the
+**specification**, in the simulator this tool already has, at design time,
+before anything is built.
+
+| | `just journeys` | this |
+|---|---|---|
+| walks | a built app | a specification |
+| runs on | two simulators and a hub | `step(spec, world, event)` |
+| a step fails when | the app does not do it | the spec does not permit it |
+| costs | minutes, and five external binaries | milliseconds |
+| answers | did we build it | is it even specified |
+
+They are not the same tool and this does not propose merging them. But a step is
+a sentence in a person's terms in both — *"Ada's phone goes off, and Bruno writes
+to her anyway"* — and the sentences should be able to be the same ones, so that a
+journey rehearsed against the spec becomes the walk that proves it later.
+
+## The insight the design rests on
+
+The engine already exists. `step(spec, world, event)` applies the rules that wait
+for a trigger, checks every invariant, and reports what changed and what it could
+not decide. The clock is a field you advance. A run is deterministic.
+
+That is a journey execution engine with no journeys in it. What is missing is a
+script.
 
 ## What a journey is
 
-A journey is:
+One or more **actors'** paths, through **acts the spec permits**, over a **world
+that has been said to exist**, with **time passing where it passes**, asserting
+both what becomes true and **what each person can see**, ending in an outcome
+stated in words.
 
-- one **actor's** path, sometimes crossing another's,
-- through **acts the spec says they may perform**,
-- over a **world** that must be said to exist,
-- with **time** passing where it passes,
-- asserting both what becomes **true** and what the person can **see**,
-- ending in an outcome stated in words.
-
-It is linear. There are no branches: a branch is a second journey, and saying so
-keeps a journey something a person can read aloud.
+Linear. A branch is a second journey, which keeps a journey something you can
+read aloud — and `friend-mesh` has seven separate walks rather than one with
+conditionals for exactly that reason.
 
 ## Where it lives
 
-Outside Allium, for now. A sidecar directory beside the specs:
+Beside the specs, and read with them:
 
 ```
-specs/
-    messaging.allium
-    delivery.allium
-journeys/
-    deletion-can-be-taken-back.journey
-    deletion-becomes-final.journey
+specs/     messaging.allium  delivery.allium  …
+journeys/  deletion-taken-back.journey  deletion-becomes-final.journey  …
 ```
 
-`allium-inspect --journeys journeys/ specs/` reads both. The spec set does not
-know the journeys exist, which is the point: nothing about this changes what
-`allium check` says, and a spec set with no journeys is exactly as valid as one
-with fifty.
-
-The syntax is deliberately shaped like Allium's own — blocks, keyword clauses,
-`--` comments — so that a reader who has one in their head has both, and so that
-graduating it into the language later is a rename rather than a rewrite.
+`allium-inspect --journeys journeys/ specs/`. The spec set does not know they
+exist: `allium check` says the same thing either way. The syntax is deliberately
+Allium-shaped so graduating it into the language later is a rename.
 
 ## A worked example
 
-Real, against `friend-mesh`. Someone deletes a conversation everywhere, thinks
-better of it inside the day, and takes it back.
+Real, against `friend-mesh`. Two people, because one-person journeys are the easy
+half and not what any of this is for.
 
 ```
 -- What "everywhere" costs, and what taking it back does not undo. The messages
@@ -87,156 +108,172 @@ better of it inside the day, and takes it back.
 -- author a change of mind, not a delay before anything happens.
 journey DeletionCanBeTakenBack {
     goal: Ada deletes a message everywhere, changes her mind two hours later,
-          and takes it back before the day is out.
+          and takes it back before the day is out — and Bruno, who was reading
+          it, is told once rather than twice.
 
     cast:
-        ada:   identity/Identity
-        phone: identity/Device
+        ada:        identity/Identity   -- deletes, then thinks better of it
+        her_phone:  identity/Device
+        bruno:      identity/Identity   -- was reading, and is only a bystander
+        his_phone:  identity/Device
 
     given:
         ada.status = active
-        phone.identity = ada
-        phone.status = active
-        note: messaging/Message { author: ada, body: "forget I said that" }
+        her_phone.identity = ada
+        her_phone.status = active
 
-    ada does PersonDeletesEverywhere(ada, phone, {note}) on Conversation
+        bruno.status = active
+        his_phone.identity = bruno
+        his_phone.status = active
+
+        chat: membership/Group
+        note: messaging/Message { author: ada, group: chat, body: "forget I said that" }
+
+    1. ada deletes it everywhere
+        ada does PersonDeletesEverywhere(ada, her_phone, {note}) on Conversation
         then note.status = tombstoned
         then DeleteIntent#1.status = applied
         then DeleteAcrossMyDevices fires
         ada sees DeleteIntent#1.targets.count on OpenDeletions
 
-    after 2.hours
-        ada does PersonCancelsDeletion(DeleteIntent#1, phone) on OpenDeletions
+    2. bruno's copy goes too, and his screen says so
+        bruno cannot see note.body on Conversation
+
+    3. two hours later she takes it back
+        after 2.hours
+        ada does PersonCancelsDeletion(DeleteIntent#1, her_phone) on OpenDeletions
         then DeleteIntent#1.status = cancelled
         then VetoAnnouncement#1 exists
 
-    ends: The intent is cancelled inside the window, and the people she was
-          talking to are told once rather than twice.
+    ends: The intent is cancelled inside the window, and Bruno was told once.
 }
 ```
 
-And its sibling, which is the same story with nobody changing their mind:
+Step 2 is where a journey earns its keep, and it is the shape `just journeys`
+already taught: *"a step asking whether that word was anywhere on screen would be
+answered by the wrong message and pass."* `bruno cannot see note.body` names one
+message. Not "nothing on his screen says that" — *this* message, on *his*
+surface, given *his* membership.
+
+## Two people, two states, one world
+
+> We need to be able to model more than one instance of an actor, they can have
+> different preconditions.
+
+So `cast` is instances, not roles, and each gets its own lines in `given`. Ada
+and Bruno are both `identity/Identity`; her phone is active and his may not be.
+That is the whole of the `just journeys` step 10 — *"Ada's phone goes off, and
+Bruno writes to her anyway"* — and it is a precondition on one instance, not a
+second world.
+
+One world, many instances, is also what the simulator already does, so nothing
+new is needed to run it. Where two devices genuinely diverge, the spec already
+models it: `OutboxEntry.awaiting` is the set of devices that do not have it yet.
+A journey asserting `his_phone in OutboxEntry#1.awaiting` is asking a question
+the spec can already answer.
+
+## `given` is precise, and that costs lines
+
+> Precision is important and it needs to be checkable.
+
+So no `given: a group with two members`. Every instance is named, every field it
+needs is assigned, and each line is checked against the entity's declared fields.
+The setup will sometimes be longer than the journey, and the alternative —
+shorthand that invents a shape the spec never stated — puts facts in the spec's
+mouth, which is the one thing this tool does not do anywhere else.
+
+Two things take the sting out without inventing anything. `given` may leave a
+field unset, and an unset field the journey never reads costs nothing; if a rule
+reads it, the step comes back **undecided** naming that field, which is the same
+answer the simulator gives today. And a `given` block may be shared by the
+journeys in one file, since the cost is per file rather than per journey.
+
+## Seeing is behaviour
+
+> If it is a behaviour, we need to be able to model it. Seeing a message or
+> content is important.
+
+So `sees` is not a static lookup against the `exposes` list. It is evaluated:
+the surface's projection is walked, its filter applied, and the question asked is
+whether *this* actor observes *this* value in *this* world.
+
+`OpenDeletions` exposes `for intent in DeleteIntents where owner = owner and
+status = applied: intent.targets.count`. Asking whether Ada sees
+`DeleteIntent#1.targets.count` means evaluating that filter with `owner` bound to
+Ada — which is the same evaluator the simulator already runs, and it will
+sometimes come back undecided.
+
+**A `cannot see` that could not be evaluated is undecided, never safe.** A
+privacy claim that passes because the tool could not check it is the worst output
+available here, and refusing it is the single most important rule in this design.
+
+## Status, not pass/fail
+
+The inversion changes what a report is. `friend-mesh`'s own journeys file has the
+right vocabulary already, one level down; these are its spec-level counterparts:
+
+| Mark | Means |
+|---|---|
+| **holds** | the spec permits this step and the assertions are true |
+| **undecided** | something could not be evaluated, and here is the sub-expression |
+| **refused** | the spec forbids it — a precondition is definitely false |
+| **unspecified** | the step names a surface, operation or exposure the spec does not have |
+| **unexposed** | the act exists but nothing lets this actor see the result |
+
+The last two are the point of writing journeys first. **unspecified** is a
+requirement nobody has met. **unexposed** is a system that does the right thing
+and tells nobody — and `friend-mesh` has one: `OpenDeletions` exposes deletions
+`where status = applied`, so once an intent settles it vanishes from the only
+screen that ever mentioned it. A second journey states it in one line:
 
 ```
 journey DeletionBecomesFinal {
-    goal: Ada deletes a message everywhere and lets the day pass, and it settles
-          without anybody doing anything else.
-
-    cast:
-        ada:   identity/Identity
-        phone: identity/Device
-
-    given:
-        ada.status = active
-        phone.identity = ada
-        phone.status = active
-        note: messaging/Message { author: ada, body: "forget I said that" }
-
-    ada does PersonDeletesEverywhere(ada, phone, {note}) on Conversation
-        then DeleteIntent#1.status = applied
-
-    after 24.hours
+    …
+    2. the day passes and it settles
+        after 24.hours
         then DeletionSettles fires
         then DeleteIntent#1.status = settled
-        ada cannot see DeleteIntent#1.created_at on OpenDeletions
-
-    ends: The deletion is final, and the screen that showed it pending shows
-          nothing at all.
+        ada sees DeleteIntent#1.status on OpenDeletions     -- unexposed
 }
 ```
 
-**That last assertion is the point of the whole exercise.** `OpenDeletions`
-exposes deletions `where owner = owner and status = applied`. A settled intent
-does not match, so it vanishes from the only screen that ever mentioned it. The
-system did the right thing and told nobody it had finished. No view in this tool
-can show that today; a journey states it in one line, and the checker can prove
-it from the surface's own `exposes` clause.
+A journey's own status is the worst of its steps, and a run reports the ledger:
+how many steps hold, and which spec constructs the rest are waiting on.
 
-Whether the vanishing is a defect or intended is a question for whoever owns the
-spec. Making it a *question* is the contribution.
+## Strictness is the caller's choice
 
-### The thing that example gets wrong, on purpose
+> Report, do not reject is one option, I would allow a switch that allows
+> either, default to report.
 
-`Conversation` faces `membership/Member`. `PersonDeletesEverywhere(owner, device,
-targets)` takes an `identity/Identity`. The journey above casts Ada as an
-Identity and has her act on a surface that faces a Member.
+```
+--journeys report   (default)  every step gets a status; exit 0
+--journeys strict              unspecified or refused is a failure; exit non-zero
+```
 
-That is either a small inconsistency in the spec, or it is entirely correct — the
-surface faces the member; the act names the identity behind them; a person is
-both. I do not know which, and neither would a checker.
+Report is the default because that is the mode you write a journey in: you write
+the walk, the tool tells you the spec has four of its seven steps, and the four
+you are missing are the next thing to specify. Strict is the mode you defend a
+finished journey in, and it is the one a build gate would use — on the journeys
+somebody has decided are done, not on all of them.
 
-So it is the first real design constraint: **the static pass must not demand that
-a cast type match the surface's actor.** A checker strict enough to reject that
-journey would reject a legitimate one, and the way to be useful here is to
-*report the mismatch* — "Ada acts on a surface facing `membership/Member` and is
-cast as `identity/Identity`" — and let a person decide. A validator that guesses
-which of two readings the author meant is the same failure as a simulator that
-guesses a truth value.
+That also settles the ownership question:
 
-## The clauses
+> The journey is an extension of the spec, being tested through behaviour.
 
-| | |
-|---|---|
-| `journey <Name> { … }` | one journey, named as a claim rather than a scenario number |
-| `goal:` | one or two sentences, in the actor's terms. Never load-bearing |
-| `cast:` | `name: Type` per party. Types are constructs the spec declares |
-| `given:` | the world before anything happens — assignments and instances |
-| `<actor> does <Trigger>(args) on <Surface>` | an act |
-| `after <duration>` | the clock advances; temporal rules that come true fire |
-| `then <assertion>` | what must hold after the step above it |
-| `then <Rule> fires` / `does not fire` | which rules ran |
-| `<actor> sees <path> on <Surface>` | what the person can observe |
-| `<actor> cannot see <path> on <Surface>` | what they must not |
-| `stipulate <path> = <value>` | a fact the simulator cannot compute |
-| `ends:` | the outcome, in words |
+A journey is not a document beside the spec that drifts from it. It is part of
+the specification, and what keeps it honest is that it is executed.
 
-Instances are named the way the simulator already names them — `DeleteIntent#1`
-— so what a journey says and what a step outcome says are the same vocabulary.
+## Stipulations, and why they matter for agents
 
-## What the checker does
-
-Two passes, and the first is worth more than it sounds.
-
-**Statically, against the spec alone.** Every name resolves. Every act is a
-trigger some surface `provides`. Every `does … on S` names a surface that
-actually offers that trigger. Every `sees … on S` names a path inside that
-surface's `exposes` clause. Every `after` is a duration. Every type in `cast`
-exists.
-
-This pass needs no simulator and no world, and it catches the things worth
-catching: an act nobody offers, an observation nothing exposes, a journey that
-still names a construct somebody renamed last week. It is also what makes the
-format safe for an agent to write, because there is no way to be vaguely right.
-
-**Dynamically, through the step engine.** Seed a world, apply `given`, then walk
-the steps: fire each act, advance the clock, evaluate each assertion. Every
-verdict is the same three the simulator already gives — and the third one is why
-this is worth building rather than a test framework.
-
-| | |
-|---|---|
-| **holds** | every step fired and every assertion was true |
-| **broken** | a step was refused, or an assertion was definitely false. The spec forbids this journey |
-| **undecided** | something could not be evaluated. The spec may or may not support this, and here is the sub-expression that stopped it |
-
-A journey never comes back green by accident. In particular a `cannot see`
-assertion whose filter could not be evaluated is **undecided, not safe** — a
-privacy claim that passes because the tool could not check it is the worst
-possible output, and the one this design most needs to refuse.
-
-## Stipulations, and why they are the interesting part
-
-The simulator cannot compute derived values, `JoinLookup`s, or calls into the
-implementation. On a real spec, a journey will hit those constantly.
-
-`stipulate` is how a journey gets past one: *take this as true, I am not asking
-you to work it out.*
+The simulator cannot compute derived values, `JoinLookup`s, or calls into an
+implementation. A journey over a real spec will hit those constantly.
 
 ```
 stipulate ada.active_devices.count = 2
 ```
 
-The rule is that **every stipulation appears in the report**, always, at the top:
+*Take this as true; I am not asking you to work it out.* The rule is that **every
+stipulation appears at the top of the report**, always:
 
 ```
 DeletionCanBeTakenBack — holds, given 2 things it was told rather than shown
@@ -244,94 +281,79 @@ DeletionCanBeTakenBack — holds, given 2 things it was told rather than shown
     stipulated  note.has_attachment = false
 ```
 
-A journey with no stipulations is a claim the spec supports on its own. A journey
-with nine is a claim about something else. The reader can tell at a glance, which
-is the only thing that keeps "holds" meaning anything.
+A journey with no stipulations is a claim the spec supports on its own. One with
+nine is a claim about something else, and the reader can tell at a glance.
 
-## What the tool does with them
-
-1. **`--check-journeys`** — the two passes above, human-readable or `--json`.
-2. **`--propose-journeys`** — skeletons. Every operation a surface offers is the
-   opening act of some journey, and the derived trace already knows what can
-   follow it. The tool emits the shape with the prose left blank; a person or an
-   agent supplies the intent. It proposes; it never claims the result is a
-   journey anyone wants.
-3. **A Journeys view** — the specified journey drawn against the derived trace,
-   with the places they disagree marked. "Here is what a person does. Here is
-   what the system does. Here is where the second does not carry the first."
-4. **Coverage** — which surface operations no journey opens with; which rules no
-   journey reaches. The reciprocal of the obligations `allium propagate`
-   generates: obligations are what the spec demands of an implementation,
-   coverage is what anyone has actually claimed you can do with it.
+This is the guardrail for agent-written journeys. An agent can make any journey
+pass. It cannot make one pass *invisibly*.
 
 ## How an agent writes one
 
-The loop this format is shaped for:
+1. The agent is given the spec set and an intent in a person's terms — from a
+   product doc, a bug report, or a human sentence.
+2. It writes the walk: cast, `given`, numbered steps, what each person sees. It
+   may name constructs the spec does not have; in report mode that is the output,
+   not an error.
+3. `--check-journeys --json` returns a status per step.
+4. **unspecified** steps are the agent's brief: these are the surfaces,
+   operations and exposures the spec still owes. It writes them — or hands the
+   list to whoever owns the spec.
+5. **refused** means the spec actively forbids the journey. That is a
+   disagreement to raise, never an assertion to weaken.
+6. **undecided** means the simulator could not tell. A `stipulate` moves past it
+   and stays visible to every human who reads the report.
 
-1. The agent reads the spec set and `--propose-journeys`.
-2. It writes intent — the goal, the cast, what the person should see. It cannot
-   invent a trigger, a surface or a field, because the static pass rejects any
-   name the spec does not declare.
-3. It runs `--check-journeys --json` and gets a verdict per step.
-4. **broken** means the spec does not support the journey. The agent's move is
-   to fix the journey or raise the disagreement — never to weaken the assertion
-   until it passes.
-5. **undecided** means the simulator could not tell. The agent adds a
-   `stipulate`, and that stipulation is now visible to every human who reads the
-   report.
+Which makes the pair with `allium propagate` symmetrical: propagate turns a spec
+into the obligations an implementation owes; this turns a journey into the
+obligations a *spec* owes.
 
-That last property is the guardrail, and it is why the format has `stipulate`
-rather than letting an agent quietly assert whatever makes the run green. An
-agent can make any journey pass; it cannot make it pass *invisibly*.
+## What the tool does with them
+
+1. **`--check-journeys`** — the run above, human-readable or `--json`.
+2. **A Journeys view** — the written journey drawn against the derived trace,
+   with the divergences marked. Steps that are `unspecified` draw as gaps rather
+   than as constructs, which makes a half-specified journey legible at a glance.
+3. **Coverage, both ways** — which surface operations no journey exercises, and
+   which journey steps no spec construct answers. The second is the backlog.
+4. **`--propose-journeys`** — skeletons from surfaces and traces, for filling in.
+   Useful for covering a spec that already exists; it is *not* the main path, and
+   a tool that only proposed journeys derived from the spec could never find a
+   step nobody had specified.
 
 ## What this deliberately is not
 
-- **Not branching.** No `if`, no loops. A second path is a second journey, and
-  the pair reads better than the flowchart would.
-- **Not a wireframe.** No layout, no copy, no ordering of a screen. `sees` says
-  a person can observe a thing, never how it looks.
-- **Not new semantics.** A journey may not assert anything the spec cannot
-  check. If a journey needs a fact the spec does not carry, the fact belongs in
-  the spec — that is the whole discipline, and the moment it slips the journeys
-  become a second, unverified specification.
-- **Not a replacement for obligations.** `allium propagate` says what an
-  implementation owes. Journeys say what a person is owed. Both are needed and
-  neither derives the other.
-- **Not performance, not availability, not error copy.**
+- **Not branching.** No `if`, no loops.
+- **Not a wireframe.** `sees` says a person can observe a value, never how it
+  looks or where.
+- **Not new semantics.** A journey may not assert anything the spec cannot check.
+  A step that needs a new fact is a step asking for that fact to be *specified* —
+  which is the whole point — rather than a place to write it down instead.
+- **Not a replacement for `just journeys`.** That walks a built app on real
+  devices and proves things no simulator can.
+- **Not performance, availability, or error copy.**
 
-## Graduating into Allium
+## The thing the example gets wrong, on purpose
 
-If this earns its place, it becomes `journey` in the language proper, and the
-work is a parser change rather than a redesign — which is the reason for shaping
-the syntax like Allium's now, while it costs nothing.
+`Conversation` faces `membership/Member`. `PersonDeletesEverywhere(owner, device,
+targets)` takes an `identity/Identity`. The journey casts Ada as an Identity and
+has her act on a surface facing a Member.
 
-Two things would have to be true first. The format has to survive a spec set
-nobody wrote it for. And journeys have to catch something no other view does,
-often enough to be worth a construct — the vanishing deletion above is one, and
-one is not a pattern.
+That is either a small inconsistency in the spec or entirely correct — the
+surface faces the member, the act names the identity behind them, a person is
+both. In report mode the tool says so and moves on. In strict mode it is a
+failure, and if it turns out to be legitimate, the fix is a line in the spec that
+says so rather than a rule in the checker that guesses.
 
-## Open questions
+## Still open
 
-Honest ones, which I cannot settle alone.
-
-- **Who owns a journey?** If they live beside the spec, they drift like anything
-  else. Coverage tells you a journey stopped touching a rule; nothing tells you a
-  journey stopped being what anyone wanted.
-- **Do the two actors in a journey need separate worlds?** `friend-mesh` is a
-  mesh: two devices genuinely hold different states, and "Bob has not received it
-  yet" is a first-class situation. One world with an `awaiting` set models that,
-  and I am not certain it always will.
-- **How much world does `given` have to build?** Most rules act on entities that
-  are already there, and the setup can end up longer than the journey. A
-  `given: a group with two members` shorthand would help and would be inventing
-  facts the spec did not state.
-- **Does `sees` need to follow the projection?** `OpenDeletions` exposes
-  `for intent in DeleteIntents where …: intent.targets.count`. Checking the path
-  is inside the clause is easy; checking the *filter admits this actor* is the
-  part that makes a privacy assertion mean something, and it is exactly the part
-  the simulator finds hardest.
-- **How far should the static pass go?** The mismatch above says: report, do not
-  reject. That line is easy to state and hard to hold — every rule that would
-  catch a real mistake also catches a legitimate spelling of something else.
-- **Should a broken journey fail a build?** A spec under development breaks
-  journeys constantly, and a gate that cries wolf is a gate people turn off.
+- **How much of `sees` can actually be evaluated?** The design says the filter is
+  walked. `where owner = owner and status = applied` is within reach today;
+  `announces_reads(owner)` is a call the simulator does not make. The honest
+  fraction on a real spec is unknown until it is tried, and if it is low the
+  `unexposed` verdict is worth less than this design assumes.
+- **What does a step number mean when a journey changes?** `friend-mesh` numbers
+  steps and refers to them by number in prose across other documents. Renumbering
+  on an insert would break those references.
+- **Does `given` need a spec-level home?** If journeys are part of the
+  specification, a world every journey in a module shares starts to look like
+  something the spec should declare rather than something each file repeats.
