@@ -13,6 +13,7 @@
 #![forbid(unsafe_code)]
 
 mod routes;
+mod sim;
 mod state;
 
 pub use routes::{router, serve};

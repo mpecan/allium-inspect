@@ -30,6 +30,7 @@ pub use link::is_unresolved;
 
 use crate::{
     graph::SpecGraph,
+    program::Program,
     runner::{AlliumRunner, Command, RunError},
 };
 
@@ -107,6 +108,30 @@ impl SourceReader for MemoryReader {
     }
 }
 
+/// What one run of the CLI over a spec set produces.
+///
+/// Two halves with different audiences. The graph is what the browser draws and
+/// is kept small enough to send whole; the program is the expression trees, an
+/// order of magnitude larger, which only the simulator reads and which
+/// therefore never leaves the process.
+#[derive(Debug)]
+pub struct Ingestion {
+    pub graph: SpecGraph,
+    pub program: Program,
+}
+
+impl Ingestion {
+    /// An empty ingestion attributed to `allium_version`.
+    ///
+    /// The passes write into one of these rather than taking a graph and a
+    /// program separately: they all contribute to the same result, and threading
+    /// two `&mut` arguments through five call sites is how they drift apart.
+    #[must_use]
+    pub fn empty(allium_version: impl Into<String>) -> Self {
+        Self { graph: SpecGraph::new(allium_version), program: Program::new() }
+    }
+}
+
 /// Build one graph from every spec file in `paths`.
 ///
 /// # Errors
@@ -117,12 +142,12 @@ pub fn ingest<R: AlliumRunner, S: SourceReader>(
     runner: &R,
     reader: &S,
     paths: &[PathBuf],
-) -> Result<SpecGraph, IngestError> {
+) -> Result<Ingestion, IngestError> {
     if paths.is_empty() {
         return Err(IngestError::NoSpecs);
     }
 
-    let mut graph = SpecGraph::new(runner.version()?);
+    let mut into = Ingestion::empty(runner.version()?);
 
     for path in paths {
         let module = module_name(path);
@@ -130,28 +155,28 @@ pub fn ingest<R: AlliumRunner, S: SourceReader>(
 
         // Order matters; see the module documentation.
         let model = runner.run(Command::Model, path)?;
-        model::ingest(&model, &module, &mut graph);
-        analyse::ingest_diagnostics(&model, &module, &mut graph);
+        model::ingest(&model, &module, &mut into.graph);
+        analyse::ingest_diagnostics(&model, &module, &mut into.graph);
 
         let parsed = runner.run(Command::Parse, path)?;
-        parse::ingest(&parsed, &module, &path.to_string_lossy(), &source, &mut graph);
-        analyse::ingest_diagnostics(&parsed, &module, &mut graph);
+        parse::ingest(&parsed, &module, &path.to_string_lossy(), &source, &mut into);
+        analyse::ingest_diagnostics(&parsed, &module, &mut into.graph);
 
         let planned = runner.run(Command::Plan, path)?;
-        plan::ingest(&planned, &module, &mut graph);
-        analyse::ingest_diagnostics(&planned, &module, &mut graph);
+        plan::ingest(&planned, &module, &mut into.graph);
+        analyse::ingest_diagnostics(&planned, &module, &mut into.graph);
 
         let analysed = runner.run(Command::Analyse, path)?;
-        analyse::ingest_diagnostics(&analysed, &module, &mut graph);
-        analyse::ingest_findings(&analysed, &module, &mut graph);
+        analyse::ingest_diagnostics(&analysed, &module, &mut into.graph);
+        analyse::ingest_findings(&analysed, &module, &mut into.graph);
 
         // Last for this module, because it needs every node of it to have the
         // span the parse pass gave it.
-        analyse::attribute(&mut graph, &module, &source);
+        analyse::attribute(&mut into.graph, &module, &source);
     }
 
-    link::link(&mut graph);
-    Ok(graph)
+    link::link(&mut into.graph);
+    Ok(into)
 }
 
 /// A spec file's module name: its file stem.
@@ -232,7 +257,7 @@ mod tests {
         let path = "catalogue.allium";
         let reader = MemoryReader::default().with(path, "entity Book {}\n");
         let graph =
-            ingest(&minimal_runner(path), &reader, &[PathBuf::from(path)]).expect("ingests");
+            ingest(&minimal_runner(path), &reader, &[PathBuf::from(path)]).expect("ingests").graph;
         assert_eq!(graph.allium_version, "allium 3.5.3");
     }
 
@@ -243,7 +268,7 @@ mod tests {
         let path = "catalogue.allium";
         let reader = MemoryReader::default().with(path, "entity Book {}\n");
         let graph =
-            ingest(&minimal_runner(path), &reader, &[PathBuf::from(path)]).expect("ingests");
+            ingest(&minimal_runner(path), &reader, &[PathBuf::from(path)]).expect("ingests").graph;
         let node =
             graph.node(&NodeId::new("catalogue", NodeKind::Entity, "Book")).expect("the entity");
         assert_eq!(node.span, Some(crate::span::Span::new(0, 20)));
@@ -255,7 +280,7 @@ mod tests {
         let path = "catalogue.allium";
         let reader = MemoryReader::default().with(path, "");
         let graph =
-            ingest(&minimal_runner(path), &reader, &[PathBuf::from(path)]).expect("ingests");
+            ingest(&minimal_runner(path), &reader, &[PathBuf::from(path)]).expect("ingests").graph;
         assert_eq!(graph.modules.len(), 1);
         assert_eq!(graph.modules[0].name, "catalogue");
         assert_eq!(graph.modules[0].path, "catalogue.allium");

@@ -23,6 +23,7 @@
 pub mod diagnostic;
 pub mod graph;
 pub mod ingest;
+pub mod program;
 pub mod runner;
 pub mod span;
 
@@ -30,6 +31,9 @@ pub use diagnostic::{Diagnostic, Finding, Location, Severity};
 pub use graph::{
     Edge, EdgeKind, Module, Node, NodeDetail, NodeId, NodeKind, Obligation, SpecGraph,
 };
-pub use ingest::{FileReader, IngestError, MemoryReader, SourceReader, ingest, module_name};
+pub use ingest::{
+    FileReader, IngestError, Ingestion, MemoryReader, SourceReader, ingest, module_name,
+};
+pub use program::{Program, RuleAst};
 pub use runner::{AlliumRunner, Command, MapRunner, ProcessRunner, RunError};
 pub use span::{LineIndex, Position, Span};

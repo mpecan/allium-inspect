@@ -87,7 +87,7 @@ mod tests {
     #[test]
     fn a_directory_yields_the_specs_inside_it() {
         let dir = tree("plain", &["b.allium", "a.allium", "notes.md"]);
-        let found = resolve(&[dir.clone()]);
+        let found = resolve(std::slice::from_ref(&dir));
         let names: Vec<String> = found
             .iter()
             .filter_map(|p| p.file_name())
@@ -116,7 +116,7 @@ mod tests {
         // A spec set is a directory of files. Recursing sweeps in vendored
         // copies and examples and presents them as one system.
         let dir = tree("nested", &["a.allium", "nested/deep.allium"]);
-        let found = resolve(&[dir.clone()]);
+        let found = resolve(std::slice::from_ref(&dir));
         assert_eq!(found, [dir.join("a.allium")]);
         let _ = fs::remove_dir_all(dir);
     }

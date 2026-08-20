@@ -24,23 +24,34 @@ use serde_json::Value;
 
 use crate::{
     graph::{
-        Edge, EdgeKind, Node, NodeDetail, NodeId, NodeKind, RuleClause, RuleDetail, SpecGraph,
-        TriggerDetail, TriggerSource,
+        Edge, EdgeKind, Node, NodeDetail, NodeId, NodeKind, RuleClause, RuleDetail, TriggerDetail,
+        TriggerSource,
     },
-    ingest::{json, text},
+    ingest::{Ingestion, json, text},
+    program::RuleAst,
     span::Span,
 };
 
 /// Add the rule declared by `block` to `graph`, along with its trigger.
-pub fn ingest(block: &Value, module: &str, source: &str, graph: &mut SpecGraph) {
+///
+/// The clause expression trees go to `program` rather than into the node: the
+/// graph carries what a reader reads, and the AST is an order of magnitude
+/// larger and only the simulator uses it.
+pub fn ingest(block: &Value, module: &str, source: &str, into: &mut Ingestion) {
     let Some(name) = json::declared_name(block) else { return };
     let rule_id = NodeId::new(module, NodeKind::Rule, &name);
 
     let mut clauses = Vec::new();
     let mut trigger = None;
+    let mut ast = RuleAst::default();
 
     for item in json::array(block, "items") {
-        let Some(clause) = item.get("kind").and_then(|kind| kind.get("Clause")) else { continue };
+        let Some(kind) = item.get("kind") else { continue };
+        if let Some(iteration) = kind.get("For") {
+            ast.iterate = Some(iteration.clone());
+            continue;
+        }
+        let Some(clause) = kind.get("Clause") else { continue };
         let keyword = json::string_or_empty(clause, "keyword");
         let span = json::span(item, "span");
         clauses.push(RuleClause {
@@ -48,10 +59,22 @@ pub fn ingest(block: &Value, module: &str, source: &str, graph: &mut SpecGraph) 
             text: clause_text(clause, span, source),
             span,
         });
-        if keyword == "when" && trigger.is_none() {
-            trigger = clause.get("value").map(trigger_from_when);
+
+        let value = clause.get("value").cloned();
+        match keyword.as_str() {
+            "when" => {
+                if trigger.is_none() {
+                    trigger = clause.get("value").map(trigger_from_when);
+                    ast.when = value;
+                }
+            }
+            "requires" => ast.requires.extend(value),
+            "ensures" => ast.ensures.extend(value),
+            _ => {}
         }
     }
+
+    into.program.add_rule(rule_id.as_str(), ast);
 
     let (trigger_name, detail) = trigger.unwrap_or_else(|| {
         // A rule with no `when` cannot be fired by anything. It is kept rather
@@ -70,25 +93,27 @@ pub fn ingest(block: &Value, module: &str, source: &str, graph: &mut SpecGraph) 
 
     if !trigger_name.is_empty() {
         let trigger_id = NodeId::new(module, NodeKind::Trigger, &trigger_name);
-        graph.nodes.push(
+        into.graph.nodes.push(
             Node::new(module, NodeKind::Trigger, &trigger_name)
                 .with(NodeDetail::Trigger(detail.clone())),
         );
-        graph.edges.push(
+        into.graph.edges.push(
             Edge::new(trigger_id, rule_id.clone(), EdgeKind::Triggers, trigger_name.clone())
                 .at(json::span(block, "span")),
         );
     }
 
-    graph.nodes.push(Node::new(module, NodeKind::Rule, &name).at(json::span(block, "span")).with(
-        NodeDetail::Rule(RuleDetail {
-            trigger: trigger_name,
-            source: detail.source,
-            clauses,
-            creates: Vec::new(),
-            emits: Vec::new(),
-        }),
-    ));
+    into.graph.nodes.push(
+        Node::new(module, NodeKind::Rule, &name).at(json::span(block, "span")).with(
+            NodeDetail::Rule(RuleDetail {
+                trigger: trigger_name,
+                source: detail.source,
+                clauses,
+                creates: Vec::new(),
+                emits: Vec::new(),
+            }),
+        ),
+    );
 }
 
 /// The text of a clause's value, as the spec wrote it.
@@ -375,17 +400,19 @@ mod tests {
         })
     }
 
-    fn ingested() -> SpecGraph {
-        let mut graph = SpecGraph::new("test");
-        ingest(&borrow_block(), "lending", SOURCE, &mut graph);
-        graph
+    fn ingested() -> Ingestion {
+        let mut into = Ingestion::empty("test");
+        ingest(&borrow_block(), "lending", SOURCE, &mut into);
+        into
     }
 
     #[test]
     fn a_rule_becomes_a_node_carrying_its_clauses() {
-        let graph = ingested();
-        let node =
-            graph.node(&NodeId::new("lending", NodeKind::Rule, "BorrowCopy")).expect("the rule");
+        let into = ingested();
+        let node = into
+            .graph
+            .node(&NodeId::new("lending", NodeKind::Rule, "BorrowCopy"))
+            .expect("the rule");
         let detail = node.detail.as_rule().expect("a rule detail");
         assert_eq!(detail.trigger, "MemberBorrows");
         assert_eq!(detail.source, TriggerSource::External);
@@ -395,8 +422,9 @@ mod tests {
 
     #[test]
     fn clause_text_is_sliced_from_the_source_the_author_wrote() {
-        let graph = ingested();
-        let detail = graph
+        let into = ingested();
+        let detail = into
+            .graph
             .node(&NodeId::new("lending", NodeKind::Rule, "BorrowCopy"))
             .and_then(|node| node.detail.as_rule())
             .expect("the rule");
@@ -406,11 +434,11 @@ mod tests {
 
     #[test]
     fn a_rule_creates_its_trigger_node_and_the_edge_into_itself() {
-        let graph = ingested();
+        let into = ingested();
         let trigger_id = NodeId::new("lending", NodeKind::Trigger, "MemberBorrows");
-        assert!(graph.node(&trigger_id).is_some(), "the trigger is a node of its own");
+        assert!(into.graph.node(&trigger_id).is_some(), "the trigger is a node of its own");
 
-        let edge = graph.edges.iter().find(|edge| edge.kind == EdgeKind::Triggers);
+        let edge = into.graph.edges.iter().find(|edge| edge.kind == EdgeKind::Triggers);
         let edge = edge.expect("a triggers edge");
         assert_eq!(edge.from, trigger_id);
         assert_eq!(edge.to, NodeId::new("lending", NodeKind::Rule, "BorrowCopy"));
@@ -426,21 +454,22 @@ mod tests {
             "name": {"span": {"start": 0, "end": 0}, "name": "Unfireable"},
             "items": [],
         });
-        let mut graph = SpecGraph::new("test");
-        ingest(&block, "lending", "", &mut graph);
-        let detail = graph
+        let mut into = Ingestion::empty("test");
+        ingest(&block, "lending", "", &mut into);
+        let detail = into
+            .graph
             .node(&NodeId::new("lending", NodeKind::Rule, "Unfireable"))
             .and_then(|node| node.detail.as_rule())
             .expect("the rule survives");
         assert_eq!(detail.trigger, "", "with no trigger to name");
-        assert!(graph.edges.is_empty(), "and nothing pointing at it");
+        assert!(into.graph.edges.is_empty(), "and nothing pointing at it");
     }
 
     #[test]
     fn a_rule_with_no_name_is_dropped() {
-        let mut graph = SpecGraph::new("test");
-        ingest(&json!({"kind": "Rule", "items": []}), "lending", "", &mut graph);
-        assert!(graph.nodes.is_empty());
+        let mut into = Ingestion::empty("test");
+        ingest(&json!({"kind": "Rule", "items": []}), "lending", "", &mut into);
+        assert!(into.graph.nodes.is_empty());
     }
 
     #[test]
@@ -455,9 +484,10 @@ mod tests {
             "name": {"span": {"start": 0, "end": 0}, "name": "Twice"},
             "items": [clause_item("when", first, 0, 1), clause_item("when", second, 0, 1)],
         });
-        let mut graph = SpecGraph::new("test");
-        ingest(&block, "m", "", &mut graph);
-        let detail = graph
+        let mut into = Ingestion::empty("test");
+        ingest(&block, "m", "", &mut into);
+        let detail = into
+            .graph
             .node(&NodeId::new("m", NodeKind::Rule, "Twice"))
             .and_then(|node| node.detail.as_rule())
             .expect("the rule");

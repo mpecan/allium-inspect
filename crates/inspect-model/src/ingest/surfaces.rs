@@ -21,12 +21,12 @@ use crate::{
         ActorDetail, Edge, EdgeKind, InvariantDetail, Node, NodeDetail, NodeId, NodeKind,
         SpecGraph, SurfaceDetail, SurfaceOperation,
     },
-    ingest::{json, text},
+    ingest::{Ingestion, json, text},
     span::Span,
 };
 
 /// Add the surface declared by `block` to `graph`.
-pub fn ingest_surface(block: &Value, module: &str, source: &str, graph: &mut SpecGraph) {
+pub fn ingest_surface(block: &Value, module: &str, source: &str, into: &mut Ingestion) {
     let Some(name) = json::declared_name(block) else { return };
     let surface_id = NodeId::new(module, NodeKind::Surface, &name);
 
@@ -90,8 +90,8 @@ pub fn ingest_surface(block: &Value, module: &str, source: &str, graph: &mut Spe
         }
     }
 
-    graph.edges.extend(edges);
-    graph.nodes.push(
+    into.graph.edges.extend(edges);
+    into.graph.nodes.push(
         Node::new(module, NodeKind::Surface, &name)
             .at(json::span(block, "span"))
             .with(NodeDetail::Surface(detail)),
@@ -99,7 +99,7 @@ pub fn ingest_surface(block: &Value, module: &str, source: &str, graph: &mut Spe
 }
 
 /// Add the actor declared by `block` to `graph`.
-pub fn ingest_actor(block: &Value, module: &str, source: &str, graph: &mut SpecGraph) {
+pub fn ingest_actor(block: &Value, module: &str, source: &str, into: &mut Ingestion) {
     let Some(name) = json::declared_name(block) else { return };
     let mut detail = ActorDetail { entity: None, condition: None, within: None };
 
@@ -124,7 +124,7 @@ pub fn ingest_actor(block: &Value, module: &str, source: &str, graph: &mut SpecG
     }
 
     if let Some(entity) = &detail.entity {
-        graph.edges.push(Edge::new(
+        into.graph.edges.push(Edge::new(
             NodeId::new(module, NodeKind::Actor, &name),
             NodeId::new(module, NodeKind::Entity, entity),
             EdgeKind::IdentifiedBy,
@@ -132,7 +132,7 @@ pub fn ingest_actor(block: &Value, module: &str, source: &str, graph: &mut SpecG
         ));
     }
 
-    graph.nodes.push(
+    into.graph.nodes.push(
         Node::new(module, NodeKind::Actor, &name)
             .at(json::span(block, "span"))
             .with(NodeDetail::Actor(detail)),
@@ -140,14 +140,20 @@ pub fn ingest_actor(block: &Value, module: &str, source: &str, graph: &mut SpecG
 }
 
 /// Add the invariant declared by `declaration` to `graph`.
-pub fn ingest_invariant(declaration: &Value, module: &str, source: &str, graph: &mut SpecGraph) {
+pub fn ingest_invariant(declaration: &Value, module: &str, source: &str, into: &mut Ingestion) {
     let Some(name) = json::declared_name(declaration) else { return };
     let body = declaration.get("body");
+    if let Some(condition) = body {
+        into.program.add_invariant(
+            NodeId::new(module, NodeKind::Invariant, &name).as_str(),
+            condition.clone(),
+        );
+    }
     let expression = body.and_then(|body| expression_text(body, source));
-    let entities = constrained_entities(body, module, graph);
+    let entities = constrained_entities(body, module, &into.graph);
 
     for entity in &entities {
-        graph.edges.push(Edge::new(
+        into.graph.edges.push(Edge::new(
             NodeId::new(module, NodeKind::Invariant, &name),
             NodeId::new(module, NodeKind::Entity, entity),
             EdgeKind::Constrains,
@@ -155,7 +161,7 @@ pub fn ingest_invariant(declaration: &Value, module: &str, source: &str, graph: 
         ));
     }
 
-    graph.nodes.push(
+    into.graph.nodes.push(
         Node::new(module, NodeKind::Invariant, &name)
             .at(json::span(declaration, "span"))
             .with(NodeDetail::Invariant(InvariantDetail { expression, entities })),
@@ -311,13 +317,13 @@ mod tests {
         json!({ tag: inner })
     }
 
-    /// A graph in which `module` declares each of `entities`.
-    fn with_entities(module: &str, entities: &[&str]) -> SpecGraph {
-        let mut graph = SpecGraph::new("test");
+    /// An ingestion in which `module` declares each of `entities`.
+    fn with_entities(module: &str, entities: &[&str]) -> Ingestion {
+        let mut into = Ingestion::empty("test");
         for entity in entities {
-            graph.nodes.push(Node::new(module, NodeKind::Entity, entity));
+            into.graph.nodes.push(Node::new(module, NodeKind::Entity, entity));
         }
-        graph
+        into
     }
 
     #[test]
@@ -337,15 +343,15 @@ mod tests {
 
     #[test]
     fn a_collection_resolves_to_the_entity_the_module_declares() {
-        let graph = with_entities("lending", &["Loan"]);
-        assert_eq!(resolve_collection("Loans", "lending", &graph).as_deref(), Some("Loan"));
+        let into = with_entities("lending", &["Loan"]);
+        assert_eq!(resolve_collection("Loans", "lending", &into.graph).as_deref(), Some("Loan"));
     }
 
     #[test]
     fn a_collection_whose_own_name_is_an_entity_is_not_reduced() {
         // `Staff` is already plural. Reducing first would look for `Staf`.
-        let graph = with_entities("catalogue", &["Staff"]);
-        assert_eq!(resolve_collection("Staff", "catalogue", &graph).as_deref(), Some("Staff"));
+        let into = with_entities("catalogue", &["Staff"]);
+        assert_eq!(resolve_collection("Staff", "catalogue", &into.graph).as_deref(), Some("Staff"));
     }
 
     #[test]
@@ -353,27 +359,30 @@ mod tests {
         // The case suffix rules alone get wrong: `Status` reduces to `Statu`,
         // and an edge to a `Statu` node would put a construct on the canvas
         // that the spec never declared.
-        let graph = with_entities("m", &["Loan"]);
-        assert_eq!(resolve_collection("Status", "m", &graph), None);
-        assert_eq!(resolve_collection("Statuses", "m", &graph), None);
+        let into = with_entities("m", &["Loan"]);
+        assert_eq!(resolve_collection("Status", "m", &into.graph), None);
+        assert_eq!(resolve_collection("Statuses", "m", &into.graph), None);
     }
 
     #[test]
     fn a_collection_resolves_against_value_types_and_variants_too() {
-        let mut graph = SpecGraph::new("test");
-        graph.nodes.push(Node::new("m", NodeKind::Value, "LoanWindow"));
-        graph.nodes.push(Node::new("m", NodeKind::Variant, "SeenAnnouncement"));
-        assert_eq!(resolve_collection("LoanWindows", "m", &graph).as_deref(), Some("LoanWindow"));
+        let mut into = Ingestion::empty("test");
+        into.graph.nodes.push(Node::new("m", NodeKind::Value, "LoanWindow"));
+        into.graph.nodes.push(Node::new("m", NodeKind::Variant, "SeenAnnouncement"));
         assert_eq!(
-            resolve_collection("SeenAnnouncements", "m", &graph).as_deref(),
+            resolve_collection("LoanWindows", "m", &into.graph).as_deref(),
+            Some("LoanWindow")
+        );
+        assert_eq!(
+            resolve_collection("SeenAnnouncements", "m", &into.graph).as_deref(),
             Some("SeenAnnouncement")
         );
     }
 
     #[test]
     fn a_collection_in_another_module_does_not_resolve_here() {
-        let graph = with_entities("catalogue", &["Book"]);
-        assert_eq!(resolve_collection("Books", "lending", &graph), None);
+        let into = with_entities("catalogue", &["Book"]);
+        assert_eq!(resolve_collection("Books", "lending", &into.graph), None);
     }
 
     // --- actors ----------------------------------------------------------
@@ -400,10 +409,11 @@ mod tests {
                 }},
             }}}],
         });
-        let mut graph = SpecGraph::new("test");
-        ingest_actor(&block, "lending", ACTOR_SOURCE, &mut graph);
+        let mut into = Ingestion::empty("test");
+        ingest_actor(&block, "lending", ACTOR_SOURCE, &mut into);
 
-        let node = graph.node(&NodeId::new("lending", NodeKind::Actor, "Reader")).expect("actor");
+        let node =
+            into.graph.node(&NodeId::new("lending", NodeKind::Actor, "Reader")).expect("actor");
         match &node.detail {
             NodeDetail::Actor(detail) => {
                 assert_eq!(detail.entity.as_deref(), Some("Member"));
@@ -411,7 +421,7 @@ mod tests {
             }
             other => panic!("expected an actor detail, got {other:?}"),
         }
-        let edge = graph.edges.iter().find(|edge| edge.kind == EdgeKind::IdentifiedBy);
+        let edge = into.graph.edges.iter().find(|edge| edge.kind == EdgeKind::IdentifiedBy);
         assert_eq!(
             edge.map(|edge| edge.to.clone()),
             Some(NodeId::new("lending", NodeKind::Entity, "Member"))
@@ -428,9 +438,9 @@ mod tests {
                 "value": {"Ident": {"span": {"start": 0, "end": 0}, "name": "Member"}},
             }}}],
         });
-        let mut graph = SpecGraph::new("test");
-        ingest_actor(&block, "m", "", &mut graph);
-        match &graph.nodes[0].detail {
+        let mut into = Ingestion::empty("test");
+        ingest_actor(&block, "m", "", &mut into);
+        match &into.graph.nodes[0].detail {
             NodeDetail::Actor(detail) => {
                 assert_eq!(detail.entity.as_deref(), Some("Member"));
                 assert_eq!(detail.condition, None);
@@ -449,9 +459,9 @@ mod tests {
                 "value": {"Ident": {"span": {"start": 0, "end": 0}, "name": "Workspace"}},
             }}}],
         });
-        let mut graph = SpecGraph::new("test");
-        ingest_actor(&block, "m", "", &mut graph);
-        match &graph.nodes[0].detail {
+        let mut into = Ingestion::empty("test");
+        ingest_actor(&block, "m", "", &mut into);
+        match &into.graph.nodes[0].detail {
             NodeDetail::Actor(detail) => assert_eq!(detail.within.as_deref(), Some("Workspace")),
             other => panic!("expected an actor detail, got {other:?}"),
         }
@@ -460,17 +470,17 @@ mod tests {
     #[test]
     fn an_actor_with_no_entity_draws_no_edge() {
         let block = json!({"kind": "Actor", "name": named("Vague"), "items": []});
-        let mut graph = SpecGraph::new("test");
-        ingest_actor(&block, "m", "", &mut graph);
-        assert!(graph.edges.is_empty());
-        assert_eq!(graph.nodes.len(), 1);
+        let mut into = Ingestion::empty("test");
+        ingest_actor(&block, "m", "", &mut into);
+        assert!(into.graph.edges.is_empty());
+        assert_eq!(into.graph.nodes.len(), 1);
     }
 
     #[test]
     fn an_unnamed_actor_is_dropped() {
-        let mut graph = SpecGraph::new("test");
-        ingest_actor(&json!({"kind": "Actor", "items": []}), "m", "", &mut graph);
-        assert!(graph.nodes.is_empty());
+        let mut into = Ingestion::empty("test");
+        ingest_actor(&json!({"kind": "Actor", "items": []}), "m", "", &mut into);
+        assert!(into.graph.nodes.is_empty());
     }
 
     // --- surfaces --------------------------------------------------------
@@ -516,17 +526,19 @@ mod tests {
         })
     }
 
-    fn surface_graph() -> SpecGraph {
-        let mut graph = SpecGraph::new("test");
-        ingest_surface(&surface_block(), "lending", SURFACE_SOURCE, &mut graph);
-        graph
+    fn surface_graph() -> Ingestion {
+        let mut into = Ingestion::empty("test");
+        ingest_surface(&surface_block(), "lending", SURFACE_SOURCE, &mut into);
+        into
     }
 
     #[test]
     fn a_surface_records_who_it_faces_and_under_what_binding() {
-        let graph = surface_graph();
-        let node =
-            graph.node(&NodeId::new("lending", NodeKind::Surface, "MemberShelf")).expect("surface");
+        let into = surface_graph();
+        let node = into
+            .graph
+            .node(&NodeId::new("lending", NodeKind::Surface, "MemberShelf"))
+            .expect("surface");
         let detail = node.detail.as_surface().expect("a surface detail");
         assert_eq!(detail.actor.as_deref(), Some("Reader"));
         assert_eq!(detail.actor_binding.as_deref(), Some("reader"));
@@ -536,8 +548,9 @@ mod tests {
     fn a_surface_records_the_operations_it_provides() {
         // The only place a spec says which triggers a person can actually
         // fire, so this list is the simulator's opening moves.
-        let graph = surface_graph();
-        let detail = graph
+        let into = surface_graph();
+        let detail = into
+            .graph
             .node(&NodeId::new("lending", NodeKind::Surface, "MemberShelf"))
             .and_then(|node| node.detail.as_surface())
             .expect("the surface");
@@ -549,23 +562,24 @@ mod tests {
 
     #[test]
     fn a_surface_draws_edges_to_its_actor_and_its_triggers() {
-        let graph = surface_graph();
+        let into = surface_graph();
         let surface = NodeId::new("lending", NodeKind::Surface, "MemberShelf");
         let facing: Vec<_> =
-            graph.edges_from(&surface).filter(|e| e.kind == EdgeKind::Facing).collect();
+            into.graph.edges_from(&surface).filter(|e| e.kind == EdgeKind::Facing).collect();
         assert_eq!(facing.len(), 1);
         assert_eq!(facing[0].to, NodeId::new("lending", NodeKind::Actor, "Reader"));
 
         let provides: Vec<_> =
-            graph.edges_from(&surface).filter(|e| e.kind == EdgeKind::Provides).collect();
+            into.graph.edges_from(&surface).filter(|e| e.kind == EdgeKind::Provides).collect();
         assert_eq!(provides.len(), 1);
         assert_eq!(provides[0].to, NodeId::new("lending", NodeKind::Trigger, "MemberBorrows"));
     }
 
     #[test]
     fn a_surface_records_its_named_guarantees() {
-        let graph = surface_graph();
-        let detail = graph
+        let into = surface_graph();
+        let detail = into
+            .graph
             .node(&NodeId::new("lending", NodeKind::Surface, "MemberShelf"))
             .and_then(|node| node.detail.as_surface())
             .expect("the surface");
@@ -581,9 +595,9 @@ mod tests {
             "name": named("S"),
             "items": [{"kind": {"Annotation": {"kind": "Guidance", "body": ["advice"]}}}],
         });
-        let mut graph = SpecGraph::new("test");
-        ingest_surface(&block, "m", "", &mut graph);
-        let detail = graph.nodes[0].detail.as_surface().expect("a surface");
+        let mut into = Ingestion::empty("test");
+        ingest_surface(&block, "m", "", &mut into);
+        let detail = into.graph.nodes[0].detail.as_surface().expect("a surface");
         assert!(detail.guarantees.is_empty());
     }
 
@@ -607,9 +621,9 @@ mod tests {
                 }}]}},
             }}}],
         });
-        let mut graph = SpecGraph::new("test");
-        ingest_surface(&block, "m", source, &mut graph);
-        let detail = graph.nodes[0].detail.as_surface().expect("a surface");
+        let mut into = Ingestion::empty("test");
+        ingest_surface(&block, "m", source, &mut into);
+        let detail = into.graph.nodes[0].detail.as_surface().expect("a surface");
         assert_eq!(detail.provides[0].trigger, "LibrarianWithdrawsBook");
         assert_eq!(detail.provides[0].when.as_deref(), Some("book.status = listed"));
     }
@@ -627,9 +641,9 @@ mod tests {
                 }},
             }}}],
         });
-        let mut graph = SpecGraph::new("test");
-        ingest_surface(&block, "m", "", &mut graph);
-        let detail = graph.nodes[0].detail.as_surface().expect("a surface");
+        let mut into = Ingestion::empty("test");
+        ingest_surface(&block, "m", "", &mut into);
+        let detail = into.graph.nodes[0].detail.as_surface().expect("a surface");
         assert_eq!(detail.context.as_deref(), Some("Loan"));
     }
 
@@ -646,10 +660,10 @@ mod tests {
                 }},
             }}}],
         });
-        let mut graph = SpecGraph::new("test");
-        ingest_surface(&block, "m", "", &mut graph);
+        let mut into = Ingestion::empty("test");
+        ingest_surface(&block, "m", "", &mut into);
         assert_eq!(
-            graph.nodes[0].detail.as_surface().expect("a surface").context.as_deref(),
+            into.graph.nodes[0].detail.as_surface().expect("a surface").context.as_deref(),
             Some("Loan")
         );
     }
@@ -668,17 +682,17 @@ mod tests {
                 ]}},
             }}}],
         });
-        let mut graph = SpecGraph::new("test");
-        ingest_surface(&block, "m", source, &mut graph);
-        let detail = graph.nodes[0].detail.as_surface().expect("a surface");
+        let mut into = Ingestion::empty("test");
+        ingest_surface(&block, "m", source, &mut into);
+        let detail = into.graph.nodes[0].detail.as_surface().expect("a surface");
         assert_eq!(detail.exposes, ["Loan.status", "Member.open_loan_count"]);
     }
 
     #[test]
     fn an_unnamed_surface_is_dropped() {
-        let mut graph = SpecGraph::new("test");
-        ingest_surface(&json!({"kind": "Surface", "items": []}), "m", "", &mut graph);
-        assert!(graph.nodes.is_empty());
+        let mut into = Ingestion::empty("test");
+        ingest_surface(&json!({"kind": "Surface", "items": []}), "m", "", &mut into);
+        assert!(into.graph.nodes.is_empty());
     }
 
     // --- invariants -------------------------------------------------------
@@ -696,10 +710,11 @@ mod tests {
                 "collection": {"Ident": {"span": {"start": 9, "end": 14}, "name": "Loans"}},
             }},
         });
-        let mut graph = with_entities("lending", &["Loan"]);
-        ingest_invariant(&block, "lending", source, &mut graph);
+        let mut into = with_entities("lending", &["Loan"]);
+        ingest_invariant(&block, "lending", source, &mut into);
 
-        let node = graph
+        let node = into
+            .graph
             .node(&NodeId::new("lending", NodeKind::Invariant, "AReturnedLoanFreesItsCopy"))
             .expect("the invariant");
         match &node.detail {
@@ -711,7 +726,7 @@ mod tests {
             other => panic!("expected an invariant detail, got {other:?}"),
         }
 
-        let edge = graph.edges.iter().find(|edge| edge.kind == EdgeKind::Constrains);
+        let edge = into.graph.edges.iter().find(|edge| edge.kind == EdgeKind::Constrains);
         assert_eq!(
             edge.map(|edge| edge.to.clone()),
             Some(NodeId::new("lending", NodeKind::Entity, "Loan"))
@@ -720,16 +735,16 @@ mod tests {
 
     #[test]
     fn a_prose_only_invariant_is_kept_and_marked_uncheckable() {
-        let mut graph = SpecGraph::new("test");
-        ingest_invariant(&json!({"name": named("SomethingProse")}), "m", "", &mut graph);
-        match &graph.nodes[0].detail {
+        let mut into = Ingestion::empty("test");
+        ingest_invariant(&json!({"name": named("SomethingProse")}), "m", "", &mut into);
+        match &into.graph.nodes[0].detail {
             NodeDetail::Invariant(detail) => {
                 assert!(!detail.is_checkable());
                 assert!(detail.entities.is_empty());
             }
             other => panic!("expected an invariant detail, got {other:?}"),
         }
-        assert!(graph.edges.is_empty(), "nothing to constrain");
+        assert!(into.graph.edges.is_empty(), "nothing to constrain");
     }
 
     #[test]
@@ -746,15 +761,15 @@ mod tests {
                 }},
             }},
         });
-        let mut graph = with_entities("m", &["Loan", "Member"]);
-        ingest_invariant(&block, "m", source, &mut graph);
+        let mut into = with_entities("m", &["Loan", "Member"]);
+        ingest_invariant(&block, "m", source, &mut into);
         let invariant =
-            graph.node(&NodeId::new("m", NodeKind::Invariant, "Both")).expect("the invariant");
+            into.graph.node(&NodeId::new("m", NodeKind::Invariant, "Both")).expect("the invariant");
         match &invariant.detail {
             NodeDetail::Invariant(detail) => assert_eq!(detail.entities, ["Loan", "Member"]),
             other => panic!("expected an invariant detail, got {other:?}"),
         }
-        assert_eq!(graph.edges.len(), 2);
+        assert_eq!(into.graph.edges.len(), 2);
     }
 
     #[test]
@@ -767,10 +782,10 @@ mod tests {
                 "collection": {"Ident": {"span": {"start": 9, "end": 17}, "name": "Statuses"}},
             }},
         });
-        let mut graph = with_entities("m", &["Loan"]);
-        ingest_invariant(&block, "m", source, &mut graph);
+        let mut into = with_entities("m", &["Loan"]);
+        ingest_invariant(&block, "m", source, &mut into);
         let invariant =
-            graph.node(&NodeId::new("m", NodeKind::Invariant, "Odd")).expect("the invariant");
+            into.graph.node(&NodeId::new("m", NodeKind::Invariant, "Odd")).expect("the invariant");
         match &invariant.detail {
             NodeDetail::Invariant(detail) => {
                 assert!(detail.entities.is_empty());
@@ -778,7 +793,7 @@ mod tests {
             }
             other => panic!("expected an invariant detail, got {other:?}"),
         }
-        assert!(graph.edges.is_empty());
+        assert!(into.graph.edges.is_empty());
     }
 
     #[test]
@@ -797,10 +812,10 @@ mod tests {
                 }}],
             }},
         });
-        let mut graph = with_entities("m", &["Loan"]);
-        ingest_invariant(&block, "m", source, &mut graph);
+        let mut into = with_entities("m", &["Loan"]);
+        ingest_invariant(&block, "m", source, &mut into);
         let invariant =
-            graph.node(&NodeId::new("m", NodeKind::Invariant, "InAList")).expect("invariant");
+            into.graph.node(&NodeId::new("m", NodeKind::Invariant, "InAList")).expect("invariant");
         match &invariant.detail {
             NodeDetail::Invariant(detail) => assert_eq!(detail.entities, ["Loan"]),
             other => panic!("expected an invariant detail, got {other:?}"),
@@ -827,9 +842,9 @@ mod tests {
                 }}]}},
             }}}],
         });
-        let mut graph = SpecGraph::new("test");
-        ingest_surface(&block, "m", "", &mut graph);
-        let detail = graph.nodes[0].detail.as_surface().expect("a surface");
+        let mut into = Ingestion::empty("test");
+        ingest_surface(&block, "m", "", &mut into);
+        let detail = into.graph.nodes[0].detail.as_surface().expect("a surface");
         assert_eq!(detail.provides[0].parameters, ["loan", "reader"]);
     }
 
@@ -846,17 +861,17 @@ mod tests {
                 }},
             }}}],
         });
-        let mut graph = SpecGraph::new("test");
-        ingest_surface(&block, "m", "", &mut graph);
-        let detail = graph.nodes[0].detail.as_surface().expect("a surface");
+        let mut into = Ingestion::empty("test");
+        ingest_surface(&block, "m", "", &mut into);
+        let detail = into.graph.nodes[0].detail.as_surface().expect("a surface");
         assert_eq!(detail.actor.as_deref(), Some("Member"));
         assert_eq!(detail.actor_binding, None, "a filter binds no name");
     }
 
     #[test]
     fn an_unnamed_invariant_is_dropped() {
-        let mut graph = SpecGraph::new("test");
-        ingest_invariant(&json!({"body": {}}), "m", "", &mut graph);
-        assert!(graph.nodes.is_empty());
+        let mut into = Ingestion::empty("test");
+        ingest_invariant(&json!({"body": {}}), "m", "", &mut into);
+        assert!(into.graph.nodes.is_empty());
     }
 }

@@ -55,10 +55,21 @@ count_source_lines() {
     ' "$1"
 }
 
-# Rust sources under crates/ and apps/. Build artifacts and generated bindings
-# are excluded: neither is written by hand, so neither is subject to a budget.
+# Rust sources under crates/ and apps/.
+#
+# Build artifacts and generated bindings are excluded: neither is written by
+# hand, so neither is subject to a budget.
+#
+# `tests/` is excluded for the same reason `count_source_lines` stops at the
+# first test module — a thorough test file is the goal, not a cost. The
+# distinction is invisible to `count_source_lines` there, because an integration
+# test has no `#[cfg(test)] mod` to stop at: the whole file is the test module.
 rust_files() {
-    find crates apps -name '*.rs' -not -path '*/target/*' -not -path '*/gen/*' "$@"
+    find crates apps -name '*.rs' \
+        -not -path '*/target/*' \
+        -not -path '*/gen/*' \
+        -not -path '*/tests/*' \
+        "$@"
 }
 
 # The first non-comment, non-blank line of a receipt file.

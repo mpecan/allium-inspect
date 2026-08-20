@@ -21,7 +21,7 @@
 use std::path::{Path, PathBuf};
 
 use inspect_model::{
-    Command, MemoryReader, NodeId, NodeKind, SpecGraph,
+    Command, Ingestion, MemoryReader, NodeId, NodeKind, SpecGraph,
     graph::{EdgeKind, EntityKind, TriggerSource},
     ingest,
     runner::MapRunner,
@@ -65,9 +65,13 @@ fn replay() -> (MapRunner, MemoryReader, Vec<PathBuf>) {
     (runner, reader, paths)
 }
 
-fn graph() -> SpecGraph {
+fn ingested() -> Ingestion {
     let (runner, reader, paths) = replay();
     ingest(&runner, &reader, &paths).expect("the recorded fixtures ingest")
+}
+
+fn graph() -> SpecGraph {
+    ingested().graph
 }
 
 fn id(module: &str, kind: NodeKind, name: &str) -> NodeId {
@@ -408,4 +412,57 @@ fn the_graph_is_sorted_so_its_json_is_stable() {
     let mut sorted = graph.clone();
     sorted.normalise();
     assert_eq!(graph, sorted, "ingestion must leave the graph normalised");
+}
+
+#[test]
+fn the_program_carries_the_clauses_the_graph_only_describes() {
+    // The two halves of an ingestion, and the reason they are separate: the
+    // graph holds the text a reader reads, and the program holds the same
+    // clauses parsed, which is an order of magnitude more data and only the
+    // simulator's business.
+    let Ingestion { graph, program } = ingested();
+
+    let borrow = program.rule("lending::rule::BorrowCopy").expect("the program carries BorrowCopy");
+    assert!(borrow.when.is_some(), "the trigger it waits for");
+    assert_eq!(borrow.requires.len(), 2, "one tree per precondition");
+    assert_eq!(borrow.ensures.len(), 3, "one tree per postcondition");
+
+    // The same rule in the graph carries the same clauses as text.
+    let described = graph
+        .node(&id("lending", NodeKind::Rule, "BorrowCopy"))
+        .and_then(|node| node.detail.as_rule())
+        .expect("the graph describes BorrowCopy");
+    assert_eq!(described.clauses_of("requires").count(), borrow.requires.len());
+    assert_eq!(described.clauses_of("ensures").count(), borrow.ensures.len());
+}
+
+#[test]
+fn every_rule_the_graph_shows_has_clauses_the_simulator_can_read() {
+    // A rule present in one half and missing from the other would show in the
+    // canvas and then refuse to simulate, with nothing saying why.
+    let Ingestion { graph, program } = ingested();
+    let missing: Vec<&str> = graph
+        .nodes_of(NodeKind::Rule)
+        .map(|node| node.id.as_str())
+        .filter(|id| program.rule(id).is_none())
+        .collect();
+    assert!(missing.is_empty(), "rules with no parsed clauses: {missing:?}");
+}
+
+#[test]
+fn an_invariant_with_an_expression_carries_its_condition() {
+    let Ingestion { graph, program } = ingested();
+    for node in graph.nodes_of(NodeKind::Invariant) {
+        let checkable = matches!(
+            &node.detail,
+            inspect_model::NodeDetail::Invariant(detail) if detail.is_checkable()
+        );
+        if checkable {
+            assert!(
+                program.invariant(node.id.as_str()).is_some(),
+                "{} reads as checkable but carries no condition",
+                node.id
+            );
+        }
+    }
 }

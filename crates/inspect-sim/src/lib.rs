@@ -15,3 +15,21 @@
 //! testing and mutation testing meaningful here.
 
 #![forbid(unsafe_code)]
+
+pub mod apply;
+pub mod eval;
+pub mod seed;
+pub mod step;
+pub mod truth;
+pub mod value;
+pub mod world;
+
+pub use apply::{Application, Applied, Effect};
+pub use eval::{Env, Evaluation, Unresolved, eval};
+pub use seed::seed;
+pub use step::{
+    ClauseVerdict, Disposition, Enabled, InvariantVerdict, RuleOutcome, Sources, StepOutcome, step,
+};
+pub use truth::Truth;
+pub use value::{EntityId, Instance, Value};
+pub use world::{Event, World};

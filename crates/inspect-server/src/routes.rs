@@ -52,6 +52,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/health", get(health))
         .route("/api/spec", get(spec))
         .route("/api/spec/source/{module}", get(source))
+        .route("/api/sim/setup", get(crate::sim::setup))
+        .route("/api/sim/step", axum::routing::post(crate::sim::take_step))
         .fallback(assets)
         .with_state(state)
 }

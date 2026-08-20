@@ -12,8 +12,10 @@ use std::{
 };
 
 use inspect_model::{
-    AlliumRunner, FileReader, IngestError, SourceReader, SpecGraph, ingest, module_name,
+    AlliumRunner, FileReader, IngestError, Ingestion, Program, SourceReader, SpecGraph, ingest,
+    module_name,
 };
+use inspect_sim::step::Sources;
 use serde::Serialize;
 
 /// One spec file's text, as the source panel needs it.
@@ -24,11 +26,14 @@ pub struct ModuleSource {
     pub text: String,
 }
 
-/// A graph and the sources it was built from.
+/// A graph, the expression trees behind it, and the sources both came from.
 #[derive(Debug)]
 pub struct Inspection {
     pub graph: SpecGraph,
+    /// The clause ASTs. Never sent to the browser — the simulator runs here.
+    pub program: Program,
     sources: BTreeMap<String, ModuleSource>,
+    texts: Sources,
 }
 
 impl Inspection {
@@ -39,7 +44,7 @@ impl Inspection {
     /// Returns [`IngestError`] when the CLI cannot be run or a spec cannot be
     /// read.
     pub fn build<R: AlliumRunner>(runner: &R, paths: &[PathBuf]) -> Result<Self, IngestError> {
-        let graph = ingest(runner, &FileReader, paths)?;
+        let Ingestion { graph, program } = ingest(runner, &FileReader, paths)?;
         let mut sources = BTreeMap::new();
         for path in paths {
             let module = module_name(path);
@@ -53,7 +58,9 @@ impl Inspection {
                 );
             }
         }
-        Ok(Self { graph, sources })
+        let texts =
+            sources.iter().map(|(module, source)| (module.clone(), source.text.clone())).collect();
+        Ok(Self { graph, program, sources, texts })
     }
 
     /// An inspection assembled from parts, without running anything.
@@ -63,10 +70,11 @@ impl Inspection {
     /// on the CLI being installed.
     #[must_use]
     pub fn from_parts(graph: SpecGraph, sources: Vec<ModuleSource>) -> Self {
-        Self {
-            graph,
-            sources: sources.into_iter().map(|source| (source.module.clone(), source)).collect(),
-        }
+        let sources: BTreeMap<String, ModuleSource> =
+            sources.into_iter().map(|source| (source.module.clone(), source)).collect();
+        let texts =
+            sources.iter().map(|(module, source)| (module.clone(), source.text.clone())).collect();
+        Self { graph, program: Program::new(), sources, texts }
     }
 
     /// One module's source.
@@ -78,6 +86,16 @@ impl Inspection {
     /// Every module that has source, in name order.
     pub fn modules(&self) -> impl Iterator<Item = &str> {
         self.sources.keys().map(String::as_str)
+    }
+
+    /// The spec text of each module, as the simulator wants it.
+    ///
+    /// Built once and held, rather than assembled per request: a step quotes
+    /// source for every undecided sub-expression it meets, and rebuilding the
+    /// map each time would copy every spec file on every keystroke.
+    #[must_use]
+    pub fn sources_by_module(&self) -> &Sources {
+        &self.texts
     }
 }
 

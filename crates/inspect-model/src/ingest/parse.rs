@@ -20,7 +20,7 @@ use serde_json::Value;
 
 use crate::{
     graph::{Import, Module, Node, NodeDetail, NodeId, NodeKind, SpecGraph},
-    ingest::{json, rules, surfaces},
+    ingest::{Ingestion, json, rules, surfaces},
     span::Span,
 };
 
@@ -28,16 +28,16 @@ use crate::{
 ///
 /// `source` is the spec file's text, which clause and expression rendering
 /// slices out of rather than reconstructing.
-pub fn ingest(document: &Value, module: &str, path: &str, source: &str, graph: &mut SpecGraph) {
+pub fn ingest(document: &Value, module: &str, path: &str, source: &str, into: &mut Ingestion) {
     let ast = document.get("module").unwrap_or(&Value::Null);
     let mut imports = Vec::new();
 
     for declaration in json::array(ast, "declarations") {
         let Some((tag, inner)) = json::tagged(declaration) else { continue };
         match tag {
-            "Block" => ingest_block(inner, module, source, graph),
-            "Invariant" => surfaces::ingest_invariant(inner, module, source, graph),
-            "Variant" => ingest_variant(inner, module, graph),
+            "Block" => ingest_block(inner, module, source, into),
+            "Invariant" => surfaces::ingest_invariant(inner, module, source, into),
+            "Variant" => ingest_variant(inner, module, &mut into.graph),
             "Use" => {
                 if let Some(import) = read_import(inner) {
                     imports.push(import);
@@ -50,7 +50,7 @@ pub fn ingest(document: &Value, module: &str, path: &str, source: &str, graph: &
         }
     }
 
-    graph.modules.push(Module {
+    into.graph.modules.push(Module {
         name: module.to_owned(),
         path: path.to_owned(),
         imports,
@@ -61,14 +61,14 @@ pub fn ingest(document: &Value, module: &str, path: &str, source: &str, graph: &
     });
 }
 
-fn ingest_block(block: &Value, module: &str, source: &str, graph: &mut SpecGraph) {
+fn ingest_block(block: &Value, module: &str, source: &str, into: &mut Ingestion) {
     let kind = json::string_or_empty(block, "kind");
     let span = json::span(block, "span");
 
     match kind.as_str() {
-        "Rule" => rules::ingest(block, module, source, graph),
-        "Surface" => surfaces::ingest_surface(block, module, source, graph),
-        "Actor" => surfaces::ingest_actor(block, module, source, graph),
+        "Rule" => rules::ingest(block, module, source, into),
+        "Surface" => surfaces::ingest_surface(block, module, source, into),
+        "Actor" => surfaces::ingest_actor(block, module, source, into),
         // The model pass already built these from a document that describes
         // them far better than the AST does. All that is wanted here is where
         // they are, which is the one thing that document lacks.
@@ -77,12 +77,12 @@ fn ingest_block(block: &Value, module: &str, source: &str, graph: &mut SpecGraph
         // entity without a span — so the source panel was blank for exactly the
         // entities whose governing spec a reader most wants to go and find.
         "Entity" | "ExternalEntity" => {
-            locate(block, module, NodeKind::Entity, span, graph);
-            retype(block, module, NodeKind::Entity, graph);
+            locate(block, module, NodeKind::Entity, span, &mut into.graph);
+            retype(block, module, NodeKind::Entity, &mut into.graph);
         }
-        "Enum" => locate(block, module, NodeKind::Enum, span, graph),
-        "Config" => locate_named(module, NodeKind::Config, "config", span, graph),
-        "Value" => ingest_value(block, module, span, graph),
+        "Enum" => locate(block, module, NodeKind::Enum, span, &mut into.graph),
+        "Config" => locate_named(module, NodeKind::Config, "config", span, &mut into.graph),
+        "Value" => ingest_value(block, module, span, &mut into.graph),
         _ => {}
     }
 }
@@ -238,9 +238,14 @@ mod tests {
     }
 
     fn ingested(declarations: Value) -> SpecGraph {
-        let mut graph = SpecGraph::new("test");
-        ingest(&document(declarations, 3), "lending", "lending.allium", "", &mut graph);
-        graph
+        ingested_with(declarations).0
+    }
+
+    /// Both halves, for the tests that care what the simulator was given.
+    fn ingested_with(declarations: Value) -> (SpecGraph, crate::program::Program) {
+        let mut into = Ingestion::empty("test");
+        ingest(&document(declarations, 3), "lending", "lending.allium", "", &mut into);
+        (into.graph, into.program)
     }
 
     #[test]
@@ -255,10 +260,10 @@ mod tests {
 
     #[test]
     fn a_module_with_no_declared_version_records_none() {
-        let mut graph = SpecGraph::new("test");
+        let mut into = Ingestion::empty("test");
         let document = json!({"module": {"declarations": []}});
-        ingest(&document, "m", "m.allium", "", &mut graph);
-        assert_eq!(graph.modules[0].language_version, None);
+        ingest(&document, "m", "m.allium", "", &mut into);
+        assert_eq!(into.graph.modules[0].language_version, None);
     }
 
     #[test]
@@ -302,9 +307,9 @@ mod tests {
     fn an_entity_block_gives_an_existing_node_its_span() {
         // The model pass creates the node; this pass is the only source of
         // where it is.
-        let mut graph = SpecGraph::new("test");
-        graph.nodes.push(Node::new("lending", NodeKind::Entity, "Loan"));
-        assert_eq!(graph.nodes[0].span, None);
+        let mut into = Ingestion::empty("test");
+        into.graph.nodes.push(Node::new("lending", NodeKind::Entity, "Loan"));
+        assert_eq!(into.graph.nodes[0].span, None);
 
         let declarations = json!([{"Block": {
             "span": {"start": 100, "end": 400},
@@ -312,10 +317,10 @@ mod tests {
             "name": named("Loan"),
             "items": [],
         }}]);
-        ingest(&document(declarations, 3), "lending", "lending.allium", "", &mut graph);
+        ingest(&document(declarations, 3), "lending", "lending.allium", "", &mut into);
 
-        assert_eq!(graph.nodes.len(), 1, "the node is located, not duplicated");
-        assert_eq!(graph.nodes[0].span, Some(Span::new(100, 400)));
+        assert_eq!(into.graph.nodes.len(), 1, "the node is located, not duplicated");
+        assert_eq!(into.graph.nodes[0].span, Some(Span::new(100, 400)));
     }
 
     #[test]
@@ -324,10 +329,10 @@ mod tests {
         // relationship crossing a module boundary comes back with no target it
         // can name; the model pass drops that and this supplies the type the
         // author wrote, which the linker can then resolve across the set.
-        let mut graph = SpecGraph::new("test");
+        let mut into = Ingestion::empty("test");
         let mut untyped = EntityField::new("conversations", "");
         untyped.relationship = true;
-        graph.nodes.push(Node::new("identity", NodeKind::Entity, "Identity").with(
+        into.graph.nodes.push(Node::new("identity", NodeKind::Entity, "Identity").with(
             NodeDetail::Entity(crate::graph::EntityDetail {
                 kind: EntityKind::Internal,
                 fields: vec![untyped, EntityField::new("name", "String")],
@@ -354,9 +359,10 @@ mod tests {
                 }}},
             ],
         }}]);
-        ingest(&document(declarations, 3), "identity", "identity.allium", "", &mut graph);
+        ingest(&document(declarations, 3), "identity", "identity.allium", "", &mut into);
 
-        let detail = graph
+        let detail = into
+            .graph
             .node(&NodeId::new("identity", NodeKind::Entity, "Identity"))
             .and_then(|node| node.detail.as_entity())
             .expect("the entity");
@@ -386,15 +392,15 @@ mod tests {
 
     #[test]
     fn a_config_block_locates_the_config_node() {
-        let mut graph = SpecGraph::new("test");
-        graph.nodes.push(Node::new("lending", NodeKind::Config, "config"));
+        let mut into = Ingestion::empty("test");
+        into.graph.nodes.push(Node::new("lending", NodeKind::Config, "config"));
         let declarations = json!([{"Block": {
             "span": {"start": 10, "end": 60},
             "kind": "Config",
             "items": [],
         }}]);
-        ingest(&document(declarations, 3), "lending", "lending.allium", "", &mut graph);
-        assert_eq!(graph.nodes[0].span, Some(Span::new(10, 60)));
+        ingest(&document(declarations, 3), "lending", "lending.allium", "", &mut into);
+        assert_eq!(into.graph.nodes[0].span, Some(Span::new(10, 60)));
     }
 
     #[test]
@@ -436,17 +442,17 @@ mod tests {
 
     #[test]
     fn a_value_block_for_a_node_model_already_made_locates_it_instead() {
-        let mut graph = SpecGraph::new("test");
-        graph.nodes.push(Node::new("lending", NodeKind::Value, "LoanWindow"));
+        let mut into = Ingestion::empty("test");
+        into.graph.nodes.push(Node::new("lending", NodeKind::Value, "LoanWindow"));
         let declarations = json!([{"Block": {
             "span": {"start": 5, "end": 90},
             "kind": "Value",
             "name": named("LoanWindow"),
             "items": [],
         }}]);
-        ingest(&document(declarations, 3), "lending", "lending.allium", "", &mut graph);
-        assert_eq!(graph.nodes.len(), 1);
-        assert_eq!(graph.nodes[0].span, Some(Span::new(5, 90)));
+        ingest(&document(declarations, 3), "lending", "lending.allium", "", &mut into);
+        assert_eq!(into.graph.nodes.len(), 1);
+        assert_eq!(into.graph.nodes[0].span, Some(Span::new(5, 90)));
     }
 
     #[test]
@@ -514,10 +520,10 @@ mod tests {
     fn a_document_with_no_module_still_records_the_module_row() {
         // The file was read and the graph should say so, even when the CLI
         // returned nothing usable about its contents.
-        let mut graph = SpecGraph::new("test");
-        ingest(&json!({}), "broken", "broken.allium", "", &mut graph);
-        assert_eq!(graph.modules.len(), 1);
-        assert_eq!(graph.modules[0].name, "broken");
-        assert!(graph.nodes.is_empty());
+        let mut into = Ingestion::empty("test");
+        ingest(&json!({}), "broken", "broken.allium", "", &mut into);
+        assert_eq!(into.graph.modules.len(), 1);
+        assert_eq!(into.graph.modules[0].name, "broken");
+        assert!(into.graph.nodes.is_empty());
     }
 }
