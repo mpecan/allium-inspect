@@ -2,6 +2,7 @@
 import type { NodeDetail } from "./NodeDetail";
 import type { NodeId } from "./NodeId";
 import type { NodeKind } from "./NodeKind";
+import type { Prose } from "./Prose";
 import type { Span } from "./Span";
 
 /**
@@ -27,4 +28,8 @@ span: Span | null,
 /**
  * Kind-specific payload.
  */
-detail: NodeDetail, };
+detail: NodeDetail, 
+/**
+ * What the author wrote about it in prose.
+ */
+prose: Prose, };

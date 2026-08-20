@@ -23,4 +23,13 @@ relationship: boolean,
 /**
  * The states this field is only meaningful in, from a `when` qualifier.
  */
-when: string | null, };
+when: string | null, 
+/**
+ * The `--` comment written immediately above it, per line.
+ *
+ * Sixty-nine of `friend-mesh`'s four hundred and eighty fields carry one,
+ * and they are where the reasoning is: `status: queued | settled` says
+ * what the field holds, and the four lines above it say why there is no
+ * `expired` and what absence means instead.
+ */
+note: Array<string>, };

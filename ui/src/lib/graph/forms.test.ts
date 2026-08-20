@@ -133,6 +133,7 @@ describe("applies", () => {
           terminal: ["b"],
         })),
       },
+      prose: { note: [], guidance: [] },
     };
   }
 
@@ -144,6 +145,7 @@ describe("applies", () => {
     qualified: "catalogue/AddBook",
     span: null,
     detail: { type: "none" },
+    prose: { note: [], guidance: [] },
   };
 
   it("offers the lifecycle only where there is one", () => {

@@ -20,7 +20,7 @@ use serde_json::Value;
 
 use crate::{
     graph::{Import, Module, Node, NodeDetail, NodeId, NodeKind, SpecGraph},
-    ingest::{Ingestion, json, rules, surfaces},
+    ingest::{Ingestion, json, prose, rules, surfaces},
     span::Span,
 };
 
@@ -36,8 +36,14 @@ pub fn ingest(document: &Value, module: &str, path: &str, source: &str, into: &m
         let Some((tag, inner)) = json::tagged(declaration) else { continue };
         match tag {
             "Block" => ingest_block(inner, module, source, into),
-            "Invariant" => surfaces::ingest_invariant(inner, module, source, into),
-            "Variant" => ingest_variant(inner, module, &mut into.graph),
+            "Invariant" => {
+                surfaces::ingest_invariant(inner, module, source, into);
+                attach_declaration(inner, module, NodeKind::Invariant, source, &mut into.graph);
+            }
+            "Variant" => {
+                ingest_variant(inner, module, &mut into.graph);
+                attach_declaration(inner, module, NodeKind::Entity, source, &mut into.graph);
+            }
             "Use" => {
                 if let Some(import) = read_import(inner) {
                     imports.push(import);
@@ -84,6 +90,73 @@ fn ingest_block(block: &Value, module: &str, source: &str, into: &mut Ingestion)
         "Config" => locate_named(module, NodeKind::Config, "config", span, &mut into.graph),
         "Value" => ingest_value(block, module, span, &mut into.graph),
         _ => {}
+    }
+
+    // After the kind-specific pass, because the node has to exist to be given
+    // anything. One place for every kind: a paragraph above a declaration means
+    // the same thing whatever is declared.
+    if let Some(id) = declared_id(block, module, &kind) {
+        prose::attach(block, &id, span, source, &mut into.graph);
+    }
+    if kind == "Entity" || kind == "ExternalEntity" {
+        annotate_fields(block, module, source, &mut into.graph);
+    }
+}
+
+/// Give a declaration that is not a `Block` the writing above it.
+fn attach_declaration(
+    declaration: &Value,
+    module: &str,
+    kind: NodeKind,
+    source: &str,
+    graph: &mut SpecGraph,
+) {
+    let Some(name) = json::declared_name(declaration) else { return };
+    let id = NodeId::new(module, kind, &name);
+    prose::attach(declaration, &id, json::span(declaration, "span"), source, graph);
+}
+
+/// The node a block declares, where the kind is one that becomes a node.
+fn declared_id(block: &Value, module: &str, kind: &str) -> Option<NodeId> {
+    let node_kind = match kind {
+        "Rule" => NodeKind::Rule,
+        "Surface" => NodeKind::Surface,
+        "Actor" => NodeKind::Actor,
+        "Entity" | "ExternalEntity" => NodeKind::Entity,
+        "Enum" => NodeKind::Enum,
+        "Value" => NodeKind::Value,
+        // A config block declares no name of its own; the node is called after
+        // the keyword, which is what the rest of the graph refers to it by.
+        "Config" => return Some(NodeId::new(module, NodeKind::Config, "config")),
+        _ => return None,
+    };
+    Some(NodeId::new(module, node_kind, &json::declared_name(block)?))
+}
+
+/// Give each of an entity's fields the comment written above it.
+///
+/// Matched by name rather than by position: the model pass built the field list
+/// from a different document, which reports derived values and stored fields in
+/// an order of its own.
+fn annotate_fields(block: &Value, module: &str, source: &str, graph: &mut SpecGraph) {
+    let Some(name) = json::declared_name(block) else { return };
+    let id = NodeId::new(module, NodeKind::Entity, &name);
+    let Some(node) = graph.nodes.iter_mut().find(|node| node.id == id) else { return };
+    let NodeDetail::Entity(detail) = &mut node.detail else { return };
+
+    for item in json::array(block, "items") {
+        let Some(assignment) = item.get("kind").and_then(|kind| kind.get("Assignment")) else {
+            continue;
+        };
+        let Some(field_name) = json::declared_name(assignment) else { continue };
+        let Some(span) = json::span(item, "span") else { continue };
+        let note = prose::note_above(source, span.start);
+        if note.is_empty() {
+            continue;
+        }
+        if let Some(field) = detail.fields.iter_mut().find(|field| field.name == field_name) {
+            field.note = note;
+        }
     }
 }
 

@@ -71,6 +71,19 @@ between two handles: ELK reserves channels between the layers as it places the
 nodes, and drawing along those is the difference between a diagram and a bowl of
 spaghetti on any view with more than a dozen constructs.
 
+**The prose comes with it.** More than half of a real spec set is comment —
+twenty-two of `friend-mesh`'s forty entities open with a paragraph saying why
+they exist, forty-five of its fields carry one, and a hundred rules have a
+`@guidance` block. That writing is where the reasoning lives, and the panel used
+to show the fields and leave the paragraph explaining them four lines up in a
+file nobody had open. A construct's note sits above its detail, a field's note
+under the field, and `@guidance` under a heading that says nothing checks it.
+
+The parser drops comments, so a note is sliced out of the source by walking back
+from the declaration's own byte span. It has to be contiguous — a blank line
+ends the block — which is what stops one construct inheriting another's
+paragraph, or a file's `-- Rules` banner.
+
 Selecting anything shows its source, anchored to the byte span the parser
 reported. The spec text gets permanent space along the bottom rather than a
 tooltip: in a spec explorer the text is the artifact and the graph is one way of

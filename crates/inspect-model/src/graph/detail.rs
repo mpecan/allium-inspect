@@ -44,6 +44,13 @@ pub struct EntityField {
     pub relationship: bool,
     /// The states this field is only meaningful in, from a `when` qualifier.
     pub when: Option<String>,
+    /// The `--` comment written immediately above it, per line.
+    ///
+    /// Sixty-nine of `friend-mesh`'s four hundred and eighty fields carry one,
+    /// and they are where the reasoning is: `status: queued | settled` says
+    /// what the field holds, and the four lines above it say why there is no
+    /// `expired` and what absence means instead.
+    pub note: Vec<String>,
 }
 
 impl EntityField {
@@ -57,6 +64,7 @@ impl EntityField {
             derived: false,
             relationship: false,
             when: None,
+            note: Vec::new(),
         }
     }
 

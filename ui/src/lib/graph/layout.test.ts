@@ -13,6 +13,7 @@ function node(partial: Partial<Node> & Pick<Node, "id" | "kind" | "name">): Node
     qualified: `catalogue/${partial.name}`,
     span: null,
     detail: { type: "none" },
+    prose: { note: [], guidance: [] },
     ...partial,
   } as Node;
 }
@@ -36,6 +37,7 @@ function entityOf(
         derived: false,
         relationship: false,
         when: null,
+      note: [],
       })),
     },
   });

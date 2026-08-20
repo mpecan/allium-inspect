@@ -151,6 +151,10 @@ function stateMachines(nodes: Node[]): { nodes: Node[]; edges: Edge[] } {
           // row renderer shows — so "nothing follows this" is visible on the
           // canvas rather than only in the inspector.
           detail: { type: "enum", values: terminal ? ["terminal"] : [] },
+          // A state is a value in a transition list, not a declaration, so
+          // there is nothing written above it. What the author wrote about the
+          // machine is on the field, and the entity carries that.
+          prose: { note: [], guidance: [] },
         });
 
         // An entering edge joins the entity to its own machine.

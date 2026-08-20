@@ -11,6 +11,7 @@
   import type { Node } from "../api/Node";
   import type { Obligation } from "../api/Obligation";
   import type { Position } from "../api/Position";
+  import { inline, paragraphs } from "../prose";
   import type { FieldLinks } from "../spec";
   import { familyOf } from "../graph/layout";
   import Verdict from "./Verdict.svelte";
@@ -63,6 +64,17 @@
   );
 </script>
 
+<!-- The authors write `code` and **emphasis** into their comments in earnest:
+     593 of the first and 75 of the second across one spec set. Showing the
+     markers rather than what they mark shows the reader the scaffolding. -->
+{#snippet marked(line: string)}
+  {#each inline(line) as piece, index (index)}
+    {#if piece.kind === "code"}<code>{piece.text}</code>
+    {:else if piece.kind === "strong"}<strong>{piece.text}</strong>
+    {:else}{piece.text}{/if}
+  {/each}
+{/snippet}
+
 <aside class="inspector {family}" aria-label="Construct details">
   {#if !node}
     <div class="empty">
@@ -78,6 +90,15 @@
       <h2>{node.name}</h2>
       <p class="address">{address}</p>
     </header>
+
+    {#if node.prose.note.length > 0}
+      <!-- Above the fields, because it is why the fields are what they are. -->
+      <section class="prose-block">
+        {#each paragraphs(node.prose.note) as line, index (index)}
+          <p class="prose">{@render marked(line)}</p>
+        {/each}
+      </section>
+    {/if}
 
     {#if node.detail.type === "entity"}
       {@const detail = node.detail}
@@ -112,6 +133,13 @@
                 {field.type_expr}
               {/if}
               {#if field.when}<span class="when">when {field.when}</span>{/if}
+              {#if field.note.length > 0}
+                <span class="field-note">
+                  {#each paragraphs(field.note) as line, index (index)}
+                    <span class="prose">{@render marked(line)}</span>
+                  {/each}
+                </span>
+              {/if}
               {#if links.written.has(field.name)}
                 <span class="written">
                   <span class="written-by">written by</span>
@@ -283,6 +311,19 @@
           Something in this spec set refers to <code>{node.qualified}</code>, and
           no module in it declares that. Either the spec that governs it is not
           loaded, or the name is wrong.
+        </p>
+      </section>
+    {/if}
+
+    {#if node.prose.guidance.length > 0}
+      <section>
+        <h3>Guidance</h3>
+        {#each paragraphs(node.prose.guidance) as line, index (index)}
+          <p class="prose">{@render marked(line)}</p>
+        {/each}
+        <p class="prose caveat">
+          Written as <code>@guidance</code> in the spec. It is advice to whoever
+          builds this, and nothing checks it.
         </p>
       </section>
     {/if}
@@ -464,6 +505,35 @@
   }
   .written button:hover {
     text-decoration: underline;
+  }
+
+  /* The paragraph an author wrote above the declaration. Set on the warm
+   * document ground the source strip uses, because it *is* the document: the
+   * rest of this panel is the tool's reading of a spec and this is the spec. */
+  .prose-block {
+    padding: var(--gap-2) var(--gap-3);
+    border-left: 2px solid var(--line-strong);
+    background: color-mix(in srgb, var(--ground-raised) 70%, transparent);
+    border-radius: var(--radius);
+  }
+  .prose-block .prose + .prose {
+    margin-top: var(--gap-2);
+  }
+
+  /* A field's note belongs to the field, so it sits under it rather than in a
+   * section of its own — sixty-nine of them in one file would otherwise be
+   * sixty-nine headings. */
+  .field-note {
+    display: block;
+    margin-top: 2px;
+    font-size: var(--t-micro);
+    line-height: 1.5;
+    color: var(--ink-dim);
+    text-align: left;
+  }
+  .field-note .prose + .prose {
+    display: block;
+    margin-top: var(--gap-1);
   }
 
   .when {

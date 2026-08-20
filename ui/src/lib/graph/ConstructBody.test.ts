@@ -16,6 +16,7 @@ function node(kind: Node["kind"], name: string, detail: NodeDetail): Node {
     qualified: `m/${name}`,
     span: null,
     detail,
+    prose: { note: [], guidance: [] },
   };
 }
 
@@ -56,8 +57,8 @@ describe("ConstructBody", () => {
       parent: null,
       transitions: [],
       fields: [
-        { name: "opened_at", type_expr: "Timestamp", enum_values: [], derived: false, relationship: false, when: null },
-        { name: "due_at", type_expr: "Timestamp", enum_values: [], derived: false, relationship: false, when: null },
+        { name: "opened_at", type_expr: "Timestamp", enum_values: [], derived: false, relationship: false, when: null, note: [] },
+        { name: "due_at", type_expr: "Timestamp", enum_values: [], derived: false, relationship: false, when: null, note: [] },
       ],
     });
     expect(() => draw(entity)).not.toThrow();

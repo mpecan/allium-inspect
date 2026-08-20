@@ -20,6 +20,7 @@ mod link;
 mod model;
 mod parse;
 mod plan;
+mod prose;
 mod rules;
 mod surfaces;
 mod text;

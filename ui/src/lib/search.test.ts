@@ -12,6 +12,7 @@ function node(kind: Node["kind"], name: string, module = "catalogue"): Node {
     qualified: `${module}/${name}`,
     span: null,
     detail: { type: "none" },
+    prose: { note: [], guidance: [] },
   };
 }
 

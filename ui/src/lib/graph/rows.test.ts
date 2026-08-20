@@ -12,6 +12,7 @@ function field(partial: Partial<EntityField> & Pick<EntityField, "name">): Entit
     derived: false,
     relationship: false,
     when: null,
+    note: [],
     ...partial,
   };
 }
@@ -25,6 +26,7 @@ function node(kind: Node["kind"], detail: NodeDetail, name = "Thing"): Node {
     qualified: `m/${name}`,
     span: null,
     detail,
+    prose: { note: [], guidance: [] },
   };
 }
 

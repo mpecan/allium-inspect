@@ -161,6 +161,39 @@ pub struct Node {
     pub span: Option<Span>,
     /// Kind-specific payload.
     pub detail: NodeDetail,
+    /// What the author wrote about it in prose.
+    pub prose: Prose,
+}
+
+/// The writing around a construct, as the author left it.
+///
+/// A specification is mostly prose. `friend-mesh` has 6,700 lines of Allium and
+/// more than half of them are comment: twenty-two of its forty entities open
+/// with a paragraph saying why they exist, and a hundred rules carry a
+/// `@guidance` block. That writing is where the reasoning lives — a reader who
+/// has the fields and not the paragraph above them has the *what* and none of
+/// the *why*, which is the half a specification exists to record.
+///
+/// The two are kept apart because they are different acts. A comment is a note
+/// the author left; `@guidance` is a block the language itself recognises and
+/// that the tooling around it reads. Presenting them as one thing would be this
+/// tool deciding they are the same.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../ui/src/lib/api/")]
+pub struct Prose {
+    /// The `--` comment written immediately above the declaration, per line,
+    /// with the marker stripped. A blank line is an empty string.
+    pub note: Vec<String>,
+    /// The body of each `@guidance` block inside it, per line.
+    pub guidance: Vec<String>,
+}
+
+impl Prose {
+    /// Whether there is anything to show.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.note.is_empty() && self.guidance.is_empty()
+    }
 }
 
 impl Node {
@@ -175,6 +208,7 @@ impl Node {
             qualified: format!("{module}/{name}"),
             span: None,
             detail: NodeDetail::None,
+            prose: Prose::default(),
         }
     }
 

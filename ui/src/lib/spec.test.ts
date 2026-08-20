@@ -142,6 +142,7 @@ const retirement: Node = {
   qualified: "identity/IdentityRetirement",
   span: null,
   detail: { type: "none" },
+  prose: { note: [], guidance: [] },
 };
 
 describe("reportedAgainst", () => {
@@ -197,6 +198,7 @@ describe("fieldLinks", () => {
     qualified: "delivery/OutboxEntry",
     span: null,
     detail: { type: "none" },
+    prose: { note: [], guidance: [] },
   };
 
   const edge = (

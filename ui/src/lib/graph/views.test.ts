@@ -22,6 +22,7 @@ function node(
     qualified: `${module}/${name}`,
     span: null,
     detail,
+    prose: { note: [], guidance: [] },
   };
 }
 
