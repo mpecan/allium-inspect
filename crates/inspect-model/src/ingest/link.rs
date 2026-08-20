@@ -20,7 +20,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::graph::{Edge, EdgeKind, Node, NodeDetail, NodeId, NodeKind, SpecGraph};
+use crate::graph::{
+    Edge, EdgeKind, Node, NodeDetail, NodeId, NodeKind, SpecGraph, TriggerDetail, TriggerSource,
+};
 
 /// Types the language provides, which name no construct in any module.
 ///
@@ -51,6 +53,7 @@ const BUILT_IN: &[&str] = &[
 pub fn link(graph: &mut SpecGraph) {
     resolve_imports(graph);
     drop_imports_we_resolved(graph);
+    declare_offered_triggers(graph);
     let aliases = alias_table(graph);
     let known: BTreeSet<NodeId> = graph.nodes.iter().map(|node| node.id.clone()).collect();
 
@@ -107,6 +110,39 @@ fn resolve_imports(graph: &mut SpecGraph) {
         for import in &mut module.imports {
             import.target = module_of_path(&import.path).filter(|name| names.contains(name));
         }
+    }
+}
+
+/// Give a trigger a surface offers a node, when nothing else made one.
+///
+/// A trigger node is otherwise created only by the `when` clause that waits for
+/// one — so an operation a surface offers and no rule consumes had no node, and
+/// resolved to an unresolved external reference. It is not unresolved: the spec
+/// declares it right there, by offering it. `plan` already makes the same
+/// argument for a trigger a rule emits and nothing listens for.
+///
+/// What it *is* is an operation with nothing behind it, which is worth seeing.
+/// Drawn as a trigger with nothing following it, that is exactly what it looks
+/// like; drawn as an unresolved reference, it looks like a typo.
+fn declare_offered_triggers(graph: &mut SpecGraph) {
+    let known: BTreeSet<NodeId> = graph.nodes.iter().map(|node| node.id.clone()).collect();
+    let missing: BTreeSet<NodeId> = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.kind == EdgeKind::Provides)
+        .map(|edge| edge.to.clone())
+        .filter(|id| !known.contains(id))
+        .collect();
+
+    for id in missing {
+        graph.nodes.push(Node::new(id.module(), NodeKind::Trigger, id.name()).with(
+            NodeDetail::Trigger(TriggerDetail {
+                source: TriggerSource::External,
+                parameters: Vec::new(),
+                condition: None,
+                entity: None,
+            }),
+        ));
     }
 }
 
@@ -316,6 +352,9 @@ fn candidate_kinds(kind: EdgeKind) -> &'static [NodeKind] {
             &[NodeKind::Entity, NodeKind::Value, NodeKind::Variant]
         }
         EdgeKind::IdentifiedBy => &[NodeKind::Entity, NodeKind::External],
+        // A sum type is an entity, and a variant of one is drawn as a variant —
+        // so a `variant X : Y` where Y is itself a variant resolves too.
+        EdgeKind::VariantOf => &[NodeKind::Entity, NodeKind::Variant],
         _ => &[NodeKind::Entity, NodeKind::Value, NodeKind::Variant, NodeKind::Enum],
     }
 }
@@ -359,6 +398,50 @@ mod tests {
             span: None,
         });
         built
+    }
+
+    #[test]
+    fn a_trigger_a_surface_offers_is_declared_by_the_offering() {
+        // A trigger node is otherwise made only by the `when` clause that waits
+        // for one, so an operation nothing consumes resolved to an unresolved
+        // external reference — which reads as a typo. It is not: the spec
+        // declares it right there, by offering it. What it *is* is an operation
+        // with nothing behind it, and a trigger with nothing following it is
+        // what that looks like.
+        let mut graph = SpecGraph::new("v");
+        graph.nodes.push(Node::new("delivery", NodeKind::Surface, "HubStorage"));
+        graph.edges.push(Edge::new(
+            NodeId::new("delivery", NodeKind::Surface, "HubStorage"),
+            NodeId::new("delivery", NodeKind::Trigger, "OperatorShowsCode"),
+            EdgeKind::Provides,
+            "OperatorShowsCode",
+        ));
+
+        link(&mut graph);
+
+        let made = graph
+            .node(&NodeId::new("delivery", NodeKind::Trigger, "OperatorShowsCode"))
+            .expect("the trigger the surface declared");
+        assert_eq!(made.kind, NodeKind::Trigger);
+        assert!(graph.nodes.iter().all(|node| node.kind != NodeKind::External));
+    }
+
+    #[test]
+    fn a_trigger_a_rule_already_waits_for_is_not_declared_twice() {
+        let mut graph = SpecGraph::new("v");
+        graph.nodes.push(Node::new("delivery", NodeKind::Surface, "Desk"));
+        graph.nodes.push(Node::new("delivery", NodeKind::Trigger, "Borrow"));
+        graph.edges.push(Edge::new(
+            NodeId::new("delivery", NodeKind::Surface, "Desk"),
+            NodeId::new("delivery", NodeKind::Trigger, "Borrow"),
+            EdgeKind::Provides,
+            "Borrow",
+        ));
+
+        link(&mut graph);
+
+        let triggers = graph.nodes.iter().filter(|node| node.kind == NodeKind::Trigger).count();
+        assert_eq!(triggers, 1);
     }
 
     #[test]

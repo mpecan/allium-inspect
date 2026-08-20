@@ -19,7 +19,7 @@
 use serde_json::Value;
 
 use crate::{
-    graph::{Import, Module, Node, NodeDetail, NodeId, NodeKind, SpecGraph},
+    graph::{Edge, EdgeKind, Import, Module, Node, NodeDetail, NodeId, NodeKind, SpecGraph},
     ingest::{Ingestion, json, prose, rules, surfaces},
     span::Span,
 };
@@ -251,13 +251,19 @@ fn value_fields(block: &Value) -> Vec<crate::graph::EntityField> {
 /// A variant of a sum type: an entity that names its parent.
 fn ingest_variant(declaration: &Value, module: &str, graph: &mut SpecGraph) {
     let Some(name) = json::declared_name(declaration) else { return };
-    let parent =
-        declaration.get("parent").or_else(|| declaration.get("base")).and_then(
-            |parent| match parent {
-                Value::String(text) => Some(text.clone()),
-                other => json::string(other, "name"),
-            },
-        );
+    let parent = declaration.get("parent").or_else(|| declaration.get("base")).and_then(base_name);
+
+    if let Some(parent) = &parent {
+        // Without this the variant is joined to nothing a reader can see. Its
+        // whole meaning is that it *is* one of these, and the domain view drew
+        // three of them floating in a row above a graph they belong in.
+        graph.edges.push(Edge::new(
+            NodeId::new(module, NodeKind::Variant, &name),
+            NodeId::new(module, NodeKind::Entity, parent),
+            EdgeKind::VariantOf,
+            parent.clone(),
+        ));
+    }
 
     graph.nodes.push(
         Node::new(module, NodeKind::Variant, &name).at(json::span(declaration, "span")).with(
@@ -269,6 +275,27 @@ fn ingest_variant(declaration: &Value, module: &str, graph: &mut SpecGraph) {
             }),
         ),
     );
+}
+
+/// The sum type a `variant` names, however the CLI spells it.
+///
+/// `variant SeenAnnouncement : PendingAnnouncement { marker: SeenMarker }`
+/// narrows its parent by a field, so the base comes back as a `JoinLookup`
+/// rather than a name — and reading only the name left every variant in a real
+/// spec set with no parent and no edge to one.
+fn base_name(base: &Value) -> Option<String> {
+    if let Value::String(text) = base {
+        return Some(text.clone());
+    }
+    if let Some(name) = json::string(base, "name") {
+        return Some(name);
+    }
+    match json::tagged(base)? {
+        ("JoinLookup", inner) => inner.get("entity").and_then(|entity| {
+            json::tagged(entity).and_then(|(_, named)| json::string(named, "name"))
+        }),
+        (_, inner) => json::string(inner, "name"),
+    }
 }
 
 /// One `use "./other.allium" as alias` declaration.
@@ -772,6 +799,58 @@ external entity Staff {
             .and_then(|node| node.detail.as_entity())
             .expect("the variant");
         assert_eq!(detail.parent.as_deref(), Some("PendingAnnouncement"));
+    }
+
+    #[test]
+    fn a_variant_narrowing_its_parent_still_names_it() {
+        // `variant SeenAnnouncement : PendingAnnouncement { marker: SeenMarker }`
+        // narrows the parent by a field, so the CLI reports the base as a
+        // `JoinLookup` rather than a name. Reading only the name left every
+        // variant in a real spec set with no parent — and, in the domain view,
+        // floating above a graph they belong in.
+        let graph = ingested(json!([{"Variant": {
+            "span": {"start": 0, "end": 0},
+            "name": named("SeenAnnouncement"),
+            "base": {"JoinLookup": {
+                "span": {"start": 0, "end": 0},
+                "entity": {"Ident": {"span": {"start": 0, "end": 0}, "name": "PendingAnnouncement"}},
+                "fields": [],
+            }},
+            "items": [],
+        }}]));
+        let detail = graph
+            .node(&NodeId::new("lending", NodeKind::Variant, "SeenAnnouncement"))
+            .and_then(|node| node.detail.as_entity())
+            .expect("the variant");
+        assert_eq!(detail.parent.as_deref(), Some("PendingAnnouncement"));
+    }
+
+    #[test]
+    fn a_variant_is_joined_to_the_type_it_is_one_of() {
+        // Its whole meaning is that it *is* one of these. Without the edge it
+        // is drawn as something unrelated to everything.
+        let graph = ingested(json!([{"Variant": {
+            "span": {"start": 0, "end": 0},
+            "name": named("SeenAnnouncement"),
+            "parent": named("PendingAnnouncement"),
+            "items": [],
+        }}]));
+        let joined: Vec<&Edge> =
+            graph.edges.iter().filter(|edge| edge.kind == EdgeKind::VariantOf).collect();
+        assert_eq!(joined.len(), 1);
+        assert_eq!(joined[0].from.as_str(), "lending::variant::SeenAnnouncement");
+        assert_eq!(joined[0].label, "PendingAnnouncement");
+    }
+
+    #[test]
+    fn a_variant_with_no_parent_is_joined_to_nothing() {
+        // Rather than to a node named after the empty string.
+        let graph = ingested(json!([{"Variant": {
+            "span": {"start": 0, "end": 0},
+            "name": named("Loose"),
+            "items": [],
+        }}]));
+        assert!(graph.edges.iter().all(|edge| edge.kind != EdgeKind::VariantOf));
     }
 
     #[test]

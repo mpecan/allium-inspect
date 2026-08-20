@@ -256,6 +256,8 @@ pub enum EdgeKind {
     IdentifiedBy,
     /// An invariant constraining an entity.
     Constrains,
+    /// A variant of a sum type, pointing at the type it is one of.
+    VariantOf,
     /// A module importing another.
     Imports,
 }
@@ -277,6 +279,7 @@ impl EdgeKind {
             EdgeKind::Facing => "facing",
             EdgeKind::IdentifiedBy => "identified_by",
             EdgeKind::Constrains => "constrains",
+            EdgeKind::VariantOf => "variant_of",
             EdgeKind::Imports => "imports",
         }
     }

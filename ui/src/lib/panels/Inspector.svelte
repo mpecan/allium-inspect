@@ -110,6 +110,7 @@
         </p>
       {/if}
 
+      {#if detail.fields.length > 0}
       <section>
         <h3>Fields</h3>
         <dl class="fields">
@@ -151,7 +152,11 @@
             </dd>
           {/each}
         </dl>
-        {#if links.written.size > 0}
+        <!-- Only when a field actually shows one. A variant declares its own
+             field inside its base expression rather than in its body, so it can
+             be written by rules and list no fields at all — and the note would
+             be explaining a column that is not there. -->
+        {#if detail.fields.some((field) => links.written.has(field.name))}
           <p class="prose caveat">
             "Written by" lists rules whose postconditions name the field. A rule
             that writes one through a name this tool could not resolve to an
@@ -159,6 +164,7 @@
           </p>
         {/if}
       </section>
+      {/if}
 
       {#each detail.transitions as lifecycle (lifecycle.field)}
         <section>

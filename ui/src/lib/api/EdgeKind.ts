@@ -3,4 +3,4 @@
 /**
  * What relationship an edge stands for.
  */
-export type EdgeKind = "field" | "relationship" | "triggers" | "creates" | "mutates" | "emits" | "reads" | "exposes" | "provides" | "facing" | "identified_by" | "constrains" | "imports";
+export type EdgeKind = "field" | "relationship" | "triggers" | "creates" | "mutates" | "emits" | "reads" | "exposes" | "provides" | "facing" | "identified_by" | "constrains" | "variant_of" | "imports";

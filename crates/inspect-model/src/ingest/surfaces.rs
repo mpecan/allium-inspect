@@ -255,9 +255,22 @@ fn block_item_texts(value: Option<&Value>, source: &str) -> Vec<String> {
 }
 
 /// The operations a `provides` clause offers.
+/// The operations a `provides:` clause offers.
+///
+/// Two shapes, because the CLI reports a clause of one operation as that
+/// operation and a clause of several as a block of them. Twelve of the
+/// twenty-seven `provides` clauses in a real spec set are the first shape, and
+/// reading only the second left nearly half the surfaces in it offering nothing
+/// — no operation in the panel, nothing to fire in the simulator, and a
+/// `provides` edge pointing at a trigger node nobody had made.
 fn provided_operations(value: Option<&Value>, source: &str) -> Vec<SurfaceOperation> {
-    let Some(("Block", block)) = value.and_then(json::tagged) else { return Vec::new() };
-    json::array(block, "items").iter().filter_map(|item| operation(item, source)).collect()
+    let Some(value) = value else { return Vec::new() };
+    match json::tagged(value) {
+        Some(("Block", block)) => {
+            json::array(block, "items").iter().filter_map(|item| operation(item, source)).collect()
+        }
+        _ => operation(value, source).into_iter().collect(),
+    }
 }
 
 fn operation(item: &Value, source: &str) -> Option<SurfaceOperation> {
@@ -573,6 +586,79 @@ mod tests {
             into.graph.edges_from(&surface).filter(|e| e.kind == EdgeKind::Provides).collect();
         assert_eq!(provides.len(), 1);
         assert_eq!(provides[0].to, NodeId::new("lending", NodeKind::Trigger, "MemberBorrows"));
+    }
+
+    #[test]
+    fn a_surface_offering_one_operation_still_offers_it() {
+        // The CLI reports a `provides:` of one operation as that operation, and
+        // one of several as a block of them. Twelve of the twenty-seven in a
+        // real spec set are the first shape, and reading only the second left
+        // nearly half the surfaces offering nothing at all.
+        let mut into = Ingestion::empty("test");
+        ingest_surface(
+            &json!({
+                "kind": "Surface",
+                "name": named("HubStorage"),
+                "span": {"start": 0, "end": 0},
+                "items": [{"kind": {"Clause": {
+                    "keyword": "provides",
+                    "value": {"Call": {
+                        "span": {"start": 0, "end": 0},
+                        "function": {"Ident": {"span": {"start": 0, "end": 0}, "name": "OperatorShowsCode"}},
+                        "args": [{"Positional": {"Ident": {"span": {"start": 0, "end": 0}, "name": "operator"}}}],
+                    }},
+                }}}],
+            }),
+            "lending",
+            "",
+            &mut into,
+        );
+        let detail = into
+            .graph
+            .node(&NodeId::new("lending", NodeKind::Surface, "HubStorage"))
+            .and_then(|node| node.detail.as_surface())
+            .expect("the surface");
+        assert_eq!(detail.provides.len(), 1);
+        assert_eq!(detail.provides[0].trigger, "OperatorShowsCode");
+        assert_eq!(detail.provides[0].parameters, ["operator"]);
+    }
+
+    #[test]
+    fn a_lone_operation_may_still_be_guarded() {
+        // `provides X(y) when …` is the other single-operation shape, and the
+        // guard is the difference between an act a person can always do and one
+        // the spec only offers in some state.
+        let mut into = Ingestion::empty("test");
+        ingest_surface(
+            &json!({
+                "kind": "Surface",
+                "name": named("Desk"),
+                "span": {"start": 0, "end": 0},
+                "items": [{"kind": {"Clause": {
+                    "keyword": "provides",
+                    "value": {"WhenGuard": {
+                        "span": {"start": 0, "end": 0},
+                        "action": {"Call": {
+                            "span": {"start": 0, "end": 0},
+                            "function": {"Ident": {"span": {"start": 0, "end": 0}, "name": "Withdraw"}},
+                            "args": [],
+                        }},
+                        "condition": {"Ident": {"span": {"start": 0, "end": 4}, "name": "open"}},
+                    }},
+                }}}],
+            }),
+            "lending",
+            "open",
+            &mut into,
+        );
+        let detail = into
+            .graph
+            .node(&NodeId::new("lending", NodeKind::Surface, "Desk"))
+            .and_then(|node| node.detail.as_surface())
+            .expect("the surface");
+        assert_eq!(detail.provides.len(), 1);
+        assert_eq!(detail.provides[0].trigger, "Withdraw");
+        assert!(detail.provides[0].when.is_some(), "the guard is what makes it conditional");
     }
 
     #[test]

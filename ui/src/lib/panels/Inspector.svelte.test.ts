@@ -112,6 +112,17 @@ describe("Inspector · prose", () => {
     expect(screen.queryByRole("heading", { name: "Guidance" })).toBeNull();
   });
 
+  it("draws no Fields section for a construct that declares none", () => {
+    // A variant declares its own field inside its base expression rather than
+    // in its body, so it can be written by rules and list no fields at all —
+    // and an empty heading is a heading over nothing.
+    const bare = entity({});
+    bare.detail = { ...bare.detail, fields: [] } as typeof bare.detail;
+    show(bare);
+    expect(screen.queryByRole("heading", { name: "Fields" })).toBeNull();
+    expect(screen.queryByText(/"Written by" lists rules/)).toBeNull();
+  });
+
   it("survives having nothing selected", () => {
     show(null);
     expect(screen.getByText(/Pick a construct/)).toBeTruthy();
