@@ -291,7 +291,10 @@
 
   dl {
     display: grid;
-    grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+    /* Proportional rather than sized to the longest name. A qualified config
+     * parameter can be forty characters, and letting it set the column width
+     * squeezes the value it exists to show off the edge of the panel. */
+    grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
     gap: 2px var(--gap-2);
     margin: var(--gap-2) 0 0;
     font-size: var(--t-micro);
@@ -300,7 +303,7 @@
 
   dt {
     color: var(--ink-dim);
-    white-space: nowrap;
+    overflow-wrap: anywhere;
   }
   /* A derived field is marked because the spec computes it and this simulator
    * does not. Leaving one unset is the commonest reason a rule comes back

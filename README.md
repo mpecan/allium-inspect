@@ -36,7 +36,7 @@ Two things follow from reading the set as a set:
 |---|---|
 | **Domain** | what the spec holds — entities, fields, relationships, enums |
 | **Flow** | what happens and in what order — trigger → rule → entity → trigger |
-| **Lifecycle** | how each entity changes state, and which rule witnesses each edge |
+| **Lifecycle** | how each entity changes state — one state machine per entity |
 | **Journey** | what follows from an action, traced forward or backward |
 | **Simulate** | fire a trigger against a world and watch |
 

@@ -166,6 +166,11 @@
     display: block;
     width: 100%;
     text-align: left;
+    /* A trigger name is what you are choosing between, so it wraps rather than
+     * being cut off: `PersonTakesArchivedAttachments` and
+     * `PersonTakesArchivedMessages` are the same word until the last one. */
+    white-space: normal;
+    overflow-wrap: anywhere;
     padding: 2px var(--gap-2);
     font-size: var(--t-small);
     border-radius: var(--radius);
