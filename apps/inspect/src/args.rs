@@ -28,9 +28,50 @@ pub struct Args {
     #[arg(long)]
     pub print_graph: bool,
 
+    /// Journeys to check against the spec: a `.journey` file, or a directory.
+    ///
+    /// Journeys are the demand written first, so a step naming something the
+    /// spec does not have is reported as a requirement rather than refused.
+    #[arg(long, value_name = "PATH")]
+    pub journeys: Option<PathBuf>,
+
+    /// Fail when a journey names something the spec does not have.
+    ///
+    /// Off by default, because report is the mode a journey is *written* in.
+    /// This is the mode a finished one is defended in.
+    #[arg(long, requires = "journeys")]
+    pub strict: bool,
+
+    /// Print the journey report as JSON and exit.
+    #[arg(long, requires = "journeys")]
+    pub json: bool,
+
     /// The allium binary to run.
     #[arg(long, default_value = "allium")]
     pub allium: PathBuf,
+}
+
+/// Every `.journey` file under `path`, sorted.
+///
+/// One level deep, like the spec search and for the same reason: a directory of
+/// journeys is a directory of journeys, and recursing sweeps in whatever else
+/// happens to be under it.
+#[must_use]
+pub fn journeys(path: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    if path.is_dir() {
+        let Ok(entries) = std::fs::read_dir(path) else { return found };
+        for entry in entries.flatten() {
+            let candidate = entry.path();
+            if candidate.extension().is_some_and(|extension| extension == "journey") {
+                found.push(candidate);
+            }
+        }
+    } else if path.extension().is_some_and(|extension| extension == "journey") {
+        found.push(path.to_owned());
+    }
+    found.sort();
+    found
 }
 
 /// Every `.allium` file under `paths`, sorted.

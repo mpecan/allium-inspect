@@ -563,6 +563,7 @@ name = "inspect"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "inspect-journey",
  "inspect-model",
  "inspect-server",
  "notify",
@@ -571,6 +572,17 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "inspect-journey"
+version = "0.1.0"
+dependencies = [
+ "inspect-model",
+ "inspect-sim",
+ "serde",
+ "serde_json",
+ "ts-rs",
 ]
 
 [[package]]

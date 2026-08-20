@@ -184,9 +184,34 @@ two people with different jobs, and only naming the job settles it.
 
 Reviews run against them live in [`docs/reviews/`](docs/reviews/).
 
-A design for **user journeys** — an executable claim about what an actor can do,
-written beside the spec rather than in it, and checked against it — is in
-[`docs/journeys/`](docs/journeys/). Nothing of it is built yet.
+## Journeys
+
+A **journey** is an executable claim about what an actor can do, written beside
+the spec rather than in it — and written *first*, so a step naming a surface the
+spec does not have is a requirement nobody has met rather than an error.
+
+```sh
+allium-inspect --journeys journeys/ specs/
+```
+
+```
+AReaderRenewsALoan  —  0 of 1 steps hold
+   1. she asks for another three weeks                 unspecified
+        ada does MemberRenews(ada) on MemberShelf
+          no surface offers `MemberRenews`
+        then RenewLoan fires
+          no rule called `RenewLoan`
+```
+
+Every step gets one of six verdicts. Three are the simulator's own — **holds**,
+**refused**, **undecided** — and two are what a journey needs and a simulation
+does not: **unspecified**, which is the backlog, and **unexposed**, which is a
+system that does the right thing and tells nobody. `--strict` turns the first
+two into a failure, for the journeys somebody has decided are done; reporting is
+the default, because report is the mode a journey is *written* in.
+
+The design, and what is deliberately left out of it, is in
+[`docs/journeys/`](docs/journeys/).
 
 ## Quality gates
 

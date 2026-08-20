@@ -3,6 +3,7 @@ resolver = "3"
 members = [
   "crates/inspect-model",
   "crates/inspect-sim",
+  "crates/inspect-journey",
   "crates/inspect-server",
   "apps/inspect",
 ]
@@ -18,6 +19,7 @@ rust-version = "1.96"
 # --- workspace crates ---
 inspect-model = { path = "crates/inspect-model" }
 inspect-sim = { path = "crates/inspect-sim" }
+inspect-journey = { path = "crates/inspect-journey" }
 inspect-server = { path = "crates/inspect-server" }
 
 # --- serialisation ---

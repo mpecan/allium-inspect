@@ -1,10 +1,17 @@
 # User journeys over an Allium spec
 
-*A design. Nothing here is built yet.*
+**Parsing, checking and walking are built.** The browser view is not. Run one:
 
-Second draft, after answers on the open questions. What changed is the direction
-of the whole thing: a journey is not a test written after a spec, it is the
-**demand written first**, and the spec is filled in to satisfy it.
+```sh
+allium-inspect --journeys journeys/ specs/          # report: every step gets a status
+allium-inspect --journeys journeys/ specs/ --strict # fail on what the spec cannot support
+allium-inspect --journeys journeys/ specs/ --json   # for whatever wrote the journey
+```
+
+The design below is the second draft, after answers on the open questions. What
+changed is the direction of the whole thing: a journey is not a test written
+after a spec, it is the **demand written first**, and the spec is filled in to
+satisfy it.
 
 > Think of it the other way around: I write the journeys and then fill the spec
 > to fulfil them.

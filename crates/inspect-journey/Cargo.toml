@@ -1,0 +1,19 @@
+[package]
+name = "inspect-journey"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Journeys written against an Allium spec: parsed, checked and walked"
+
+[dependencies]
+inspect-model = { workspace = true }
+inspect-sim = { workspace = true }
+serde = { workspace = true }
+# The world and the step outcome cross the wire as JSON, and a journey report
+# is asked for as JSON by the agents that write journeys.
+serde_json = { workspace = true }
+# Generates the TypeScript for a journey report, so the browser's idea of a
+# verdict cannot drift from this crate's.
+ts-rs = { workspace = true }

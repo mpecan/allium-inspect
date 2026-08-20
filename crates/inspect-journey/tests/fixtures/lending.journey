@@ -1,0 +1,62 @@
+-- The two journeys the lending fixture is for: a copy going out and coming
+-- back, and the same copy nobody brings back.
+
+journey ACopyGoesOutAndComesBack {
+    goal: Ada borrows a copy, keeps it a fortnight, and brings it back before
+          it falls due.
+
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+
+    given:
+        ada.name = "Ada"
+        ada.is_at_limit = false
+        copy.status = available
+
+    1. she borrows it
+        ada does MemberBorrows(ada, copy) on MemberShelf
+            creating loan: Loan
+        then BorrowCopy fires
+        then loan.status = open
+        then copy.status = on_loan
+        ada sees loan.status on MemberShelf
+
+    2. a fortnight passes and nothing falls due
+        after 14.days
+        then LoanFallsOverdue does not fire
+        then loan.status = open
+
+    3. she brings it back
+        ada does MemberReturns(loan) on MemberShelf
+        then loan.status = returned
+        then copy.status = available
+
+    ends: The copy is back on the shelf and Ada owes nothing.
+}
+
+journey ACopyNobodyBringsBack {
+    goal: Ada borrows a copy and lets the loan period run out, and the library
+          learns it is overdue without anybody telling it.
+
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+
+    given:
+        ada.is_at_limit = false
+        copy.status = available
+
+    1. she borrows it
+        ada does MemberBorrows(ada, copy) on MemberShelf
+            creating loan: Loan
+        then loan.status = open
+
+    2. the loan period runs out on its own
+        after 21.days
+        then LoanFallsOverdue fires
+        then loan.status = overdue
+        ada sees loan.is_late on MemberShelf
+
+    ends: The loan is overdue and nobody had to say so.
+}

@@ -12,6 +12,7 @@ name = "allium-inspect"
 path = "src/main.rs"
 
 [dependencies]
+inspect-journey = { workspace = true }
 inspect-model = { workspace = true }
 inspect-server = { workspace = true }
 clap = { workspace = true }

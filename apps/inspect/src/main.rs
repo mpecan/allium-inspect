@@ -12,7 +12,11 @@
 mod args;
 mod watch;
 
-use std::{net::SocketAddr, path::PathBuf, process::ExitCode};
+use std::{
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    process::ExitCode,
+};
 
 use args::Args;
 use clap::Parser;
@@ -52,6 +56,10 @@ async fn run(args: Args) -> Result<(), String> {
 
     let runner = ProcessRunner::new(&args.allium);
     let inspection = Inspection::build(&runner, &paths).map_err(|error| error.to_string())?;
+
+    if let Some(path) = &args.journeys {
+        return check_journeys(path, &inspection, args.strict, args.json);
+    }
 
     if args.print_graph {
         let json = serde_json::to_string_pretty(&inspection.graph)
@@ -98,6 +106,59 @@ async fn run(args: Args) -> Result<(), String> {
     }
 
     serve(listener, state).await.map_err(|error| format!("server stopped: {error}"))
+}
+
+/// Walk every journey under `path` against the spec, and say what happened.
+///
+/// A journey is the demand written first, so this reports by default: the steps
+/// the spec cannot support are the backlog rather than an error. `--strict` is
+/// the mode a finished journey is defended in.
+fn check_journeys(
+    path: &Path,
+    inspection: &Inspection,
+    strict: bool,
+    json: bool,
+) -> Result<(), String> {
+    let files = args::journeys(path);
+    if files.is_empty() {
+        return Err(format!("no .journey files found in {}", path.display()));
+    }
+
+    let mut walks = Vec::new();
+    for file in &files {
+        let source = std::fs::read_to_string(file)
+            .map_err(|error| format!("could not read {}: {error}", file.display()))?;
+        // A file that does not parse names its own line, and the path is what
+        // turns that into somewhere to go.
+        let journeys = inspect_journey::parse(&source)
+            .map_err(|error| format!("{}:{error}", file.display()))?;
+        for journey in &journeys {
+            walks.push(inspect_journey::walk(
+                journey,
+                &inspection.graph,
+                &inspection.program,
+                inspection.sources_by_module(),
+            ));
+        }
+    }
+
+    if json {
+        let document = serde_json::to_string_pretty(&inspect_journey::as_json(&walks))
+            .map_err(|error| format!("could not serialise the report: {error}"))?;
+        println!("{document}");
+    } else {
+        print!("{}", inspect_journey::render(&walks));
+    }
+
+    let strictness = if strict {
+        inspect_journey::Strictness::Strict
+    } else {
+        inspect_journey::Strictness::Report
+    };
+    if inspect_journey::passes(&walks, strictness) {
+        return Ok(());
+    }
+    Err("a journey names something this specification does not have".to_owned())
 }
 
 /// Say what was read and what is wrong with it, before the browser opens.

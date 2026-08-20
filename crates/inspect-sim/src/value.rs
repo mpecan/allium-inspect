@@ -109,6 +109,37 @@ impl Value {
         }
     }
 
+    /// The value as a spec would write it.
+    ///
+    /// For saying in a report what a comparison was actually given. A duration
+    /// comes back in a unit rather than in milliseconds, because `3.weeks` is
+    /// legible and `1814400000` is not.
+    ///
+    /// It is the largest unit that divides exactly, which is *not* necessarily
+    /// the one that was written: `21.days` and `3.weeks` are the same number of
+    /// milliseconds and nothing here can tell them apart. Anywhere the author's
+    /// own spelling matters — a journey quoting its own `after` clause back —
+    /// the text is kept beside the value rather than recovered from it.
+    #[must_use]
+    pub fn render(&self) -> String {
+        match self {
+            Value::Null => "null".to_owned(),
+            Value::Bool(value) => value.to_string(),
+            Value::Int(value) => value.to_string(),
+            Value::Float(value) => value.to_string(),
+            Value::Str(value) => format!("\"{value}\""),
+            Value::Enum(value) => value.clone(),
+            Value::Duration(millis) => render_duration(*millis),
+            Value::Timestamp(millis) => format!("t+{millis}"),
+            Value::Ref(id) => id.as_str().to_owned(),
+            Value::Set(items) => {
+                let inside: Vec<String> = items.iter().map(Value::render).collect();
+                format!("{{{}}}", inside.join(", "))
+            }
+            Value::Unknown => "unknown".to_owned(),
+        }
+    }
+
     /// This value's kind with its article: `an integer`, `a duration`.
     ///
     /// The messages read as sentences to a person, and "a unknown cannot be
@@ -211,6 +242,27 @@ impl Value {
     }
 }
 
+/// A duration in the largest unit that divides it exactly.
+fn render_duration(millis: i64) -> String {
+    const UNITS: [(i64, &str); 6] = [
+        (604_800_000, "weeks"),
+        (86_400_000, "days"),
+        (3_600_000, "hours"),
+        (60_000, "minutes"),
+        (1_000, "seconds"),
+        (1, "milliseconds"),
+    ];
+    for (size, name) in UNITS {
+        if millis != 0 && millis % size == 0 {
+            let count = millis / size;
+            // `1.day` rather than `1.days`, because that is how a spec writes it.
+            let unit = if count == 1 { name.trim_end_matches('s') } else { name };
+            return format!("{count}.{unit}");
+        }
+    }
+    format!("{millis}.milliseconds")
+}
+
 /// Whether two decimals are equal to within a tolerance.
 ///
 /// Spec values are written by hand — `0.1`, `99.9`, `1.5` — and exact float
@@ -271,6 +323,47 @@ impl Instance {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_value_renders_the_way_a_spec_writes_it() {
+        assert_eq!(Value::Enum("open".to_owned()).render(), "open");
+        assert_eq!(Value::Str("Ada".to_owned()).render(), "\"Ada\"");
+        assert_eq!(Value::Int(5).render(), "5");
+        assert_eq!(Value::Bool(false).render(), "false");
+        assert_eq!(Value::Null.render(), "null");
+        assert_eq!(Value::Unknown.render(), "unknown");
+    }
+
+    #[test]
+    fn a_duration_renders_in_the_largest_unit_that_divides_it() {
+        assert_eq!(Value::Duration(2 * 3_600_000).render(), "2.hours");
+        assert_eq!(Value::Duration(30 * 86_400_000).render(), "30.days");
+        assert_eq!(Value::Duration(1_500).render(), "1500.milliseconds");
+        assert_eq!(Value::Duration(0).render(), "0.milliseconds");
+    }
+
+    #[test]
+    fn one_of_something_is_singular() {
+        // `1.days` is not how a spec writes it.
+        assert_eq!(Value::Duration(86_400_000).render(), "1.day");
+        assert_eq!(Value::Duration(604_800_000).render(), "1.week");
+    }
+
+    #[test]
+    fn the_unit_written_is_not_recoverable_and_this_does_not_pretend() {
+        // `21.days` and `3.weeks` are the same number of milliseconds. Rendering
+        // picks the larger unit and is honest about it in its doc rather than
+        // guessing which one somebody typed — anywhere the spelling matters, the
+        // text is kept beside the value.
+        assert_eq!(Value::Duration(21 * 86_400_000).render(), "3.weeks");
+        assert_eq!(Value::Duration(24 * 3_600_000).render(), "1.day");
+    }
+
+    #[test]
+    fn a_set_renders_its_members() {
+        let set = Value::Set(vec![Value::Enum("a".to_owned()), Value::Int(2)]);
+        assert_eq!(set.render(), "{a, 2}");
+    }
+
     use super::*;
 
     #[test]
