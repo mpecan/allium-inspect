@@ -296,9 +296,7 @@ impl Walker<'_> {
                     // fixpoint comes from. Without it a rule whose effect keeps
                     // its own condition true — `status = lost` stays lost —
                     // runs thirty-two times and then reports never settling.
-                    .filter(|(trigger, _, _, over)| {
-                        !ran.iter().any(|(before, instance)| before == trigger && instance == over)
-                    })
+                    .filter(|(trigger, _, _, over)| !already_ran(&ran, trigger, over))
                     .collect();
             if waiting.is_empty() {
                 return;
@@ -337,6 +335,18 @@ struct Act<'a> {
     trigger: &'a str,
     arguments: &'a [Term],
     creating: Option<&'a crate::journey::Cast>,
+}
+
+/// Whether this rule has already run for this instance.
+///
+/// Both halves, because neither alone is the question. A rule that holds for
+/// two instances at once must run for each — one withdrawal calls off every
+/// reservation waiting on that book, not the first one — so the trigger alone
+/// would drop all but one, silently, in a walk that otherwise reads as passing.
+/// And two rules watching the same instance are two separate things to do, so
+/// the instance alone would drop one of those.
+fn already_ran(ran: &[(String, Value)], trigger: &str, over: &Value) -> bool {
+    ran.iter().any(|(before, instance)| before == trigger && instance == over)
 }
 
 /// Where `trigger` is declared, for the event's label.
@@ -392,6 +402,41 @@ mod tests {
     use inspect_model::Node;
 
     use super::*;
+
+    fn reference(name: &str) -> Value {
+        Value::Ref(EntityId::new(name, 1))
+    }
+
+    #[test]
+    fn a_rule_that_already_ran_for_this_instance_does_not_run_again() {
+        // Where the fixpoint terminates. `CancelReservationOnWithdrawal`
+        // watches the book, and cancelling a reservation does not un-withdraw
+        // it, so it is enabled again every round forever.
+        let ran = vec![("Reservation".to_owned(), reference("Reservation"))];
+        assert!(already_ran(&ran, "Reservation", &reference("Reservation")));
+    }
+
+    #[test]
+    fn the_same_rule_still_runs_for_a_different_instance() {
+        // Two readers waiting on one book. Keyed on the rule alone, the second
+        // reader's reservation is never called off — and nothing in the walk
+        // says so, because the rule did run.
+        let ran = vec![("Reservation".to_owned(), reference("Reservation"))];
+        assert!(!already_ran(&ran, "Reservation", &Value::Ref(EntityId::new("Reservation", 2))));
+    }
+
+    #[test]
+    fn a_different_rule_still_runs_for_the_same_instance() {
+        // Two rules can watch one entity — one on its status, one on its clock
+        // — and they are two separate things to do.
+        let ran = vec![("Loan".to_owned(), reference("Loan"))];
+        assert!(!already_ran(&ran, "Copy", &reference("Loan")));
+    }
+
+    #[test]
+    fn nothing_has_run_yet_in_the_first_round() {
+        assert!(!already_ran(&[], "Reservation", &reference("Reservation")));
+    }
 
     #[test]
     fn an_act_is_labelled_with_the_module_that_declares_its_trigger() {
