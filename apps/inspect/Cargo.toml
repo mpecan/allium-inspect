@@ -1,0 +1,23 @@
+[package]
+name = "inspect"
+description = "allium-inspect: explore an allium specification in a browser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "allium-inspect"
+path = "src/main.rs"
+
+[dependencies]
+inspect-model = { workspace = true }
+inspect-server = { workspace = true }
+clap = { workspace = true }
+notify = { workspace = true }
+open = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

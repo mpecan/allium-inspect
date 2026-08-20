@@ -1,0 +1,12 @@
+too-many-lines-threshold = 75
+cognitive-complexity-threshold = 15
+too-many-arguments-threshold = 5
+type-complexity-threshold = 200
+max-struct-bools = 3
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+# `panic!` in a test is how an unexpected enum variant is reported — the
+# alternative is an assertion that cannot say what it actually found. The lint
+# is about production code, where a panic on an unfamiliar spec shape would be a
+# crash report instead of a diagnostic.
+allow-panic-in-tests = true

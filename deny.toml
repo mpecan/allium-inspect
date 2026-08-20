@@ -1,0 +1,39 @@
+# cargo-deny configuration for allium-inspect.
+# See: https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+all-features = true
+no-default-features = false
+
+[advisories]
+version = 2
+ignore = []
+
+[licenses]
+version = 2
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+
+[bans]
+multiple-versions = "warn"
+# Versionless path deps between workspace crates trip the wildcard check;
+# registry wildcards are still caught.
+wildcards = "allow"
+highlight = "all"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-git = []

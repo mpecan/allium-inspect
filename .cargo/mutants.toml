@@ -1,0 +1,22 @@
+# cargo-mutants configuration.
+#
+# nextest, not `cargo test`: the `mutants` profile in .config/nextest.toml is
+# fail-fast, which bounds how long a mutant that breaks a core path can run.
+test_tool = "nextest"
+additional_cargo_test_args = ["--profile", "mutants"]
+
+# The server and the binary are deliberately thin — argument parsing, a socket,
+# a browser launch and JSON in/out. Mutating them produces survivors that say
+# nothing about assurance, and drowns the signal from the two pure crates where
+# all the logic lives.
+exclude_globs = [
+    "apps/inspect/**",
+    "crates/inspect-server/**",
+]
+
+# Generated TypeScript bindings and Display impls carry no behaviour worth
+# mutating.
+exclude_re = [
+    "impl .*Display",
+    "fn export_bindings",
+]

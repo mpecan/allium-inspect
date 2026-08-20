@@ -1,0 +1,29 @@
+# A test that hangs must fail the run, not stall it. `terminate-after` is the
+# key that does that: the kill lands at `period` x `terminate-after`, and
+# `period` doubles as the slow-test reporting threshold.
+#
+# Everything here is pure computation over in-memory fixtures — no sockets, no
+# sleeps, no processes except the one end-to-end test that shells out to the
+# real `allium` binary. A test past 5s is a bug, not slow work, so the report
+# threshold is 5s and the kill is at 60s.
+
+[profile.ci]
+fail-fast = true
+failure-output = "immediate-final"
+final-status-level = "slow"
+slow-timeout = { period = "5s", terminate-after = 12 }
+
+[profile.default]
+fail-fast = false
+slow-timeout = { period = "5s", terminate-after = 12 }
+
+# The mutation gate's profile, selected by `.cargo/mutants.toml`.
+#
+# Fail-fast, because a mutant only needs *one* test to object; whether the rest
+# would object too is a question nothing asks. Without it a mutant that breaks
+# a core path fails every test slowly and the run can outrun cargo-mutants' own
+# per-mutant timeout, scoring as TIMEOUT — which is not the claim "no assertion
+# noticed" and not a claim at all.
+[profile.mutants]
+fail-fast = true
+slow-timeout = { period = "5s", terminate-after = 12 }

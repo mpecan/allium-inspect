@@ -1,0 +1,155 @@
+-- allium: 3
+-- catalogue.allium
+--
+-- The fixture half that owns *what a library holds*. Deliberately small, and
+-- deliberately complete: between this file and lending.allium every construct
+-- allium-inspect draws has at least one instance, so a projection that drops a
+-- construct fails a test rather than quietly rendering nothing.
+
+------------------------------------------------------------
+-- Enumerations
+------------------------------------------------------------
+
+enum Medium { print | audio }
+
+------------------------------------------------------------
+-- Entities
+------------------------------------------------------------
+
+entity Book {
+    title: String
+    medium: Medium
+    added_at: Timestamp
+
+    copies: Copy with book = this
+    copy_count: copies.count
+
+    status: listed | withdrawn
+
+    transitions status {
+        listed -> withdrawn
+        terminal: withdrawn
+    }
+}
+
+entity Copy {
+    book: Book
+    shelfmark: String
+
+    status: available | on_loan | lost
+
+    transitions status {
+        available -> on_loan
+        on_loan -> available
+        on_loan -> lost
+        available -> lost
+        terminal: lost
+    }
+}
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    max_copies_per_book: Integer = 20
+    withdrawal_grace: Duration = 72.hours
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+rule AddBook {
+    when: LibrarianAddsBook(librarian, title, medium)
+
+    requires: title != null
+
+    ensures: Book.created(
+        title: title,
+        medium: medium,
+        added_at: now,
+        status: listed
+    )
+
+    ensures: BookAdded(book: book)
+}
+
+rule AddCopy {
+    when: LibrarianAddsCopy(librarian, book, shelfmark)
+
+    requires: book.status = listed
+    requires: book.copy_count < config.max_copies_per_book
+
+    ensures: Copy.created(
+        book: book,
+        shelfmark: shelfmark,
+        status: available
+    )
+}
+
+rule WithdrawBook {
+    when: LibrarianWithdrawsBook(librarian, book)
+
+    requires: book.status = listed
+
+    ensures: book.status = withdrawn
+    ensures: BookWithdrawn(book: book)
+}
+
+-- A state-condition trigger: no external actor fires this, the world becoming
+-- true does. This is the shape the simulator offers as a next step once a
+-- change makes it hold.
+rule ReportLostCopy {
+    when: copy: Copy.status = lost
+
+    ensures: CopyLost(copy: copy)
+}
+
+------------------------------------------------------------
+-- Invariants
+------------------------------------------------------------
+
+invariant CopiesBelongToListedBooks {
+    for c in Copies:
+        c.status = available implies c.book.status = listed
+}
+
+invariant CopyCountIsBounded {
+    for b in Books:
+        b.copy_count <= config.max_copies_per_book
+}
+
+------------------------------------------------------------
+-- Surfaces
+------------------------------------------------------------
+
+-- An external entity: people exist outside this system, and the spec says only
+-- what it needs to know about them.
+external entity Staff {
+    name: String
+    role: librarian | reader
+}
+
+actor Librarian {
+    identified_by: Staff where role = librarian
+}
+
+surface CatalogueDesk {
+    facing librarian: Librarian
+
+    exposes:
+        Book.title
+        Book.status
+        Book.copy_count
+
+    provides:
+        LibrarianAddsBook(librarian, title, medium)
+        LibrarianAddsCopy(librarian, book, shelfmark)
+        LibrarianWithdrawsBook(librarian, book) when book.status = listed
+
+    @guarantee AWithdrawnBookTakesNoNewCopies
+        -- Withdrawal is the end of a book's life in the catalogue, so the
+        -- desk stops offering to add to it rather than accepting the copy and
+        -- rejecting it later.
+}

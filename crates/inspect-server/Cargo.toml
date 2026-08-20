@@ -1,0 +1,22 @@
+[package]
+name = "inspect-server"
+description = "Embedded HTTP server exposing the SpecGraph and simulator to the browser UI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+inspect-model = { workspace = true }
+inspect-sim = { workspace = true }
+axum = { workspace = true }
+rust-embed = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tower-http = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tower = { workspace = true }

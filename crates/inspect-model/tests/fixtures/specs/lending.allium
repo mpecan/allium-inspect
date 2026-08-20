@@ -1,0 +1,191 @@
+-- allium: 3
+-- lending.allium
+--
+-- The fixture half that owns *what happens to a copy in someone's hands*.
+--
+-- It exists to give the linker something real to resolve: every reference below
+-- of the form `catalogue/Copy` has to become an edge into the other module, and
+-- an unresolved one has to become a visible External node rather than vanish.
+
+use "./catalogue.allium" as catalogue
+
+------------------------------------------------------------
+-- Value types and sum types
+------------------------------------------------------------
+
+value LoanWindow {
+    opened_at: Timestamp
+    due_at: Timestamp
+}
+
+------------------------------------------------------------
+-- Entities
+------------------------------------------------------------
+
+entity Member {
+    name: String
+    joined_at: Timestamp
+
+    loans: Loan with member = this
+    open_loans: loans where status = open
+    open_loan_count: open_loans.count
+    is_at_limit: open_loan_count >= config.loan_limit
+}
+
+entity Loan {
+    copy: catalogue/Copy
+    member: Member
+    window: LoanWindow
+
+    status: open | returned | overdue
+
+    transitions status {
+        open -> returned
+        open -> overdue
+        overdue -> returned
+        terminal: returned
+    }
+
+    is_late: window.due_at <= now
+}
+
+entity Reservation {
+    book: catalogue/Book
+    member: Member
+    placed_at: Timestamp
+
+    status: waiting | fulfilled | cancelled
+
+    transitions status {
+        waiting -> fulfilled
+        waiting -> cancelled
+        terminal: fulfilled
+        terminal: cancelled
+    }
+}
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    loan_limit: Integer = 5
+    loan_period: Duration = 21.days
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+rule BorrowCopy {
+    when: MemberBorrows(member, copy)
+
+    requires: copy.status = available
+    requires: not member.is_at_limit
+
+    ensures: Loan.created(
+        copy: copy,
+        member: member,
+        status: open
+    )
+
+    ensures: copy.status = on_loan
+    ensures: CopyBorrowed(loan: loan)
+}
+
+rule ReturnCopy {
+    when: MemberReturns(loan)
+
+    requires: loan.status = open or loan.status = overdue
+
+    ensures: loan.status = returned
+    ensures: loan.copy.status = available
+    ensures: CopyReturned(loan: loan)
+}
+
+rule ReportCopyLost {
+    when: MemberReportsLoss(loan)
+
+    requires: loan.status = open
+
+    ensures: loan.copy.status = lost
+    ensures: loan.status = returned
+}
+
+-- A temporal state-condition trigger. Nothing external fires it; the clock
+-- passing the due date is what makes it hold.
+rule LoanFallsOverdue {
+    when: loan: Loan.window.due_at <= now
+
+    requires: loan.status = open
+
+    ensures: loan.status = overdue
+    ensures: LoanOverdue(loan: loan)
+}
+
+rule PlaceReservation {
+    when: MemberReserves(member, book)
+
+    requires: book.status = listed
+
+    ensures: Reservation.created(
+        book: book,
+        member: member,
+        placed_at: now,
+        status: waiting
+    )
+}
+
+rule CancelReservationOnWithdrawal {
+    when: reservation: Reservation.book.status = withdrawn
+
+    requires: reservation.status = waiting
+
+    ensures: reservation.status = cancelled
+}
+
+------------------------------------------------------------
+-- Invariants
+------------------------------------------------------------
+
+invariant OpenLoansAreWithinTheLimit {
+    for m in Members:
+        m.open_loan_count <= config.loan_limit
+}
+
+invariant AReturnedLoanFreesItsCopy {
+    for l in Loans:
+        l.status = returned implies l.copy.status != on_loan
+}
+
+invariant OverdueLoansArePastTheirDueDate {
+    for l in Loans:
+        l.status = overdue implies l.is_late
+}
+
+------------------------------------------------------------
+-- Surfaces
+------------------------------------------------------------
+
+actor Reader {
+    identified_by: Member where open_loan_count >= 0
+}
+
+surface MemberShelf {
+    facing reader: Reader
+
+    exposes:
+        Loan.status
+        Loan.is_late
+        Member.open_loan_count
+
+    provides:
+        MemberBorrows(reader, copy)
+        MemberReturns(loan)
+        MemberReportsLoss(loan)
+        MemberReserves(reader, book)
+
+    @guarantee ALoanIsVisibleToItsHolderOnly
+        -- A shelf shows the reader their own loans. Whose copy is out is a
+        -- fact about another member, and this boundary does not carry it.
+}
