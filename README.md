@@ -184,6 +184,10 @@ two people with different jobs, and only naming the job settles it.
 
 Reviews run against them live in [`docs/reviews/`](docs/reviews/).
 
+A design for **user journeys** — an executable claim about what an actor can do,
+written beside the spec rather than in it, and checked against it — is in
+[`docs/journeys/`](docs/journeys/). Nothing of it is built yet.
+
 ## Quality gates
 
 `just check` runs the fast ones in about a minute. Every gate is driven in both
