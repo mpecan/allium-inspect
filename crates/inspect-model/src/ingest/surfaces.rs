@@ -780,6 +780,78 @@ mod tests {
     }
 
     #[test]
+    fn an_invariant_whose_iteration_sits_inside_a_list_is_still_found() {
+        // The AST nests `for` clauses inside arrays of block items, so a walk
+        // that only descends through objects finds nothing in a multi-statement
+        // invariant — the common shape, not the exotic one.
+        let source = "for l in Loans: true";
+        let block = json!({
+            "name": named("InAList"),
+            "body": {"Block": {
+                "span": {"start": 0, "end": source.len()},
+                "items": [{"For": {
+                    "span": {"start": 0, "end": source.len()},
+                    "collection": {"Ident": {"span": {"start": 9, "end": 14}, "name": "Loans"}},
+                }}],
+            }},
+        });
+        let mut graph = with_entities("m", &["Loan"]);
+        ingest_invariant(&block, "m", source, &mut graph);
+        let invariant =
+            graph.node(&NodeId::new("m", NodeKind::Invariant, "InAList")).expect("invariant");
+        match &invariant.detail {
+            NodeDetail::Invariant(detail) => assert_eq!(detail.entities, ["Loan"]),
+            other => panic!("expected an invariant detail, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_operation_taking_a_named_argument_records_its_name() {
+        // Emissions and some operations pass `name: value` rather than a bare
+        // identifier. Skipping those would show an operation as taking no
+        // parameters, which is a different operation.
+        let block = json!({
+            "kind": "Surface",
+            "name": named("S"),
+            "items": [{"kind": {"Clause": {
+                "keyword": "provides",
+                "value": {"Block": {"items": [{"Call": {
+                    "span": {"start": 0, "end": 0},
+                    "function": {"Ident": {"name": "Report"}},
+                    "args": [
+                        {"Named": {"name": named("loan"), "value": {"Ident": {"name": "l"}}}},
+                        {"Positional": {"Ident": {"name": "reader"}}},
+                    ],
+                }}]}},
+            }}}],
+        });
+        let mut graph = SpecGraph::new("test");
+        ingest_surface(&block, "m", "", &mut graph);
+        let detail = graph.nodes[0].detail.as_surface().expect("a surface");
+        assert_eq!(detail.provides[0].parameters, ["loan", "reader"]);
+    }
+
+    #[test]
+    fn a_facing_clause_narrowed_by_where_still_names_its_party() {
+        let block = json!({
+            "kind": "Surface",
+            "name": named("S"),
+            "items": [{"kind": {"Clause": {
+                "keyword": "facing",
+                "value": {"Where": {
+                    "source": {"Ident": {"name": "Member"}},
+                    "condition": {"Ident": {"name": "active"}},
+                }},
+            }}}],
+        });
+        let mut graph = SpecGraph::new("test");
+        ingest_surface(&block, "m", "", &mut graph);
+        let detail = graph.nodes[0].detail.as_surface().expect("a surface");
+        assert_eq!(detail.actor.as_deref(), Some("Member"));
+        assert_eq!(detail.actor_binding, None, "a filter binds no name");
+    }
+
+    #[test]
     fn an_unnamed_invariant_is_dropped() {
         let mut graph = SpecGraph::new("test");
         ingest_invariant(&json!({"body": {}}), "m", "", &mut graph);

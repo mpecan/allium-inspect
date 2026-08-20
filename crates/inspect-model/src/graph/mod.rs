@@ -679,6 +679,36 @@ mod tests {
     }
 
     #[test]
+    fn obligations_are_filtered_by_both_module_and_construct() {
+        // Both halves matter. Matching on the construct alone attributes
+        // another module's obligations to a rule that shares its name, and two
+        // modules sharing a name is ordinary in a spec set.
+        let mut graph = SpecGraph::new("v");
+        for (module, construct, id) in [
+            ("lending", "BorrowCopy", "a"),
+            ("lending", "ReturnCopy", "b"),
+            ("catalogue", "BorrowCopy", "c"),
+        ] {
+            graph.obligations.push(Obligation {
+                id: id.to_owned(),
+                category: "rule_success".to_owned(),
+                description: String::new(),
+                construct: construct.to_owned(),
+                module: module.to_owned(),
+                span: None,
+            });
+        }
+
+        let owed: Vec<&str> = graph
+            .obligations_for("lending", "BorrowCopy")
+            .map(|obligation| obligation.id.as_str())
+            .collect();
+        assert_eq!(owed, ["a"], "not the other module's, and not the other rule's");
+        assert_eq!(graph.obligations_for("lending", "Absent").count(), 0);
+        assert_eq!(graph.obligations_for("absent", "BorrowCopy").count(), 0);
+    }
+
+    #[test]
     fn worst_severity_is_the_highest_reported_for_that_module() {
         use crate::diagnostic::Severity;
         let mut graph = SpecGraph::new("v");
@@ -691,6 +721,7 @@ mod tests {
                 code: None,
                 location: None,
                 module: module.to_owned(),
+                node: None,
             });
         }
         assert_eq!(graph.worst_severity("a"), Some(Severity::Error));

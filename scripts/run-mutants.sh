@@ -20,12 +20,17 @@ set -euo pipefail
 here="$(dirname "$0")"
 RECEIPT="${INSPECT_MUTATION_RECEIPT:-$here/mutation-receipt.txt}"
 BASELINE="${INSPECT_MUTANT_BASELINE:-$here/mutant-baseline.txt}"
-OUT="${INSPECT_MUTANTS_OUT:-mutants.out}"
+# cargo-mutants' `--output` names the *parent* of the results directory, not
+# the results directory itself: `--output mutants.out` writes
+# `mutants.out/mutants.out`. So the parent is passed and the results are read
+# from the `mutants.out` it creates inside it.
+OUT_PARENT="${INSPECT_MUTANTS_OUT_PARENT:-.}"
+OUT="$OUT_PARENT/mutants.out"
 
 command -v cargo-mutants >/dev/null 2>&1 ||
     fail "cargo-mutants not installed — 'cargo install cargo-mutants'"
 
-args=(--output "$OUT")
+args=(--output "$OUT_PARENT")
 if [ -n "${INSPECT_MUTANTS_FULL:-}" ]; then
     echo "Running a FULL mutation pass over the workspace."
 else
@@ -36,12 +41,18 @@ else
     if [ -n "$base" ]; then
         require_sha "$base" "mutation base commit"
         echo "Running a diff-scoped mutation pass against ${base:0:12}."
-        git diff "$base"..HEAD -- '*.rs' > "$OUT.diff" || fail "could not compute the diff against $base"
-        if [ ! -s "$OUT.diff" ]; then
+        # A temp file, not one beside the results: the results directory is
+        # gitignored and a sibling would not be, so the scope of a past run
+        # would show up as an untracked file in every later `git status`.
+        diff_file="$(mktemp -t allium-inspect-mutants)"
+        trap 'rm -f "$diff_file"' EXIT
+        git diff "$base"..HEAD -- '*.rs' > "$diff_file" ||
+            fail "could not compute the diff against $base"
+        if [ ! -s "$diff_file" ]; then
             echo "No Rust changes since ${base:0:12} — nothing to mutate."
             exit 0
         fi
-        args+=(--in-diff "$OUT.diff")
+        args+=(--in-diff "$diff_file")
     else
         echo "No receipt and no base given — running a FULL pass to establish the baseline."
     fi

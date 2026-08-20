@@ -500,6 +500,41 @@ mod tests {
     }
 
     #[test]
+    fn each_detail_accessor_returns_its_own_variant() {
+        // The negative cases alone cannot tell an accessor from one that always
+        // returns None, and an accessor that always returns None makes every
+        // rule and trigger render as an empty card.
+        let rule = NodeDetail::Rule(RuleDetail {
+            trigger: "T".to_owned(),
+            source: TriggerSource::External,
+            clauses: Vec::new(),
+            creates: Vec::new(),
+            emits: Vec::new(),
+        });
+        assert_eq!(rule.as_rule().map(|d| d.trigger.as_str()), Some("T"));
+
+        let trigger = NodeDetail::Trigger(TriggerDetail {
+            source: TriggerSource::State,
+            parameters: Vec::new(),
+            condition: None,
+            entity: Some("Loan".to_owned()),
+        });
+        assert_eq!(trigger.as_trigger().map(|d| d.source), Some(TriggerSource::State));
+        assert!(trigger.as_rule().is_none());
+
+        let surface = NodeDetail::Surface(SurfaceDetail {
+            actor: Some("Reader".to_owned()),
+            actor_binding: None,
+            context: None,
+            exposes: Vec::new(),
+            provides: Vec::new(),
+            guarantees: Vec::new(),
+        });
+        assert_eq!(surface.as_surface().and_then(|d| d.actor.as_deref()), Some("Reader"));
+        assert!(surface.as_trigger().is_none());
+    }
+
+    #[test]
     fn a_trigger_records_how_it_happens() {
         let external = TriggerDetail {
             source: TriggerSource::External,

@@ -230,6 +230,92 @@ mod tests {
             .unwrap_or_else(|| panic!("entity {name} was ingested"))
     }
 
+    // `names_a_type` is what decides whether a field is stored or derived, and
+    // therefore whether the linker will try to resolve it. Getting it wrong in
+    // one direction litters the canvas with nodes for expressions; in the other
+    // it silently drops real relationships. Tested as a table because every
+    // case below came from a real spec.
+    #[test]
+    fn a_bare_capitalised_name_is_a_type() {
+        assert!(names_a_type("String"));
+        assert!(names_a_type("Timestamp"));
+        assert!(names_a_type("Copy"));
+    }
+
+    #[test]
+    fn a_qualified_name_is_a_type() {
+        assert!(names_a_type("catalogue/Copy"));
+    }
+
+    #[test]
+    fn a_container_is_a_type_and_is_read_through_to_its_argument() {
+        // The arithmetic here slices between the angle brackets. Off by one in
+        // either direction and `Set<Book>` reads as `Set<Book` or `Book>`,
+        // neither of which is a name.
+        assert!(names_a_type("Set<Book>"));
+        assert!(names_a_type("Set<catalogue/Book>"));
+        assert!(!names_a_type("Set<copies.count>"));
+    }
+
+    #[test]
+    fn an_optional_type_is_still_a_type() {
+        assert!(names_a_type("Attachment?"));
+    }
+
+    #[test]
+    fn a_lowercase_name_is_an_expression_not_a_type() {
+        // Types are PascalCase in Allium. A bare lowercase word is a field
+        // being projected.
+        assert!(!names_a_type("loans"));
+        assert!(!names_a_type("open_loans"));
+    }
+
+    #[test]
+    fn a_computed_expression_is_not_a_type() {
+        assert!(!names_a_type("copies.count"));
+        assert!(!names_a_type("attachment != null"));
+        assert!(!names_a_type("receipts where kind = read -> reporter"));
+        assert!(!names_a_type("delivered_to.count"));
+    }
+
+    #[test]
+    fn a_doubly_qualified_name_is_not_a_type() {
+        // Allium namespaces are one level deep; two separators is not a name
+        // this crate can resolve, and guessing would point at nothing.
+        assert!(!names_a_type("a/b/C"));
+    }
+
+    #[test]
+    fn a_qualified_name_whose_last_segment_is_lowercase_is_not_a_type() {
+        // The capitalisation test has to look at the segment after the slash:
+        // the part before it is the module alias, which is lowercase.
+        assert!(!names_a_type("catalogue/copies"));
+    }
+
+    #[test]
+    fn a_missing_type_expression_is_not_evidence_of_being_derived() {
+        // Calling an untyped field derived would mark every field the CLI
+        // declined to type, which is most of them in a spec that fails to parse.
+        assert!(names_a_type(""));
+        assert!(names_a_type("   "));
+        assert!(names_a_type("Set<>"));
+    }
+
+    #[test]
+    fn a_relationships_target_type_wins_over_a_blank_one() {
+        // `fields` types a relationship by its target entity and the
+        // `relationships` entry may not; keeping the richer expression is what
+        // puts `Copy` rather than nothing in the inspector.
+        let graph = ingested(&json!({"entities": [{
+            "name": "Book",
+            "fields": [{"name": "copies", "type_expr": "Copy"}],
+            "relationships": [{"name": "copies"}],
+        }]}));
+        let field = entity(&graph, "Book").field("copies").expect("the field");
+        assert_eq!(field.type_expr, "Copy", "the type survives the merge");
+        assert!(field.relationship, "and it is known to navigate");
+    }
+
     #[test]
     fn an_entity_becomes_a_node_with_its_fields() {
         let graph = ingested(&json!({"entities": [{

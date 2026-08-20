@@ -1,0 +1,306 @@
+/* allium-inspect — design tokens.
+ *
+ * Two grounds, one instrument. The canvas is a workbench: cool, recessive,
+ * something you work *on*. The source strip is a document: warmer, lighter,
+ * something you *read*. Every other surface belongs to one or the other, and
+ * nothing sits between them — the split is the layout's main structural claim,
+ * because in a spec explorer the text is the artifact and the graph is a way of
+ * looking at it, not the other way round.
+ *
+ * Colour encodes what a construct *is*, in four families rather than eleven
+ * hues. Eleven hues is a rainbow nobody can hold in their head; four groups
+ * — things, behaviour, boundary, constraint — is a distinction a reader can
+ * actually learn in a minute. Within a group, form does the rest: an entity is
+ * square, a value type is rounded, an enum is a pill, an unresolved reference
+ * is a dashed outline with no fill.
+ *
+ * Violet is the accent because it is the flower's own colour, and because the
+ * things it marks — rules and triggers — are the active half of a
+ * specification. Severity never colours a node: a warning is a badge on the
+ * corner, so a spec full of warnings still reads as a spec rather than as a
+ * wall of amber.
+ */
+
+:root {
+  /* --- grounds ------------------------------------------------------- */
+  /* The workbench. Blue-slate rather than neutral grey: it makes the sage
+   * and violet node fills read as pigment on a surface, not as glow. */
+  --ground-canvas: #12161d;
+  --ground-canvas-grid: #1b212b;
+  --ground-panel: #171c24;
+  --ground-raised: #1e242e;
+  --ground-input: #0e1218;
+
+  /* The document. Warm, and the only light surface in the interface, so the
+   * eye knows immediately which of the two things it is looking at. */
+  --ground-source: #f7f4ee;
+  --ground-source-gutter: #efeade;
+  --ink-source: #2a2721;
+  --ink-source-dim: #7d7869;
+  --source-highlight: #ffe9a8;
+
+  /* --- ink ----------------------------------------------------------- */
+  --ink: #e4e7ec;
+  --ink-dim: #9aa3b0;
+  --ink-faint: #616c7c;
+  --ink-inverse: #12161d;
+
+  /* --- rules and edges ----------------------------------------------- */
+  --line: #262d38;
+  --line-strong: #333c4a;
+  --edge: #3a4453;
+  --edge-active: #a08ce8;
+
+  /* --- construct families -------------------------------------------- */
+  /* Things: entities, value types, variants, enums. Sage — grown, structural,
+   * the part of a spec that simply exists. */
+  --thing: #7fa88a;
+  --thing-fill: #1b2a22;
+  --thing-edge: #4a6b56;
+
+  /* Behaviour: rules and triggers. The allium's own violet, and the half of a
+   * specification that actually does something. */
+  --behaviour: #a08ce8;
+  --behaviour-fill: #221d33;
+  --behaviour-edge: #5f4fa0;
+
+  /* Boundary: surfaces and actors — where the outside world touches. */
+  --boundary: #d0a561;
+  --boundary-fill: #2b2317;
+  --boundary-edge: #7d6435;
+
+  /* Constraint: invariants and config. Deliberately colourless: a limit is not
+   * a thing in the domain, it is a fact about all of them. */
+  --constraint: #8b97a8;
+  --constraint-fill: #1c222b;
+  --constraint-edge: #414c5c;
+
+  /* Unresolved: a reference nothing in this spec set declares. */
+  --unresolved: #6b7688;
+  --unresolved-fill: transparent;
+
+  /* --- verdicts ------------------------------------------------------- */
+  /* The tool's one point of view, in colour. True and false are quiet; a
+   * simulator that decides something is doing its job. `unknown` is the loud
+   * one, because a specification language is not fully decidable and pretending
+   * otherwise is the failure mode this tool exists to avoid. Greying it out —
+   * the obvious treatment — would hide precisely what needs attention. */
+  --verdict-true: #6fae86;
+  --verdict-false: #c9736b;
+  --verdict-unknown: #e0b341;
+  --verdict-unknown-fill: #2e2410;
+
+  /* --- severity ------------------------------------------------------- */
+  --severity-error: #d9695f;
+  --severity-warning: #cf9a3e;
+  --severity-info: #6e8bb5;
+
+  /* --- type ----------------------------------------------------------- */
+  /* Monospace is the interface's default, not an exception for code. Every
+   * value this tool shows — a name, a state, a byte offset, a clause — comes
+   * from a formal text file, and setting them in a proportional face would be
+   * dressing them up as prose. The sans is reserved for the few places where
+   * something really is prose: guarantee text, diagnostics, guidance. */
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "IBM Plex Mono",
+    "Menlo", "Consolas", monospace;
+  --font-sans: system-ui, -apple-system, "Segoe UI", "Helvetica Neue",
+    sans-serif;
+
+  /* Small and dense on purpose. This is an instrument panel: the whole graph
+   * and its details should be readable at once, without scrolling to find out
+   * what a rule requires. */
+  --t-micro: 0.625rem; /* 10px — addresses, kind labels */
+  --t-small: 0.75rem; /* 12px — field rows, clauses */
+  --t-body: 0.8125rem; /* 13px — default */
+  --t-title: 0.9375rem; /* 15px — node names */
+  --t-display: 1.25rem; /* 20px — view headings */
+
+  --track-micro: 0.09em;
+  --track-tight: -0.01em;
+
+  /* --- metrics -------------------------------------------------------- */
+  --rail: 2.75rem;
+  --sidebar: 13rem;
+  --inspector: 21rem;
+  --radius: 3px;
+  --radius-round: 7px;
+
+  --gap-1: 0.25rem;
+  --gap-2: 0.5rem;
+  --gap-3: 0.75rem;
+  --gap-4: 1rem;
+  --gap-6: 1.5rem;
+
+  --focus: 0 0 0 2px var(--ground-canvas), 0 0 0 4px var(--behaviour);
+}
+
+/* The interface is dark because a graph canvas is; the source strip carries its
+ * own light ground regardless. A viewer who prefers light gets a lighter
+ * workbench, but the two-ground relationship is preserved rather than inverted
+ * — the document stays the lighter of the two. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --ground-canvas: #e8e6e0;
+    --ground-canvas-grid: #dcd9d1;
+    --ground-panel: #f2f0eb;
+    --ground-raised: #fbfaf7;
+    --ground-input: #ffffff;
+
+    --ink: #23211c;
+    --ink-dim: #5f5a51;
+    --ink-faint: #8d877b;
+    --ink-inverse: #fbfaf7;
+
+    --line: #d3cfc6;
+    --line-strong: #b9b4a8;
+    --edge: #a8a294;
+    --edge-active: #6b4fc4;
+
+    --thing: #3f6b4e;
+    --thing-fill: #dfe9e0;
+    --thing-edge: #7ea488;
+
+    --behaviour: #5b45a8;
+    --behaviour-fill: #e4dff5;
+    --behaviour-edge: #9484d0;
+
+    --boundary: #8a6318;
+    --boundary-fill: #f2e6cd;
+    --boundary-edge: #c2a163;
+
+    --constraint: #55606f;
+    --constraint-fill: #e3e5e8;
+    --constraint-edge: #a3abb6;
+
+    --unresolved: #8d877b;
+
+    --verdict-true: #2f7c4c;
+    --verdict-false: #a83b30;
+    --verdict-unknown: #8a6200;
+    --verdict-unknown-fill: #fbeec4;
+
+    --focus: 0 0 0 2px var(--ground-panel), 0 0 0 4px var(--behaviour);
+  }
+}
+
+:root[data-theme="light"] {
+  --ground-canvas: #e8e6e0;
+  --ground-canvas-grid: #dcd9d1;
+  --ground-panel: #f2f0eb;
+  --ground-raised: #fbfaf7;
+  --ground-input: #ffffff;
+
+  --ink: #23211c;
+  --ink-dim: #5f5a51;
+  --ink-faint: #8d877b;
+  --ink-inverse: #fbfaf7;
+
+  --line: #d3cfc6;
+  --line-strong: #b9b4a8;
+  --edge: #a8a294;
+  --edge-active: #6b4fc4;
+
+  --thing: #3f6b4e;
+  --thing-fill: #dfe9e0;
+  --thing-edge: #7ea488;
+
+  --behaviour: #5b45a8;
+  --behaviour-fill: #e4dff5;
+  --behaviour-edge: #9484d0;
+
+  --boundary: #8a6318;
+  --boundary-fill: #f2e6cd;
+  --boundary-edge: #c2a163;
+
+  --constraint: #55606f;
+  --constraint-fill: #e3e5e8;
+  --constraint-edge: #a3abb6;
+
+  --unresolved: #8d877b;
+
+  --verdict-true: #2f7c4c;
+  --verdict-false: #a83b30;
+  --verdict-unknown: #8a6200;
+  --verdict-unknown-fill: #fbeec4;
+
+  --focus: 0 0 0 2px var(--ground-panel), 0 0 0 4px var(--behaviour);
+}
+
+/* --- reset ------------------------------------------------------------ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--ground-canvas);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--t-body);
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  height: 100%;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+  border-radius: var(--radius);
+}
+
+/* --- shared idioms ---------------------------------------------------- */
+
+/* The address of a thing: `catalogue.allium:39:13`. Every panel shows one,
+ * because every construct in this tool is anchored to a byte offset and that
+ * provenance is the tool's whole claim to accuracy. */
+.address {
+  font-size: var(--t-micro);
+  letter-spacing: var(--track-micro);
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A construct's kind, set as a small-caps-weight label above its name. */
+.eyebrow {
+  font-size: var(--t-micro);
+  letter-spacing: var(--track-micro);
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.prose {
+  font-family: var(--font-sans);
+  font-size: var(--t-small);
+  line-height: 1.55;
+  color: var(--ink-dim);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

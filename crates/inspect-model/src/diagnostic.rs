@@ -79,6 +79,17 @@ pub struct Diagnostic {
     pub location: Option<Location>,
     /// The module this was reported against, filled in during ingestion.
     pub module: String,
+    /// The construct whose declaration encloses this diagnostic, when one does.
+    ///
+    /// Attribution happens here rather than in the browser because it needs the
+    /// spec text and the byte spans together, and the UI has neither until it
+    /// has fetched a file the reader may never open.
+    ///
+    /// It is `None` for a diagnostic no declaration encloses — a parse error is
+    /// reported where the parser gave up, which is often past the end of the
+    /// construct that was actually wrong, and guessing a nearby node would put
+    /// a badge on the wrong box.
+    pub node: Option<String>,
 }
 
 impl Diagnostic {
@@ -108,7 +119,7 @@ impl Diagnostic {
                     .unwrap_or(1),
             })
         });
-        Some(Self { severity, message, code, location, module: module.to_owned() })
+        Some(Self { severity, message, code, location, module: module.to_owned(), node: None })
     }
 }
 

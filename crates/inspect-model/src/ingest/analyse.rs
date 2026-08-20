@@ -16,6 +16,7 @@ use crate::{
     diagnostic::{Diagnostic, Finding},
     graph::SpecGraph,
     ingest::json,
+    span::{LineIndex, Span},
 };
 
 /// Add the diagnostics `document` carries for `module` to `graph`, skipping any
@@ -36,6 +37,43 @@ pub fn ingest_findings(document: &Value, module: &str, graph: &mut SpecGraph) {
         if let Some(finding) = Finding::from_json(value, module) {
             graph.findings.push(finding);
         }
+    }
+}
+
+/// Attach each of `module`'s diagnostics to the construct that encloses it.
+///
+/// A diagnostic names a line; a node owns a byte range. Joining the two needs
+/// the spec text, which only this side of the wire has — so the attribution is
+/// done here and the browser reads the answer.
+///
+/// The *innermost* enclosing declaration wins. A warning about a field inside
+/// an entity is about the field, and badging the module's config block because
+/// its span happens to be longer would point the reader at the wrong thing.
+pub fn attribute(graph: &mut SpecGraph, module: &str, source: &str) {
+    let index = LineIndex::new(source);
+
+    let candidates: Vec<(String, Span)> = graph
+        .nodes
+        .iter()
+        .filter(|node| node.module == module)
+        .filter_map(|node| Some((node.id.to_string(), node.span?)))
+        .collect();
+
+    for diagnostic in &mut graph.diagnostics {
+        if diagnostic.module != module || diagnostic.node.is_some() {
+            continue;
+        }
+        let Some(location) = &diagnostic.location else { continue };
+        let Some(line) = index.line_span(location.line) else { continue };
+
+        // The line, not a point in it: a diagnostic's column can land past the
+        // construct it is about when the parser recovered mid-token, and the
+        // line it is on is the reliable part.
+        diagnostic.node = candidates
+            .iter()
+            .filter(|(_, span)| span.start < line.end && span.end > line.start)
+            .min_by_key(|(_, span)| span.len())
+            .map(|(id, _)| id.clone());
     }
 }
 
@@ -165,6 +203,134 @@ mod tests {
         ingest_findings(&document, "catalogue", &mut graph);
         assert_eq!(graph.diagnostics.len(), 1);
         assert_eq!(graph.findings.len(), 1);
+    }
+
+    // --- attribution -----------------------------------------------------
+
+    const SOURCE: &str =
+        "entity Book {\n    title: String\n}\n\nrule AddBook {\n    when: X()\n}\n";
+
+    /// A graph holding the two constructs `SOURCE` declares, with their spans.
+    fn located() -> SpecGraph {
+        use crate::graph::{Node, NodeKind};
+        let mut graph = SpecGraph::new("test");
+        let book = SOURCE.find("entity Book {").expect("present");
+        let book_end = SOURCE.find("}\n\nrule").expect("present") + 1;
+        let rule = SOURCE.find("rule AddBook {").expect("present");
+        graph
+            .nodes
+            .push(Node::new("m", NodeKind::Entity, "Book").at(Some(Span::new(book, book_end))));
+        graph.nodes.push(
+            Node::new("m", NodeKind::Rule, "AddBook").at(Some(Span::new(rule, SOURCE.len()))),
+        );
+        graph
+    }
+
+    fn attributed(line: usize) -> Option<String> {
+        let mut graph = located();
+        ingest_diagnostics(
+            &json!({"diagnostics": [{
+                "severity": "warning",
+                "message": "m",
+                "location": {"file": "m.allium", "line": line, "col": 5},
+            }]}),
+            "m",
+            &mut graph,
+        );
+        attribute(&mut graph, "m", SOURCE);
+        graph.diagnostics[0].node.clone()
+    }
+
+    #[test]
+    fn a_diagnostic_is_attributed_to_the_construct_that_encloses_it() {
+        assert_eq!(attributed(2).as_deref(), Some("m::entity::Book"));
+        assert_eq!(attributed(6).as_deref(), Some("m::rule::AddBook"));
+    }
+
+    #[test]
+    fn a_diagnostic_on_a_declaration_line_belongs_to_that_declaration() {
+        assert_eq!(attributed(1).as_deref(), Some("m::entity::Book"));
+        assert_eq!(attributed(5).as_deref(), Some("m::rule::AddBook"));
+    }
+
+    #[test]
+    fn a_diagnostic_between_declarations_is_attributed_to_neither() {
+        // Line 4 is the blank line. Reaching for the nearest node would badge a
+        // construct the reader would then look at and find nothing wrong with.
+        assert_eq!(attributed(4), None);
+    }
+
+    #[test]
+    fn the_innermost_declaration_wins() {
+        // A module-wide construct whose span happens to cover everything must
+        // not claim a warning about one field inside it.
+        use crate::graph::{Node, NodeKind};
+        let mut graph = located();
+        graph
+            .nodes
+            .push(Node::new("m", NodeKind::Config, "config").at(Some(Span::new(0, SOURCE.len()))));
+        ingest_diagnostics(
+            &json!({"diagnostics": [{
+                "severity": "warning", "message": "m",
+                "location": {"file": "m.allium", "line": 2, "col": 5},
+            }]}),
+            "m",
+            &mut graph,
+        );
+        attribute(&mut graph, "m", SOURCE);
+        assert_eq!(graph.diagnostics[0].node.as_deref(), Some("m::entity::Book"));
+    }
+
+    #[test]
+    fn a_diagnostic_with_no_location_is_left_unattributed() {
+        let mut graph = located();
+        ingest_diagnostics(
+            &json!({"diagnostics": [{"severity": "error", "message": "m"}]}),
+            "m",
+            &mut graph,
+        );
+        attribute(&mut graph, "m", SOURCE);
+        assert_eq!(graph.diagnostics[0].node, None);
+    }
+
+    #[test]
+    fn attribution_does_not_reach_into_another_module() {
+        let mut graph = located();
+        ingest_diagnostics(
+            &json!({"diagnostics": [{
+                "severity": "warning", "message": "m",
+                "location": {"file": "other.allium", "line": 2, "col": 1},
+            }]}),
+            "other",
+            &mut graph,
+        );
+        attribute(&mut graph, "m", SOURCE);
+        assert_eq!(graph.diagnostics[0].node, None);
+    }
+
+    #[test]
+    fn a_diagnostic_past_the_end_of_the_file_is_left_unattributed() {
+        // A stale line number from a file edited since the run.
+        assert_eq!(attributed(900), None);
+    }
+
+    #[test]
+    fn attribution_is_idempotent() {
+        // The server re-links on every file change; a second pass must not
+        // move a badge that the first pass placed correctly.
+        let mut graph = located();
+        ingest_diagnostics(
+            &json!({"diagnostics": [{
+                "severity": "warning", "message": "m",
+                "location": {"file": "m.allium", "line": 2, "col": 5},
+            }]}),
+            "m",
+            &mut graph,
+        );
+        attribute(&mut graph, "m", SOURCE);
+        let first = graph.diagnostics[0].node.clone();
+        attribute(&mut graph, "m", SOURCE);
+        assert_eq!(graph.diagnostics[0].node, first);
     }
 
     #[test]

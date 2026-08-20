@@ -387,6 +387,151 @@ mod tests {
         assert_eq!(type_of("   "), None);
     }
 
+    #[test]
+    fn a_doubly_qualified_reference_is_not_resolved() {
+        // Allium namespaces are one level deep. `a/b/C` is not a name this
+        // crate can place, and splitting it anyway would put an `a` module on
+        // the canvas that the spec never declared.
+        assert_eq!(type_of("a/b/C"), None);
+    }
+
+    #[test]
+    fn a_name_holding_an_operator_or_a_space_is_not_a_reference() {
+        assert_eq!(type_of("A B"), None);
+        assert_eq!(type_of("A-B"), None);
+        assert_eq!(type_of("A.B"), None);
+    }
+
+    #[test]
+    fn a_qualified_reference_whose_type_is_lowercase_is_not_a_reference() {
+        // The capitalisation check reads the segment after the slash; the one
+        // before it is the module alias and is lowercase by convention.
+        assert_eq!(type_of("catalogue/copies"), None);
+    }
+
+    #[test]
+    fn an_underscore_prefixed_name_is_accepted_as_a_reference() {
+        assert_eq!(type_of("_Internal").as_deref(), Some("_Internal"));
+    }
+
+    #[test]
+    fn candidate_kinds_are_specific_to_what_an_edge_can_point_at() {
+        // Each arm exists because the wrong one produces a wrong answer: a
+        // `facing` clause resolving to a trigger, or an emission resolving to
+        // an entity, would silently join two unrelated constructs.
+        assert_eq!(candidate_kinds(EdgeKind::Facing), [NodeKind::Actor, NodeKind::Entity]);
+        assert_eq!(candidate_kinds(EdgeKind::Emits), [NodeKind::Trigger]);
+        assert_eq!(candidate_kinds(EdgeKind::Provides), [NodeKind::Trigger]);
+        assert_eq!(candidate_kinds(EdgeKind::Triggers), [NodeKind::Trigger]);
+        assert_eq!(
+            candidate_kinds(EdgeKind::Creates),
+            [NodeKind::Entity, NodeKind::Value, NodeKind::Variant]
+        );
+        assert_eq!(candidate_kinds(EdgeKind::Constrains), candidate_kinds(EdgeKind::Creates));
+        assert_eq!(candidate_kinds(EdgeKind::IdentifiedBy), [NodeKind::Entity, NodeKind::External]);
+        assert_eq!(
+            candidate_kinds(EdgeKind::Field),
+            [NodeKind::Entity, NodeKind::Value, NodeKind::Variant, NodeKind::Enum]
+        );
+    }
+
+    #[test]
+    fn an_actor_identified_by_something_undeclared_resolves_to_an_external_node() {
+        // The `IdentifiedBy` arm accepts `External` so a second link pass does
+        // not create a second stand-in for the same missing entity.
+        let mut graph = SpecGraph::new("test");
+        graph.modules.push(module("m", Vec::new()));
+        graph.nodes.push(Node::new("m", NodeKind::Actor, "Reader"));
+        graph.edges.push(Edge::new(
+            NodeId::new("m", NodeKind::Actor, "Reader"),
+            NodeId::new("m", NodeKind::Entity, "Absent"),
+            EdgeKind::IdentifiedBy,
+            "Absent",
+        ));
+        link(&mut graph);
+        link(&mut graph);
+        assert_eq!(graph.nodes_of(NodeKind::External).count(), 1);
+    }
+
+    #[test]
+    fn a_facing_edge_prefers_an_actor_over_an_entity_of_the_same_name() {
+        // Both kinds are legal in a `facing` clause, so order decides. An actor
+        // says who the party is; an entity of the same name is the fallback.
+        let mut graph = SpecGraph::new("test");
+        graph.modules.push(module("m", Vec::new()));
+        graph.nodes.push(Node::new("m", NodeKind::Actor, "Reader"));
+        graph.nodes.push(entity("m", "Reader", Vec::new()));
+        graph.nodes.push(Node::new("m", NodeKind::Surface, "Shelf"));
+        graph.edges.push(Edge::new(
+            NodeId::new("m", NodeKind::Surface, "Shelf"),
+            NodeId::new("m", NodeKind::Trigger, "Reader"),
+            EdgeKind::Facing,
+            "Reader",
+        ));
+        link(&mut graph);
+        let edge = graph.edges.iter().find(|e| e.kind == EdgeKind::Facing).expect("an edge");
+        assert_eq!(edge.to, NodeId::new("m", NodeKind::Actor, "Reader"));
+    }
+
+    #[test]
+    fn an_edge_whose_target_names_nothing_at_all_is_left_alone() {
+        // `relocate` needs both a module and a name to search with. A malformed
+        // id has neither, and inventing an external node for it would put an
+        // unnamed box on the canvas.
+        let mut graph = SpecGraph::new("test");
+        graph.modules.push(module("m", Vec::new()));
+        graph.nodes.push(Node::new("m", NodeKind::Rule, "R"));
+        let broken = Edge::new(
+            NodeId::new("m", NodeKind::Rule, "R"),
+            NodeId("malformed".to_owned()),
+            EdgeKind::Emits,
+            "",
+        );
+        graph.edges.push(broken.clone());
+        link(&mut graph);
+        assert_eq!(graph.edges, [broken]);
+        assert!(graph.nodes_of(NodeKind::External).next().is_none());
+    }
+
+    #[test]
+    fn an_edge_label_that_qualifies_its_target_is_followed_across_modules() {
+        let mut graph = SpecGraph::new("test");
+        graph.modules.push(module("catalogue", Vec::new()));
+        graph.modules.push(module("lending", vec![import("cat", "./catalogue.allium")]));
+        graph.nodes.push(Node::new("catalogue", NodeKind::Trigger, "CopyLost"));
+        graph.nodes.push(Node::new("lending", NodeKind::Rule, "R"));
+        graph.edges.push(Edge::new(
+            NodeId::new("lending", NodeKind::Rule, "R"),
+            NodeId::new("lending", NodeKind::Trigger, "cat/CopyLost"),
+            EdgeKind::Emits,
+            "cat/CopyLost",
+        ));
+        link(&mut graph);
+        let edge = graph.edges.iter().find(|e| e.kind == EdgeKind::Emits).expect("an edge");
+        assert_eq!(edge.to, NodeId::new("catalogue", NodeKind::Trigger, "CopyLost"));
+    }
+
+    #[test]
+    fn only_an_external_node_with_no_detail_counts_as_unresolved() {
+        // Both halves matter. A node of another kind is declared; an external
+        // node that has since been given detail is a placeholder that was
+        // filled in, and reporting either as unresolved would be a false alarm.
+        let bare = Node::new("m", NodeKind::External, "Phantom");
+        assert!(is_unresolved(&bare));
+
+        let declared = Node::new("m", NodeKind::Entity, "Book");
+        assert!(!is_unresolved(&declared), "a declared entity is not unresolved");
+
+        let filled =
+            Node::new("m", NodeKind::External, "Phantom").with(NodeDetail::Entity(EntityDetail {
+                kind: EntityKind::External,
+                fields: Vec::new(),
+                transitions: Vec::new(),
+                parent: None,
+            }));
+        assert!(!is_unresolved(&filled), "a placeholder that was filled in is resolved");
+    }
+
     // --- imports ---------------------------------------------------------
 
     #[test]

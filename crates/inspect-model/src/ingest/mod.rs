@@ -143,6 +143,10 @@ pub fn ingest<R: AlliumRunner, S: SourceReader>(
         let analysed = runner.run(Command::Analyse, path)?;
         analyse::ingest_diagnostics(&analysed, &module, &mut graph);
         analyse::ingest_findings(&analysed, &module, &mut graph);
+
+        // Last for this module, because it needs every node of it to have the
+        // span the parse pass gave it.
+        analyse::attribute(&mut graph, &module, &source);
     }
 
     link::link(&mut graph);
@@ -254,6 +258,30 @@ mod tests {
         assert_eq!(graph.modules.len(), 1);
         assert_eq!(graph.modules[0].name, "catalogue");
         assert_eq!(graph.modules[0].path, "catalogue.allium");
+    }
+
+    #[test]
+    fn the_file_reader_returns_the_file_it_was_pointed_at() {
+        // The one place this crate touches the filesystem, and the source it
+        // returns is what every clause in the inspector is sliced from. A
+        // reader that returned the empty string would silently blank every
+        // clause and every source preview.
+        let path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/specs/catalogue.allium");
+        let text = FileReader.read(&path).expect("the fixture spec is readable");
+        assert!(text.contains("entity Book {"), "the real contents came back");
+        assert!(text.len() > 500, "and not a truncated or invented string");
+    }
+
+    #[test]
+    fn the_file_reader_names_the_file_it_could_not_read() {
+        let error = FileReader.read(Path::new("/nonexistent/nope.allium")).unwrap_err();
+        match error {
+            IngestError::Source { path, .. } => {
+                assert_eq!(path, PathBuf::from("/nonexistent/nope.allium"));
+            }
+            other => panic!("expected a Source error, got {other}"),
+        }
     }
 
     #[test]

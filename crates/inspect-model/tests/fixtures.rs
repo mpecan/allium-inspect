@@ -370,6 +370,32 @@ fn obligations_are_attributed_to_the_construct_that_owes_them() {
 }
 
 #[test]
+fn diagnostics_are_attributed_to_the_constructs_they_are_about() {
+    // The badge on a node comes from this. The fixtures warn about `Copy`'s
+    // unreachable states and about `Staff`'s unreferenced fields, so both
+    // should land on their own entity rather than on the module at large.
+    let graph = graph();
+    let attributed: Vec<(&str, &str)> = graph
+        .diagnostics
+        .iter()
+        .filter_map(|diagnostic| Some((diagnostic.node.as_deref()?, diagnostic.message.as_str())))
+        .collect();
+
+    assert!(!attributed.is_empty(), "no diagnostic found a construct");
+    assert!(
+        attributed.iter().any(|(node, _)| *node == "catalogue::entity::Copy"),
+        "the Copy status warnings should land on Copy: {attributed:?}"
+    );
+    assert!(
+        attributed.iter().any(|(node, _)| *node == "catalogue::entity::Staff"),
+        "the Staff field notes should land on Staff: {attributed:?}"
+    );
+    for (node, message) in &attributed {
+        assert!(graph.node(&NodeId(node.to_string())).is_some(), "{node} ({message})");
+    }
+}
+
+#[test]
 fn ingestion_is_deterministic() {
     // Everything downstream assumes it: snapshot tests, diffs between two
     // versions of a spec, and a URL that names a node.

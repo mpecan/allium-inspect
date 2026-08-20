@@ -222,6 +222,18 @@ mod tests {
     }
 
     #[test]
+    fn a_column_inside_a_character_falls_back_to_the_byte_distance() {
+        // A stale offset from a file that was edited under us can land mid
+        // character. Slicing there yields nothing, so the column falls back to
+        // the byte distance from the line start — which is only right if it is
+        // measured from the line, not from the file.
+        let source = "ab\ncé";
+        let index = LineIndex::new(source);
+        // Offset 5 splits the two bytes of `é` on line 2, which starts at 3.
+        assert_eq!(index.position(source, 5), Position { line: 2, column: 3 });
+    }
+
+    #[test]
     fn empty_source_has_one_line() {
         let index = LineIndex::new("");
         assert_eq!(index.line_count(), 1);
