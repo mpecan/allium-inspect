@@ -150,6 +150,17 @@ than the graph and only the simulator reads them, so what travels is a world in
 and a step out — which is also what makes the server stateless and a whole run a
 value the browser can step back through.
 
+## Who this is for
+
+Five people who would open it are written down in
+[`docs/personas/`](docs/personas/) — a spec author, a domain lead who does not
+write Allium, an implementer, a reviewer, and someone who joined on Monday. They
+exist so that a review of the interface has something to be a review *of*:
+"the rail is cluttered" and "the rail is thorough" are the same observation from
+two people with different jobs, and only naming the job settles it.
+
+Reviews run against them live in [`docs/reviews/`](docs/reviews/).
+
 ## Quality gates
 
 `just check` runs the fast ones in about a minute. Every gate is driven in both
