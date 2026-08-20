@@ -1,0 +1,22 @@
+-- A journey the spec cannot decide, which is a different answer from one it
+-- refuses. `Member.is_at_limit` is derived from a count of loans, and nothing
+-- here has set it.
+
+journey NobodySaidWhetherSheIsAtHerLimit {
+    goal: The limit is a derived value nothing set, so whether she may borrow
+          at all is a question this tool cannot answer.
+
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+
+    given:
+        copy.status = available
+
+    1. she tries to borrow it
+        ada does MemberBorrows(ada, copy) on MemberShelf
+        then BorrowCopy fires
+        then ReturnCopy fires
+
+    ends: Nobody knows.
+}

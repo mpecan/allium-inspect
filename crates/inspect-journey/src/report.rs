@@ -223,16 +223,20 @@ mod tests {
 
     #[test]
     fn a_report_counts_the_steps_that_hold() {
+        // Deliberately lopsided. Two of four counted either way round reads as
+        // correct whichever verdict is being counted, and the number a person
+        // acts on is how much of their journey the spec already supports.
         let result = walk(
             "J",
             vec![
                 step(1, "one", vec![outcome(Verdict::Specified, "a", None)]),
-                step(2, "two", vec![outcome(Verdict::Refused, "b", Some("no"))]),
+                step(2, "two", vec![outcome(Verdict::Specified, "b", None)]),
+                step(3, "three", vec![outcome(Verdict::Refused, "c", Some("no"))]),
             ],
             Vec::new(),
         );
         let text = render(&[result]);
-        assert!(text.contains("1 of 2 steps hold"), "{text}");
+        assert!(text.contains("2 of 3 steps hold"), "{text}");
     }
 
     #[test]

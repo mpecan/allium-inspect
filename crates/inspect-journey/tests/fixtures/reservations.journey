@@ -1,0 +1,37 @@
+-- Two readers waiting on one book, and the withdrawal that calls both
+-- reservations off. `CancelReservationOnWithdrawal` is a state-condition rule
+-- that holds for more than one instance at once, and its own effect leaves its
+-- condition true — so it is where a fixpoint either terminates or does not.
+
+journey TwoReadersWaitingOnOneBook {
+    goal: Two readers reserve the same book, the library withdraws it, and both
+          reservations are called off without either reader being told.
+
+    cast:
+        ada:   Member
+        bob:   Member
+        staff: Staff
+        book:  catalogue/Book
+
+    given:
+        book.status = listed
+
+    1. two readers reserve the same book
+        ada does MemberReserves(ada, book) on MemberShelf
+            creating hers: Reservation
+        bob does MemberReserves(bob, book) on MemberShelf
+            creating his: Reservation
+        then hers.status = waiting
+        then his.status = waiting
+
+    2. the library withdraws it
+        staff does LibrarianWithdrawsBook(staff, book) on CatalogueDesk
+        then book.status = withdrawn
+
+    3. both reservations are called off
+        after 1.hour
+        then hers.status = cancelled
+        then his.status = cancelled
+
+    ends: Neither reader is left waiting on a book that is gone.
+}

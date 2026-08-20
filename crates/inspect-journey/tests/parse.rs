@@ -482,3 +482,27 @@ fn a_given_line_knows_which_line_it_was_on() {
     let lines: Vec<usize> = journeys[0].given.iter().map(Given::line).collect();
     assert_eq!(lines, vec![3, 4]);
 }
+
+#[test]
+fn a_comparison_spelled_the_way_a_programmer_types_it_is_refused() {
+    // `==` is not this grammar, and splitting on the first `=` inside it would
+    // read the second one as the start of the value — an assertion comparing a
+    // path against something spelled `= open`, which is not what anybody wrote
+    // and would quietly answer no forever.
+    for text in ["then loan.status == open", "then a == b"] {
+        let message = refuse(&format!("journey J {{\n    1. she looks\n        {text}\n}}"));
+        assert!(message.contains("asserts nothing"), "{text}: {message}");
+    }
+}
+
+#[test]
+fn a_comparison_the_grammar_does_have_still_reads() {
+    // So the refusal above is a refusal of `==` rather than of comparisons.
+    let Clause::Then { assertion: Assertion::Compare { operator, right, .. }, .. } =
+        only_clause("then loan.status = open")
+    else {
+        panic!("a comparison")
+    };
+    assert_eq!(operator, Comparison::Equal);
+    assert_eq!(right, Term::Path(path_of("open")));
+}

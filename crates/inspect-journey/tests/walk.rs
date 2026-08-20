@@ -561,3 +561,73 @@ fn a_walk_reports_its_worst_step() {
     assert_eq!(walked(LOSS).verdict(), Verdict::Specified);
     assert_eq!(walked(REACHING_PAST).verdict(), Verdict::Unspecified);
 }
+
+const RESERVATIONS: &str = include_str!("fixtures/reservations.journey");
+const UNDECIDED: &str = include_str!("fixtures/undecided.journey");
+
+#[test]
+fn a_rule_that_holds_for_two_instances_runs_for_both() {
+    // Two readers, one book, one withdrawal. The rule that calls a reservation
+    // off holds for each of them separately, and a fixpoint that remembered
+    // only which *rules* had run would cancel the first reader's and leave the
+    // second waiting on a book that no longer exists — silently, because
+    // nothing else in the walk would notice.
+    let walk = walked(RESERVATIONS);
+    assert_eq!(walk.verdict(), Verdict::Specified, "{:#?}", outcomes(&walk));
+    for who in ["hers.status = cancelled", "his.status = cancelled"] {
+        let (verdict, _, _) = outcomes(&walk)
+            .into_iter()
+            .find(|(_, about, _)| about.contains(who))
+            .unwrap_or_else(|| panic!("`{who}` is one of the lines"));
+        assert_eq!(verdict, Verdict::Specified, "{who}");
+    }
+}
+
+#[test]
+fn a_rule_whose_effect_keeps_its_own_condition_true_runs_once_per_instance() {
+    // The other half. `CancelReservationOnWithdrawal` watches the *book*, and
+    // cancelling a reservation does not un-withdraw it — so every round it is
+    // enabled again for the same two reservations. Remembering only the rule
+    // would drop one reader; remembering nothing would run to the bound and
+    // report a world that never settled, which is a failure this walker
+    // invented rather than found.
+    let walk = walked(RESERVATIONS);
+    let complaints: Vec<_> = outcomes(&walk)
+        .into_iter()
+        .filter(|(_, _, detail)| {
+            detail.as_deref().is_some_and(|text| text.contains("never settled"))
+        })
+        .collect();
+    assert!(complaints.is_empty(), "{complaints:#?}");
+}
+
+#[test]
+fn a_rule_nobody_could_decide_is_not_a_rule_that_did_not_run() {
+    // The two answers a reader must be able to tell apart. One is the spec
+    // saying no; the other is this tool saying it does not know, and a journey
+    // reporting the second as the first would send somebody to change a spec
+    // that was never consulted.
+    let walk = walked(UNDECIDED);
+    let lines = outcomes(&walk);
+
+    let (verdict, _, detail) = lines
+        .iter()
+        .find(|(_, about, _)| about.contains("BorrowCopy fires"))
+        .cloned()
+        .expect("the journey asserts it fires");
+    assert_eq!(verdict, Verdict::Undecided);
+    assert_eq!(detail.as_deref(), Some("`BorrowCopy` could not be decided"));
+
+    let (_, _, detail) = lines
+        .iter()
+        .find(|(_, about, _)| about.contains("ReturnCopy fires"))
+        .cloned()
+        .expect("the journey asserts that one too");
+    // Nobody fired it and nothing was waiting on it, so this half is flat fact
+    // — and it is what tells the reader the step is about the borrow rather
+    // than about the return.
+    assert!(
+        detail.as_deref().is_some_and(|text| text.contains("`ReturnCopy` did not run")),
+        "{detail:?}"
+    );
+}
