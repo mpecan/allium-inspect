@@ -441,3 +441,67 @@ fn applying_is_deterministic() {
     assert_eq!(first, second);
     assert_eq!(one, two);
 }
+
+// --- where a created instance comes from ----------------------------------
+
+#[test]
+fn a_created_instance_belongs_to_the_module_that_declares_its_type() {
+    // `BorrowCopy` lives in `lending` and creates a `Copy`, which `catalogue`
+    // declares. Recording it under `lending` would put it in the wrong module
+    // everywhere afterwards: the source strip, the inspector, the world panel.
+    let (effects, _, world) = apply(&creation("Copy", &[]), &[]);
+    let Some(Effect::Created { id, .. }) = effects.first() else {
+        panic!("expected a creation, got {effects:?}");
+    };
+    let instance = world.instance(id).expect("the created instance is in the world");
+    assert_eq!(instance.module, "catalogue");
+}
+
+#[test]
+fn an_instance_of_a_type_the_spec_does_not_declare_falls_back_to_the_rule() {
+    // Nothing better is knowable. The point is that it is the rule's own module
+    // rather than a guess or a blank.
+    let (effects, _, world) = apply(&creation("Postcard", &[]), &[]);
+    let Some(Effect::Created { id, .. }) = effects.first() else {
+        panic!("expected a creation, got {effects:?}");
+    };
+    assert_eq!(world.instance(id).expect("it was created").module, "lending");
+}
+
+// --- quoting the clause the author wrote ----------------------------------
+
+/// Apply `clause` against `source`, so spans have text to slice.
+fn apply_over(clause: &Json, source: &str) -> Vec<Effect> {
+    let graph = spec();
+    let (mut world, _) = world();
+    let mut application = Application::new(&graph, "lending", source, &mut world, BTreeMap::new());
+    application.apply(clause).effects
+}
+
+#[test]
+fn a_noted_clause_is_quoted_from_the_source_on_one_line() {
+    // The panel shows this to a person who is looking at the same file. A
+    // paraphrase, or the placeholder, would send them hunting for text that is
+    // not there — and the spec wraps clauses across lines, so it is one line
+    // here and the author's words either way.
+    let source = "ensures not exists\n    Loan where loan.copy = copy\n";
+    let spanned = json!({"NotExists": {
+        "span": {"start": 8, "end": 51},
+        "operand": ident("Loan"),
+    }});
+    let effects = apply_over(&spanned, source);
+    assert_eq!(
+        effects,
+        vec![Effect::Noted { description: "not exists Loan where loan.copy = copy".to_owned() }]
+    );
+}
+
+#[test]
+fn a_clause_with_no_source_behind_it_says_what_kind_of_clause_it_was() {
+    // A span that points outside the text is not a reason to show nothing.
+    let effects = apply_over(&json!({"NotExists": {"span": {"start": 900, "end": 999}}}), "short");
+    assert_eq!(
+        effects,
+        vec![Effect::Noted { description: "an assertion about what exists".to_owned() }]
+    );
+}

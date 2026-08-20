@@ -200,6 +200,29 @@ mod tests {
     }
 
     #[test]
+    fn removing_an_instance_hands_back_what_was_there() {
+        // The trace says what was removed, not just that something was, so the
+        // removal has to return the instance rather than report success.
+        let mut world = World::new();
+        let id = world.create("Message", "messaging");
+        world.set_field(&id, "body", Value::Str("hello".to_owned()));
+
+        let removed = world.remove(&id).expect("it was there a moment ago");
+        assert_eq!(removed.id, id);
+        assert_eq!(removed.field("body"), Value::Str("hello".to_owned()));
+        assert!(world.instance(&id).is_none());
+        assert_eq!(world.count_of("Message"), 0);
+    }
+
+    #[test]
+    fn removing_something_that_is_not_there_removes_nothing() {
+        let mut world = World::new();
+        world.create("Message", "messaging");
+        assert!(world.remove(&EntityId::new("Message", 9)).is_none());
+        assert_eq!(world.count_of("Message"), 1);
+    }
+
+    #[test]
     fn instances_are_found_by_id_and_by_type() {
         let mut world = World::new();
         let id = world.create("Message", "messaging");

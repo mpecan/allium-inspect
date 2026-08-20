@@ -77,7 +77,10 @@ pub fn literal(text: &str) -> Option<Value> {
 }
 
 fn unit_millis(unit: &str) -> Option<i64> {
-    match unit.trim_end_matches('s') {
+    // One `s`, not every trailing `s`: `ms` is a unit in its own right and
+    // de-pluralising it leaves `m`, which is nothing.
+    let singular = if unit == "ms" { unit } else { unit.strip_suffix('s').unwrap_or(unit) };
+    match singular {
         "millisecond" | "ms" => Some(1),
         "second" | "sec" => Some(1_000),
         "minute" | "min" => Some(60_000),
@@ -128,6 +131,24 @@ mod tests {
         assert_eq!(literal("24.hours"), Some(Value::Duration(86_400_000)));
         assert_eq!(literal("200.seconds"), Some(Value::Duration(200_000)));
         assert_eq!(literal("1.day"), Some(Value::Duration(86_400_000)));
+    }
+
+    #[test]
+    fn every_unit_the_language_writes_converts_to_the_same_scale() {
+        // The whole set, because a unit that is silently unrecognised does not
+        // fail — it leaves the parameter unset, and every rule that reads it
+        // comes back undecided for a reason nobody can see.
+        assert_eq!(literal("500.milliseconds"), Some(Value::Duration(500)));
+        assert_eq!(literal("500.ms"), Some(Value::Duration(500)));
+        assert_eq!(literal("30.minutes"), Some(Value::Duration(1_800_000)));
+        assert_eq!(literal("30.min"), Some(Value::Duration(1_800_000)));
+        assert_eq!(literal("2.weeks"), Some(Value::Duration(1_209_600_000)));
+        assert_eq!(literal("1.week"), Some(Value::Duration(604_800_000)));
+    }
+
+    #[test]
+    fn a_unit_nobody_writes_is_not_a_duration() {
+        assert_eq!(literal("3.fortnights"), None);
     }
 
     #[test]

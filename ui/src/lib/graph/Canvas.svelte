@@ -18,13 +18,16 @@
     type Node as FlowNode,
   } from "@xyflow/svelte";
   import ELK from "elkjs/lib/elk.bundled.js";
+  import { untrack } from "svelte";
 
   import type { Edge } from "../api/Edge";
   import type { Node } from "../api/Node";
   import type { Severity } from "../api/Severity";
   import type { ViewKind } from "../client";
   import ConstructNode from "./ConstructNode.svelte";
+  import Settle from "./Settle.svelte";
   import { familyOf, layout } from "./layout";
+  import { paint } from "./paint";
   import type { Trace } from "./trace";
 
   interface Props {
@@ -43,6 +46,11 @@
   const elk = new ELK();
   const nodeTypes = { construct: ConstructNode };
 
+  // Two arrays, and the split matters. `placed` is ours: what ELK decided, in
+  // the order the graph gave. `flowNodes` and `flowEdges` are Svelte Flow's —
+  // it is bound to them and writes each node's measured box back into them, and
+  // that measurement is what its edge routing depends on.
+  let placed = $state.raw<FlowNode[]>([]);
   let flowNodes = $state.raw<FlowNode[]>([]);
   let flowEdges = $state.raw<FlowEdge[]>([]);
   let placing = $state(true);
@@ -58,12 +66,12 @@
     let cancelled = false;
     placing = true;
 
-    void layout(elk, view, nodes, edges).then((placed) => {
+    void layout(elk, view, nodes, edges).then((result) => {
       if (cancelled) {
         return;
       }
-      const byId = new Map(placed.nodes.map((node) => [node.id, node]));
-      flowNodes = nodes.map((node) => {
+      const byId = new Map(result.nodes.map((node) => [node.id, node]));
+      placed = nodes.map((node) => {
         const place = byId.get(node.id);
         return {
           id: node.id,
@@ -82,19 +90,13 @@
     };
   });
 
-  // Dimming and edge emphasis are derived, so a trace repaints without a
-  // relayout — the picture must not move when you ask what follows from
-  // something, or you lose the place you were reading.
-  const painted = $derived.by(() => {
-    const dim = trace !== null;
-    return flowNodes.map((node) => ({
-      ...node,
-      selected: node.id === selected,
-      data: {
-        ...node.data,
-        dimmed: dim && !trace.nodes.has(node.id),
-      },
-    }));
+  // Dimming and edge emphasis repaint without a relayout — the picture must not
+  // move when you ask what follows from something, or you lose the place you
+  // were reading. This writes into the array Svelte Flow owns rather than
+  // deriving a new one, because a derived array is read-only and Svelte Flow's
+  // own writes to it — the measurements it takes of each node — would be lost.
+  $effect(() => {
+    flowNodes = paint(placed, untrack(() => flowNodes), selected, trace);
   });
 
   const paintedEdges = $derived.by(() => {
@@ -139,8 +141,8 @@
     </p>
   {:else}
     <SvelteFlow
-      nodes={painted}
-      edges={flowEdges}
+      bind:nodes={flowNodes}
+      bind:edges={flowEdges}
       {nodeTypes}
       fitView
       minZoom={0.15}
@@ -156,6 +158,7 @@
         bgColor="var(--ground-canvas)"
         patternColor="var(--ground-canvas-grid)"
       />
+      <Settle ids={flowNodes.map((node) => node.id)} />
       <Controls showLock={false} />
       <MiniMap
         nodeColor={minimapColour}

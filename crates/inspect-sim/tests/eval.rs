@@ -678,3 +678,217 @@ fn the_bound_name_is_usable_as_well_as_the_bare_fields() {
         quantify("c", ident("Copies"), compare(field(ident("c"), "status"), "NotEq", null()), None);
     assert_eq!(truth_of(&by_name, &env), Truth::True);
 }
+
+// --- ordering decimals ---------------------------------------------------
+//
+// Every one of these is a comparison a spec writes against a config value, and
+// the arms that answer them are separate because the kinds do not compare
+// directly. An arm quietly missing reads to a user as "undecided" on a question
+// with an obvious answer.
+
+#[test]
+fn two_decimals_are_ordered_against_each_other() {
+    let world = library();
+    let env = env(&world, "lending").bind("a", Value::Float(1.5)).bind("b", Value::Float(2.5));
+    assert_eq!(truth_of(&compare(ident("a"), "Lt", ident("b")), &env), Truth::True);
+    assert_eq!(truth_of(&compare(ident("a"), "Gt", ident("b")), &env), Truth::False);
+}
+
+#[test]
+fn a_whole_number_is_ordered_against_a_decimal_either_way_round() {
+    // `requires: copy.rating > config.threshold` is an integer against a
+    // decimal, and a spec never says which side is which.
+    let world = library();
+    let env = env(&world, "lending").bind("whole", Value::Int(2)).bind("part", Value::Float(2.5));
+    assert_eq!(truth_of(&compare(ident("whole"), "Lt", ident("part")), &env), Truth::True);
+    assert_eq!(truth_of(&compare(ident("part"), "Lt", ident("whole")), &env), Truth::False);
+    assert_eq!(truth_of(&compare(ident("part"), "Gt", ident("whole")), &env), Truth::True);
+}
+
+#[test]
+fn a_whole_number_equals_the_decimal_that_names_the_same_number() {
+    let world = library();
+    let env = env(&world, "lending").bind("whole", Value::Int(3)).bind("part", Value::Float(3.0));
+    assert_eq!(truth_of(&compare(ident("whole"), "LtEq", ident("part")), &env), Truth::True);
+    assert_eq!(truth_of(&compare(ident("whole"), "Lt", ident("part")), &env), Truth::False);
+    assert_eq!(truth_of(&compare(ident("part"), "GtEq", ident("whole")), &env), Truth::True);
+    assert_eq!(truth_of(&compare(ident("part"), "Gt", ident("whole")), &env), Truth::False);
+}
+
+#[test]
+fn the_tolerance_on_decimals_scales_with_the_size_of_the_numbers() {
+    // A fixed tolerance is a tolerance that stops working. At a million, the
+    // gap between one representable double and the next is already larger than
+    // any absolute epsilon worth writing down, so two values a spec means to be
+    // the same number have to still compare equal there.
+    let world = library();
+    let big = 1_000_000.0_f64;
+    let together = env(&world, "lending")
+        .bind("left", Value::Float(big))
+        .bind("right", Value::Float(big + 1e-9));
+    assert_eq!(truth_of(&compare(ident("left"), "Lt", ident("right")), &together), Truth::False);
+    assert_eq!(truth_of(&compare(ident("left"), "GtEq", ident("right")), &together), Truth::True);
+
+    // And it is still a tolerance, not a licence: a real difference is real.
+    let apart = env(&world, "lending")
+        .bind("left", Value::Float(big))
+        .bind("right", Value::Float(big + 1.0));
+    assert_eq!(truth_of(&compare(ident("left"), "Lt", ident("right")), &apart), Truth::True);
+}
+
+#[test]
+fn strictly_greater_is_not_greater_or_equal() {
+    // The one comparison where an equal pair separates the two operators.
+    let world = library();
+    let env = env(&world, "lending").bind("a", Value::Int(4)).bind("b", Value::Int(4));
+    assert_eq!(truth_of(&compare(ident("a"), "Gt", ident("b")), &env), Truth::False);
+    assert_eq!(truth_of(&compare(ident("a"), "GtEq", ident("b")), &env), Truth::True);
+}
+
+// --- arithmetic on times -------------------------------------------------
+
+#[test]
+fn a_duration_taken_off_a_timestamp_is_a_timestamp() {
+    // `intent.created_at + config.window <= now` is the shape of every
+    // temporal trigger in a real spec, and it runs in both directions.
+    let world = library();
+    let env = env(&world, "lending")
+        .bind("at", Value::Timestamp(10_000))
+        .bind("by", Value::Duration(2_500));
+    assert_eq!(
+        value_of(&arithmetic(ident("at"), "Sub", ident("by")), &env),
+        Value::Timestamp(7_500)
+    );
+    assert_eq!(
+        value_of(&arithmetic(ident("at"), "Add", ident("by")), &env),
+        Value::Timestamp(12_500)
+    );
+}
+
+#[test]
+fn two_durations_add_and_subtract_to_a_duration() {
+    let world = library();
+    let env = env(&world, "lending")
+        .bind("long", Value::Duration(9_000))
+        .bind("short", Value::Duration(4_000));
+    assert_eq!(
+        value_of(&arithmetic(ident("long"), "Add", ident("short")), &env),
+        Value::Duration(13_000)
+    );
+    assert_eq!(
+        value_of(&arithmetic(ident("long"), "Sub", ident("short")), &env),
+        Value::Duration(5_000)
+    );
+}
+
+#[test]
+fn arithmetic_between_kinds_that_do_not_combine_says_which_kinds() {
+    let world = library();
+    let env = env(&world, "lending")
+        .bind("at", Value::Timestamp(10_000))
+        .bind("name", Value::Str("Ada".to_owned()));
+    let sum = arithmetic(ident("at"), "Add", ident("name"));
+    assert_eq!(value_of(&sum, &env), Value::Unknown);
+    assert_eq!(reasons(&sum, &env), vec!["`Add` is not defined between a timestamp and a string"]);
+}
+
+#[test]
+fn arithmetic_on_something_already_undecided_adds_no_second_complaint() {
+    // The operand's own reason is the one worth reading. Saying additionally
+    // that `Add` is not defined between an unknown and an integer is noise
+    // that buries it, and it blames the operator for the operand's problem.
+    let world = library();
+    let env = env(&world, "lending").bind("known", Value::Int(1));
+    for sum in [
+        arithmetic(ident("nobody_bound_this"), "Add", ident("known")),
+        arithmetic(ident("known"), "Add", ident("nobody_bound_this")),
+    ] {
+        assert_eq!(value_of(&sum, &env), Value::Unknown);
+        assert_eq!(reasons(&sum, &env), vec!["nothing is bound to `nobody_bound_this`"]);
+    }
+}
+
+// --- membership ----------------------------------------------------------
+
+fn within(needle: Json, haystack: Json) -> Json {
+    json!({"In": {"span": {"start": 0, "end": 0}, "value": needle, "collection": haystack}})
+}
+
+#[test]
+fn membership_of_a_collection_is_decided_both_ways() {
+    let world = library();
+    let env = env(&world, "lending").bind(
+        "kinds",
+        Value::Set(vec![Value::Enum("read".to_owned()), Value::Enum("delivered".to_owned())]),
+    );
+    let present = within(ident("kind"), ident("kinds"));
+    let held = |state: &str| {
+        let mut scope = Env::new(&world, "lending", "");
+        scope.bindings.clone_from(&env.bindings);
+        truth_of(&present, &scope.bind("kind", Value::Enum(state.to_owned())))
+    };
+    assert_eq!(held("read"), Truth::True);
+    assert_eq!(held("vetoed"), Truth::False);
+}
+
+#[test]
+fn membership_of_something_that_is_not_a_collection_is_undecided() {
+    let world = library();
+    let env = env(&world, "lending").bind("kinds", Value::Int(3));
+    assert_eq!(truth_of(&within(number("3"), ident("kinds")), &env), Truth::Unknown);
+}
+
+// --- existence -----------------------------------------------------------
+
+#[test]
+fn a_relationship_that_is_null_does_not_exist() {
+    // An entity with no attachment has none — that is false, not undecided,
+    // and `not exists attachment` is a precondition real specs write.
+    let world = library();
+    let env = env(&world, "lending").bind("attachment", Value::Null);
+    assert_eq!(truth_of(&exists(ident("attachment")), &env), Truth::False);
+    assert_eq!(truth_of(&not(exists(ident("attachment"))), &env), Truth::True);
+}
+
+// --- naming a field that was set to nothing in particular ------------------
+
+#[test]
+fn a_field_deliberately_set_to_unknown_is_not_reported_as_unset() {
+    // "`Copy#1` has no `status` set" would be wrong: it has one, and nobody
+    // could work out what it is. The distinction is the difference between
+    // "fill this in" and "this simulator cannot compute it".
+    let mut world = World::new().at(1_000);
+    let copy = world.create("Copy", "catalogue");
+    world.set_field(&copy, "status", Value::Unknown);
+    let env = env(&world, "catalogue").bind("copy", Value::Ref(copy));
+
+    let status = field(ident("copy"), "status");
+    assert_eq!(value_of(&status, &env), Value::Unknown);
+    assert!(reasons(&status, &env).is_empty(), "{:?}", reasons(&status, &env));
+
+    let missing = field(ident("copy"), "shelfmark");
+    assert_eq!(reasons(&missing, &env), vec!["`Copy#1` has no `shelfmark` set"]);
+}
+
+// --- collections named in the plural ---------------------------------------
+
+#[test]
+fn a_plural_name_with_no_instances_behind_it_is_an_empty_collection() {
+    // `for m in Members` over a world holding no members ranges over nothing.
+    // It must not resolve through the singular branch to some other type's
+    // instances, and it must not be undecided either.
+    let world = World::new().at(1_000);
+    let env = env(&world, "lending");
+    assert_eq!(value_of(&ident("Members"), &env), Value::Set(Vec::new()));
+    assert!(reasons(&ident("Members"), &env).is_empty());
+}
+
+#[test]
+fn a_plural_name_resolves_to_the_instances_of_its_singular() {
+    let world = library();
+    let env = env(&world, "catalogue");
+    let Value::Set(copies) = value_of(&ident("Copies"), &env) else {
+        panic!("expected a collection");
+    };
+    assert_eq!(copies.len(), 2);
+}

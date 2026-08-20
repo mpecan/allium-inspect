@@ -302,6 +302,69 @@ else
     echo "ok:   file sizes refuses a tree it found nothing in"
 fi
 
+# --- mutation scoring -----------------------------------------------------
+#
+# The half of `just mutants` that decides. Driven here against fixture results
+# rather than a real half-hour run, which is the whole reason it is a script of
+# its own.
+results="$scratch/mutants.out"
+mkdir -p "$results"
+score_baseline="$scratch/mutant-baseline.txt"
+score_receipt="$scratch/mutation-receipt.txt"
+
+# `seq 1 0` counts *down* on BSD, so the counts are written by hand.
+fixture_results() {
+    lines "$1" caught > "$results/caught.txt"
+    lines "$2" survived > "$results/missed.txt"
+}
+
+lines() {
+    local i=0
+    while [ "$i" -lt "$1" ]; do
+        i=$((i + 1))
+        echo "src/lib.rs:$i: $2"
+    done
+}
+
+score() { bash "$here/score-mutants.sh" "$results" "$score_baseline" "$score_receipt"; }
+
+printf '2\n' > "$score_baseline"
+fixture_results 10 5
+expect_fail "mutation scoring above the survivor baseline" "baseline allows 2" score
+
+fixture_results 13 2
+if [ -n "$head_sha" ]; then
+    expect_pass "mutation scoring at the survivor baseline" score
+else
+    skip "mutation scoring at the survivor baseline"
+fi
+
+fixture_results 15 0
+if [ -n "$head_sha" ]; then
+    expect_pass "mutation scoring below the survivor baseline" score
+    checks=$((checks + 1))
+    if [ "$(receipt_line "$score_baseline")" = "0" ]; then
+        echo "ok:   the survivor baseline ratcheted 2 -> 0"
+    else
+        echo "FAIL: the survivor baseline did not ratchet down"
+        failures=$((failures + 1))
+    fi
+    # And having ratcheted, it does not go back up.
+    fixture_results 14 1
+    expect_fail "mutation scoring after the baseline ratcheted" "baseline allows 0" score
+else
+    skip "mutation scoring below the survivor baseline"
+fi
+
+# A run that scored nothing is a broken run, not a clean sweep. This is the
+# shape that ships green forever: no results, no survivors, no complaint.
+rm -f "$score_baseline"
+fixture_results 0 0
+expect_fail "mutation scoring with nothing scored" "0 mutants" score
+
+rm -f "$results/caught.txt" "$results/missed.txt"
+expect_fail "mutation scoring with no results file at all" "no results to score" score
+
 # --- verdict --------------------------------------------------------------
 echo
 note=""

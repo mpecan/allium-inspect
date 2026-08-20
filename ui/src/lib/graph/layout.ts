@@ -1,11 +1,13 @@
 // Turning a spec graph into placed nodes.
 //
 // Layout is a decision about how a reader should scan the picture, so it is
-// made per view rather than once. The domain view is about containment and is
-// laid out left-to-right by module; the flow and journey views are about
-// causation and are laid out strictly left-to-right in the direction the chain
-// runs; the lifecycle view is a state machine and reads top-to-bottom from the
-// initial state to the terminal ones.
+// made per view rather than once. Every view here runs left to right, which is
+// the direction the language itself is written in — a domain relationship, a
+// causal chain and a state transition all read as "this, then that".
+//
+// The lifecycle view is many small disconnected machines rather than one graph,
+// so what it needs from ELK is not a direction but separation: enough space
+// between components that a reader can see where one entity's machine ends.
 //
 // ELK does the placement. The part worth testing is everything around it —
 // which options each view asks for, how sizes are chosen, how a disconnected
@@ -93,14 +95,15 @@ export function measure(node: Node, rows = 0): { width: number; height: number }
 /**
  * The ELK options a view wants.
  *
- * `DOWN` for a lifecycle and `RIGHT` for everything else is the whole of the
- * distinction: a state machine is read as a descent from an initial state to a
- * terminal one, and a causal chain is read the way the language writes it,
- * left to right.
+ * The lifecycle view is the one that differs, and not in its direction. It is a
+ * page of separate state machines, so the reader's problem is telling them
+ * apart — hence component separation wide enough to read as a gap, and rows
+ * packed left to right so each machine is one band across the page.
  */
 export function optionsFor(view: ViewKind): Record<string, string> {
   const shared = {
     "elk.algorithm": "layered",
+    "elk.direction": "RIGHT",
     "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
     // Deterministic placement. Without it the same graph lands differently
     // between runs, which makes a screenshot diff and a shared link useless.
@@ -109,14 +112,18 @@ export function optionsFor(view: ViewKind): Record<string, string> {
   if (view === "lifecycle") {
     return {
       ...shared,
-      "elk.direction": "DOWN",
-      "elk.spacing.nodeNode": "36",
-      "elk.layered.spacing.nodeNodeBetweenLayers": "44",
+      "elk.spacing.nodeNode": "20",
+      "elk.layered.spacing.nodeNodeBetweenLayers": "48",
+      "elk.separateConnectedComponents": "true",
+      // Many times the spacing within a machine. One entity's states have to
+      // read as belonging together before the gap between machines means
+      // anything.
+      "elk.spacing.componentComponent": "140",
+      "elk.layered.components.direction": "RIGHT",
     };
   }
   return {
     ...shared,
-    "elk.direction": "RIGHT",
     "elk.spacing.nodeNode": "24",
     "elk.layered.spacing.nodeNodeBetweenLayers": "72",
   };

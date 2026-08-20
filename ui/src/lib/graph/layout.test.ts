@@ -124,12 +124,19 @@ describe("rowsOf", () => {
 });
 
 describe("optionsFor", () => {
-  it("reads a lifecycle downward, from initial state to terminal", () => {
-    expect(optionsFor("lifecycle")["elk.direction"]).toBe("DOWN");
+  it("separates one entity's machine from the next by more than it separates states", () => {
+    // The lifecycle view is a page of disconnected machines. If the gap between
+    // two machines is the same as the gap between two states of one machine,
+    // the reader cannot tell which pills belong together.
+    const options = optionsFor("lifecycle");
+    expect(options["elk.separateConnectedComponents"]).toBe("true");
+    expect(Number(options["elk.spacing.componentComponent"])).toBeGreaterThan(
+      Number(options["elk.spacing.nodeNode"]) * 2,
+    );
   });
 
-  it("reads a causal chain in the direction the language writes it", () => {
-    for (const view of ["domain", "flow", "journey"] as const) {
+  it("reads every view in the direction the language writes it", () => {
+    for (const view of ["domain", "flow", "lifecycle", "journey"] as const) {
       expect(optionsFor(view)["elk.direction"]).toBe("RIGHT");
     }
   });

@@ -8,7 +8,7 @@
     origins,
     type Trace,
   } from "./lib/graph/trace";
-  import { project } from "./lib/graph/views";
+  import { ownerOf, project } from "./lib/graph/views";
   import Inspector from "./lib/panels/Inspector.svelte";
   import SourceStrip from "./lib/panels/SourceStrip.svelte";
   import Rail from "./lib/Rail.svelte";
@@ -129,7 +129,9 @@
   }
 
   function select(id: string | null) {
-    selectedId = id;
+    // A state pill on the lifecycle canvas stands for its entity: the state is
+    // a value inside a transition list, not a construct with source of its own.
+    selectedId = id === null ? null : ownerOf(id);
     if (id === null) {
       traceMode = "off";
     }

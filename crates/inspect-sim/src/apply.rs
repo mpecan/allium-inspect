@@ -70,10 +70,6 @@ pub struct Applied {
 }
 
 impl Applied {
-    fn nothing() -> Self {
-        Self::default()
-    }
-
     fn note(unresolved: Vec<Unresolved>) -> Self {
         Self { effects: Vec::new(), unresolved }
     }
@@ -116,13 +112,13 @@ impl<'a> Application<'a> {
 
     /// Apply one `ensures` clause.
     pub fn apply(&mut self, clause: &Json) -> Applied {
-        let Some((tag, inner)) = tagged(clause) else { return Applied::nothing() };
+        let Some((tag, inner)) = tagged(clause) else { return Applied::default() };
 
         match tag {
             "Call" => self.call(inner),
             "Comparison" => self.assignment(inner),
             "Block" => {
-                let mut applied = Applied::nothing();
+                let mut applied = Applied::default();
                 let empty = Vec::new();
                 let items = inner.get("items").and_then(Json::as_array).unwrap_or(&empty);
                 for item in items {
@@ -138,7 +134,7 @@ impl<'a> Application<'a> {
                     .describe(clause)
                     .unwrap_or_else(|| "an assertion about what exists".to_owned()),
             }),
-            _ => Applied::nothing(),
+            _ => Applied::default(),
         }
     }
 
@@ -151,7 +147,7 @@ impl<'a> Application<'a> {
 
     /// `Entity.created(...)` or `TriggerName(...)`.
     fn call(&mut self, inner: &Json) -> Applied {
-        let Some(function) = inner.get("function") else { return Applied::nothing() };
+        let Some(function) = inner.get("function") else { return Applied::default() };
 
         // `Message.created(...)`: a member access whose field is `created`.
         if let Some(("MemberAccess", access)) = tagged(function)
@@ -170,7 +166,7 @@ impl<'a> Application<'a> {
             Some(trigger) => {
                 Applied::effect(Effect::Emitted { trigger, module: self.module.to_owned() })
             }
-            None => Applied::nothing(),
+            None => Applied::default(),
         }
     }
 
@@ -226,17 +222,17 @@ impl<'a> Application<'a> {
         }
 
         let (Some(target), Some(value_node)) = (inner.get("left"), inner.get("right")) else {
-            return Applied::nothing();
+            return Applied::default();
         };
-        let Some(("MemberAccess", access)) = tagged(target) else { return Applied::nothing() };
+        let Some(("MemberAccess", access)) = tagged(target) else { return Applied::default() };
         let Some(field) =
             access.get("field").and_then(|field| field.get("name")).and_then(Json::as_str)
         else {
-            return Applied::nothing();
+            return Applied::default();
         };
         let field = field.to_owned();
 
-        let Some(object) = access.get("object") else { return Applied::nothing() };
+        let Some(object) = access.get("object") else { return Applied::default() };
         let located = self.evaluate(object);
         let mut unresolved = located.unresolved;
         let Value::Ref(id) = located.value else { return Applied::note(unresolved) };
@@ -277,7 +273,7 @@ impl<'a> Application<'a> {
 
     /// `if condition: …`.
     fn conditional(&mut self, inner: &Json) -> Applied {
-        let Some(condition) = inner.get("condition") else { return Applied::nothing() };
+        let Some(condition) = inner.get("condition") else { return Applied::default() };
         let verdict = self.evaluate(condition);
 
         match verdict.truth() {
@@ -309,7 +305,7 @@ impl<'a> Application<'a> {
     /// `for x in collection: …`.
     fn iteration(&mut self, inner: &Json) -> Applied {
         let Some(collection) = inner.get("collection").or_else(|| inner.get("source")) else {
-            return Applied::nothing();
+            return Applied::default();
         };
         let binding = inner
             .get("binding")
@@ -317,7 +313,7 @@ impl<'a> Application<'a> {
             .and_then(Json::as_str)
             .unwrap_or("it")
             .to_owned();
-        let Some(body) = inner.get("body").cloned() else { return Applied::nothing() };
+        let Some(body) = inner.get("body").cloned() else { return Applied::default() };
 
         let evaluated = self.evaluate(collection);
         let mut applied = Applied::note(evaluated.unresolved);

@@ -105,7 +105,6 @@ impl Value {
     pub fn truth(&self) -> Truth {
         match self {
             Value::Bool(value) => Truth::from_bool(*value),
-            Value::Unknown => Truth::Unknown,
             _ => Truth::Unknown,
         }
     }

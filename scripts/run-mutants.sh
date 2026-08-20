@@ -71,47 +71,4 @@ case "$mutants_status" in
     *) fail "cargo mutants exited $mutants_status — the run did not complete" ;;
 esac
 
-caught_file="$OUT/caught.txt"
-missed_file="$OUT/missed.txt"
-[ -f "$caught_file" ] || fail "$caught_file not found — the run produced no results to score"
-
-caught=$(wc -l < "$caught_file" | tr -d ' ')
-survivors=0
-[ -f "$missed_file" ] && survivors=$(wc -l < "$missed_file" | tr -d ' ')
-total=$((caught + survivors))
-[ "$total" -gt 0 ] || fail "the run scored 0 mutants — that is a broken run, not a clean one"
-
-echo "Mutants: $caught caught, $survivors survived, $total total"
-
-if [ -f "$BASELINE" ]; then
-    allowed="$(receipt_line "$BASELINE")"
-    require_int "$allowed" "survivor baseline in $BASELINE"
-    if [ "$survivors" -gt "$allowed" ]; then
-        echo "Survivors:"
-        sed 's/^/  /' "$missed_file"
-        fail "$survivors mutants survived, baseline allows $allowed
-       Each survivor is a change to the code that no assertion noticed.
-       Write the assertion, or raise the baseline deliberately with a reason."
-    fi
-    if [ "$survivors" -lt "$allowed" ]; then
-        printf '# Surviving mutants allowed. Ratchets downward only.\n%s\n' "$survivors" > "$BASELINE"
-        echo "Survivor baseline lowered: $allowed -> $survivors"
-    fi
-else
-    printf '# Surviving mutants allowed. Ratchets downward only.\n%s\n' "$survivors" > "$BASELINE"
-    echo "Survivor baseline established at $survivors"
-fi
-
-# See check-coverage.sh: a receipt naming no commit pins its own drift at zero.
-sha="$(head_commit)"
-[ -n "$sha" ] ||
-    fail "the mutation run completed, but this branch has no commit to record it against.
-       Commit first, then re-run."
-
-{
-    echo "# Mutation receipt — written by 'just mutants'. Do not hand-edit."
-    echo "# Read by scripts/check-mutation-debt.sh, which runs inside 'just check'."
-    echo "# Fields: <commit> <caught>/<total> <survivors> <measured-at>"
-    echo "$sha $caught/$total $survivors $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-} > "$RECEIPT"
-echo "Receipt written: $RECEIPT"
+exec "$here/score-mutants.sh" "$OUT" "$BASELINE" "$RECEIPT"

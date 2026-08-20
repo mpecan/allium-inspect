@@ -338,13 +338,27 @@ fn an_invariant_that_was_already_failing_is_not_blamed_on_this_step() {
         .iter()
         .find(|invariant| invariant.name == "OpenLoansAreWithinTheLimit")
         .expect("the invariant is checked");
-    if over_limit.truth == Truth::False {
-        assert!(over_limit.already_broken, "it was failing before the step ran");
-        assert!(
-            !outcome.broken().any(|broken| broken.name == "OpenLoansAreWithinTheLimit"),
-            "so this step is not what broke it"
-        );
-    }
+    assert_eq!(
+        over_limit.truth,
+        Truth::False,
+        "99 open loans against a limit of 5 is a definite breach, not an undecided one"
+    );
+    assert!(over_limit.already_broken, "it was failing before the step ran");
+    assert!(
+        !outcome.broken().any(|broken| broken.name == "OpenLoansAreWithinTheLimit"),
+        "so this step is not what broke it"
+    );
+
+    // And the inheritance is per invariant. One failing invariant marking every
+    // other one as pre-existing would hide every breach a step actually caused,
+    // which is the one thing this panel exists to show.
+    let inherited: Vec<&str> = outcome
+        .invariants
+        .iter()
+        .filter(|invariant| invariant.already_broken)
+        .map(|invariant| invariant.name.as_str())
+        .collect();
+    assert_eq!(inherited, vec!["OpenLoansAreWithinTheLimit"]);
 }
 
 // --- what happens next ---------------------------------------------------
@@ -490,4 +504,182 @@ fn every_rule_in_the_spec_can_be_stepped_without_panicking() {
             }
         }
     }
+}
+
+// --- reading an outcome --------------------------------------------------
+//
+// The three accessors on `StepOutcome` are what the panel is built out of:
+// which invariants this step broke, and whether anything is undecided. They
+// are small enough to drive directly, and driving them directly is the only
+// way to state what each one excludes as well as what it includes.
+
+use inspect_sim::eval::Unresolved;
+use inspect_sim::{ClauseVerdict, InvariantVerdict, RuleOutcome};
+
+fn note(reason: &str) -> Unresolved {
+    Unresolved { reason: reason.to_owned(), expression: None, span: None }
+}
+
+fn verdict(name: &str, truth: Truth, already_broken: bool) -> InvariantVerdict {
+    InvariantVerdict {
+        id: format!("lending::invariant::{name}"),
+        name: name.to_owned(),
+        truth,
+        already_broken,
+        unresolved: Vec::new(),
+    }
+}
+
+fn rule_outcome(name: &str, unresolved: Vec<Unresolved>) -> RuleOutcome {
+    RuleOutcome {
+        rule: format!("lending::rule::{name}"),
+        name: name.to_owned(),
+        module: "lending".to_owned(),
+        disposition: Disposition::Fired,
+        requires: Vec::<ClauseVerdict>::new(),
+        effects: Vec::new(),
+        unresolved,
+    }
+}
+
+fn outcome_of(rules: Vec<RuleOutcome>, invariants: Vec<InvariantVerdict>) -> StepOutcome {
+    StepOutcome {
+        world: World::new().at(0),
+        event: Event::new("Anything", "lending"),
+        rules,
+        invariants,
+        newly_enabled: Vec::new(),
+        emitted: Vec::new(),
+    }
+}
+
+#[test]
+fn the_invariants_a_step_broke_are_the_false_ones_it_did_not_inherit() {
+    let outcome = outcome_of(
+        Vec::new(),
+        vec![
+            verdict("BrokeJustNow", Truth::False, false),
+            verdict("WasAlreadyBroken", Truth::False, true),
+            verdict("StillHolds", Truth::True, false),
+            verdict("CouldNotBeChecked", Truth::Unknown, false),
+        ],
+    );
+    let broken: Vec<&str> = outcome.broken().map(|v| v.name.as_str()).collect();
+    assert_eq!(broken, vec!["BrokeJustNow"]);
+}
+
+#[test]
+fn an_undecided_invariant_is_not_reported_as_a_broken_one() {
+    // The whole point of the third truth value is that it is not `false`.
+    // Listing it under "this step broke these" would be the simulator stating
+    // a conclusion it did not reach.
+    let outcome = outcome_of(Vec::new(), vec![verdict("Unknowable", Truth::Unknown, false)]);
+    assert_eq!(outcome.broken().count(), 0);
+}
+
+#[test]
+fn a_step_that_decided_everything_reports_no_unknowns() {
+    let outcome = outcome_of(
+        vec![rule_outcome("BorrowCopy", Vec::new())],
+        vec![verdict("StillHolds", Truth::True, false)],
+    );
+    assert!(!outcome.has_unknowns());
+}
+
+#[test]
+fn an_unknown_anywhere_is_an_unknown_in_the_step() {
+    // Either side alone is enough: a precondition nobody could evaluate and an
+    // invariant nobody could check are both things a reader has to be told.
+    let from_a_rule = outcome_of(
+        vec![rule_outcome("BorrowCopy", vec![note("no `is_at_limit` set")])],
+        Vec::new(),
+    );
+    assert!(from_a_rule.has_unknowns());
+
+    let mut unchecked = verdict("CouldNotBeChecked", Truth::Unknown, false);
+    unchecked.unresolved = vec![note("`For` over nothing")];
+    let from_an_invariant = outcome_of(Vec::new(), vec![unchecked]);
+    assert!(from_an_invariant.has_unknowns());
+}
+
+// --- rules with nothing to evaluate ---------------------------------------
+//
+// Two rules can both have no expressions to run, for opposite reasons. One has
+// clauses the parser did not give us; the other has no clauses at all. Reading
+// them the same way tells a user that a rule they wrote cannot be simulated
+// when in fact it just has no preconditions.
+
+use inspect_model::{
+    Node, NodeDetail, NodeKind, RuleAst,
+    graph::{RuleClause, RuleDetail, TriggerSource},
+};
+
+/// A one-rule spec responding to `Anything`, with the clauses given.
+fn spec_of(clauses: Vec<RuleClause>) -> (SpecGraph, Program) {
+    let mut graph = SpecGraph::new("lending");
+    graph.nodes.push(Node::new("lending", NodeKind::Rule, "DoNothing").with(NodeDetail::Rule(
+        RuleDetail {
+            trigger: "Anything".to_owned(),
+            source: TriggerSource::External,
+            clauses,
+            creates: Vec::new(),
+            emits: Vec::new(),
+        },
+    )));
+    graph.normalise();
+    (graph, Program::default())
+}
+
+fn only_rule(graph: &SpecGraph, program: &Program) -> Disposition {
+    let outcome = step(
+        graph,
+        program,
+        &Sources::new(),
+        &World::new().at(0),
+        &Event::new("Anything", "lending"),
+    );
+    outcome.rules.first().expect("the rule responds to the trigger").disposition
+}
+
+#[test]
+fn a_rule_whose_clauses_did_not_parse_is_reported_as_unsimulatable() {
+    // The spec says something; this cannot read it. Saying the rule fired would
+    // be claiming to have checked conditions nobody evaluated.
+    let (graph, program) = spec_of(vec![RuleClause {
+        keyword: "requires".to_owned(),
+        text: "copy.status = available".to_owned(),
+        span: None,
+    }]);
+    assert_eq!(only_rule(&graph, &program), Disposition::Unsimulatable);
+}
+
+#[test]
+fn a_rule_with_no_preconditions_at_all_simply_fires() {
+    // Nothing to check is not the same as unable to check. A rule that is only
+    // `when` and `ensures` is ordinary Allium, and it fires.
+    let (graph, program) = spec_of(Vec::new());
+    assert_eq!(only_rule(&graph, &program), Disposition::Fired);
+}
+
+#[test]
+fn a_rule_the_parser_did_read_is_judged_on_its_preconditions() {
+    // The guard is about the *absence* of an AST, so a rule that has one must
+    // not be caught by it however few clauses the model recorded.
+    let (graph, mut program) = spec_of(vec![RuleClause {
+        keyword: "requires".to_owned(),
+        text: "false".to_owned(),
+        span: None,
+    }]);
+    program.add_rule(
+        "lending::rule::DoNothing",
+        RuleAst {
+            when: None,
+            requires: vec![serde_json::json!({"BoolLiteral": {
+                "span": {"start": 0, "end": 0}, "value": false,
+            }})],
+            ensures: Vec::new(),
+            iterate: None,
+        },
+    );
+    assert_eq!(only_rule(&graph, &program), Disposition::Refused);
 }
