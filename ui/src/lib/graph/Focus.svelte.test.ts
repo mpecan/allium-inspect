@@ -24,6 +24,29 @@ function edge(from: Node, to: Node, kind: EdgeKind): Edge {
   return { from: from.id, to: to.id, kind, label: kind, span: null };
 }
 
+function entityWithStates(name: string): Node {
+  return {
+    ...node("entity", name),
+    detail: {
+      type: "entity",
+      kind: "internal",
+      parent: null,
+      fields: [],
+      transitions: [
+        {
+          field: "status",
+          states: ["open", "returned", "lost"],
+          edges: [
+            { from: "open", to: "returned" },
+            { from: "open", to: "lost" },
+          ],
+          terminal: ["returned", "lost"],
+        },
+      ],
+    },
+  };
+}
+
 const shelf = node("surface", "MemberShelf");
 const borrows = node("trigger", "MemberBorrows");
 const rule = node("rule", "BorrowCopy");
@@ -113,5 +136,41 @@ describe("Focus", () => {
     const { onclose } = open(rule);
     await fireEvent.click(screen.getByTitle("Close"));
     expect(onclose).toHaveBeenCalled();
+  });
+});
+
+describe("Focus · lifecycle", () => {
+  it("offers a lifecycle for an entity that declares transitions", () => {
+    // The lifecycle view draws every entity's machine at once, and the one the
+    // reader is holding is somewhere in that field of eighty. This is the one
+    // they are holding.
+    open(entityWithStates("Loan"));
+    expect((form("Lifecycle") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("turns the lifecycle off for a construct that has no states", () => {
+    open(rule);
+    const button = form("Lifecycle") as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(button.title).toBe("BorrowCopy declares no transitions");
+  });
+
+  it("counts the states rather than the connections", () => {
+    open(entityWithStates("Loan"));
+    // Three states, and the entity itself is not one of them.
+    expect(form("Lifecycle").title).toBe("3 — the states it moves between");
+  });
+
+  it("says the count in states once it is showing one", async () => {
+    open(entityWithStates("Loan"));
+    await fireEvent.click(form("Lifecycle"));
+    expect(screen.getByText(/^3 states/)).toBeTruthy();
+  });
+
+  it("does not open on the lifecycle", () => {
+    // Adjacent is the one that answers for anything connected at all, and a
+    // reader who double-clicked a construct asked what it is joined to.
+    open(entityWithStates("Loan"));
+    expect(form("Adjacent").getAttribute("aria-current")).toBe("true");
   });
 });

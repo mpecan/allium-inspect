@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import type { Edge } from "../api/Edge";
 import type { EdgeKind } from "../api/EdgeKind";
-import { FORMS, walkForm, type Form } from "./forms";
+import { applies, FORMS, walkForm, type Form } from "./forms";
+import type { Node } from "../api/Node";
 
 function edge(from: string, to: string, kind: EdgeKind = "triggers"): Edge {
   return { from, to, kind, label: `${from}->${to}`, span: null };
@@ -58,7 +59,7 @@ describe("walkForm", () => {
   it("offers a label and a plain-language hint for each form", () => {
     // "Adjacent" alone does not say what it will show, and the reader is one
     // click from finding out the expensive way.
-    expect(FORMS).toHaveLength(3);
+    expect(FORMS).toHaveLength(4);
     for (const option of FORMS) {
       expect(option.label.length).toBeGreaterThan(3);
       expect(option.hint.length).toBeGreaterThan(8);
@@ -108,5 +109,67 @@ describe("the direction each label promises", () => {
     expect(walkForm("backward", chain, surface).nodes.size).toBe(1);
     expect(walkForm("forward", chain, loan).nodes.size).toBe(1);
     expect(walkForm("backward", chain, loan).nodes.size).toBeGreaterThan(1);
+  });
+});
+
+describe("applies", () => {
+  function entity(name: string, transitions: number): Node {
+    return {
+      id: `catalogue::entity::${name}`,
+      kind: "entity",
+      name,
+      module: "catalogue",
+      qualified: `catalogue/${name}`,
+      span: null,
+      detail: {
+        type: "entity",
+        kind: "internal",
+        parent: null,
+        fields: [],
+        transitions: Array.from({ length: transitions }, () => ({
+          field: "status",
+          states: ["a", "b"],
+          edges: [{ from: "a", to: "b" }],
+          terminal: ["b"],
+        })),
+      },
+    };
+  }
+
+  const rule: Node = {
+    id: "catalogue::rule::AddBook",
+    kind: "rule",
+    name: "AddBook",
+    module: "catalogue",
+    qualified: "catalogue/AddBook",
+    span: null,
+    detail: { type: "none" },
+  };
+
+  it("offers the lifecycle only where there is one", () => {
+    // A state machine belongs to an entity that declares transitions. Offering
+    // the button for a rule would be offering an empty answer.
+    expect(applies("lifecycle", entity("Copy", 1))).toBe(true);
+    expect(applies("lifecycle", entity("Member", 0))).toBe(false);
+    expect(applies("lifecycle", rule)).toBe(false);
+  });
+
+  it("offers the three directions for anything", () => {
+    // Whether one comes back empty is a fact about the spec, not about the
+    // kind — a surface has nothing leading to it and that is worth being told.
+    for (const form of ["near", "forward", "backward"] as const) {
+      expect(applies(form, rule)).toBe(true);
+      expect(applies(form, entity("Member", 0))).toBe(true);
+    }
+  });
+});
+
+describe("walkForm for a lifecycle", () => {
+  it("reaches only the construct itself, because it is not a walk", () => {
+    // The states come from the entity's own transition list, which the caller
+    // projects. Walking edges for them would find the wrong thing entirely.
+    const reached = walkForm("lifecycle", chain, "entity:Loan");
+    expect([...reached.nodes]).toEqual(["entity:Loan"]);
+    expect(reached.edges.size).toBe(0);
   });
 });

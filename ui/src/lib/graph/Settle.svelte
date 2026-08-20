@@ -17,10 +17,10 @@
   // off, would otherwise leave the reader looking at the empty space where the
   // old graph used to be.
   //
-  // Framing one node is the same job, which is why it is here rather than in a
-  // component of its own: a search result can be anywhere in a three-hundred
-  // node layout, and two components each calling `fitView` would take it in
-  // turns to undo each other.
+  // Framing *part* of what is drawn is the same job, which is why it is here
+  // rather than in a component of its own: two components each calling
+  // `fitView` would take it in turns to undo each other. A search result is one
+  // node; a highlight is a set of them; a view switch is all of them.
   //
   // Must be rendered inside <SvelteFlow>, which is where the store lives.
 
@@ -32,13 +32,18 @@
     /** The ids currently drawn. */
     ids: string[];
     /**
-     * One node to frame instead of all of them, and a count so that asking for
-     * the same node twice frames it twice.
+     * What to frame, and a count so that asking for the same thing twice frames
+     * it twice.
+     *
+     * `ids: null` means everything that is drawn. A subset is what a highlight
+     * asks for: showing which twelve of three hundred a chain reached, and then
+     * leaving them at the scale of the three hundred, tells the reader where
+     * they are but not what they found.
      */
-    focus: { id: string; nth: number } | null;
+    frame: { ids: string[] | null; nth: number } | null;
   }
 
-  const { ids, focus }: Props = $props();
+  const { ids, frame }: Props = $props();
 
   const store = useStore();
   const update = useUpdateNodeInternals();
@@ -62,14 +67,14 @@
   const STEP = 16;
   const PATIENCE = 30;
 
-  /** The last focus honoured, so a later reshape frames everything again. */
+  /** The last framing honoured, so a reshape does not repeat it. */
   let framed = 0;
 
   $effect(() => {
     void drawn;
-    // Tracked, so asking to frame a node that is already drawn is enough on its
-    // own to move the viewport.
-    const wanted = focus;
+    // Tracked, so asking to frame something already drawn is enough on its own
+    // to move the viewport.
+    const wanted = frame;
     const targets = untrack(() => ids);
     if (targets.length === 0) {
       return;
@@ -95,17 +100,19 @@
           // Measured *and* showing what was asked for. `nodesInitialized` alone
           // still reads true for the set the canvas is about to replace, and
           // framing against that set frames the wrong thing once and never
-          // retries.
+          // retries. Framing a subset the canvas has not drawn yet would frame
+          // the gaps where it will be.
+          const onto = wanted?.ids?.filter((id) => store.nodeLookup.has(id)) ?? null;
           const showing =
             store.nodesInitialized &&
             store.nodeLookup.size === targets.length &&
-            (wanted === null || store.nodeLookup.has(wanted.id));
+            (wanted?.ids == null || onto?.length === wanted.ids.length);
           if (showing) {
             if (wanted !== null && wanted.nth > framed) {
               framed = wanted.nth;
               // No `duration`: Svelte Flow resolves an animated fit straight out
               // of a derived, which its own source calls a no-go.
-              void store.fitView({ nodes: [{ id: wanted.id }], maxZoom: CLOSE });
+              void store.fitView({ nodes: onto?.map((id) => ({ id })), maxZoom: CLOSE });
             } else {
               void store.fitView({ maxZoom: CLOSE });
             }

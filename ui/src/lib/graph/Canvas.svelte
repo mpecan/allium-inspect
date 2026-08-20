@@ -38,8 +38,8 @@
     edges: Edge[];
     severities: Map<string, Severity>;
     selected: string | null;
-    /** A node to move the viewport to, and a count so asking twice moves twice. */
-    reveal: { id: string; nth: number } | null;
+    /** What to frame, and a count so asking twice frames twice. */
+    frame: { ids: string[] | null; nth: number } | null;
     trace: Trace | null;
     onselect: (id: string | null) => void;
     /** A construct the reader asked to look at on its own. */
@@ -58,7 +58,7 @@
     edges,
     severities,
     selected,
-    reveal,
+    frame,
     trace,
     onselect,
     onopen,
@@ -220,7 +220,7 @@
         bgColor="var(--ground-canvas)"
         patternColor="var(--ground-canvas-grid)"
       />
-      <Settle ids={flowNodes.map((node) => node.id)} focus={reveal} />
+      <Settle ids={flowNodes.map((node) => node.id)} {frame} />
       <Controls showLock={false} />
       {#if !bare}
         <MiniMap

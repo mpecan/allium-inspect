@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { untrack } from "svelte";
+
   import type { Severity } from "./lib/api/Severity";
   import Canvas from "./lib/graph/Canvas.svelte";
   import Focus from "./lib/graph/Focus.svelte";
@@ -50,8 +52,20 @@
   // ordinary state: the canvas behind it never moves.
   let focused = $state<string | null>(null);
   let reportsOpen = $state(false);
-  let reveal = $state.raw<{ id: string; nth: number } | null>(null);
-  let revealed = 0;
+  /**
+   * What the canvas should frame next.
+   *
+   * `ids: null` means everything drawn. The counter is what makes asking twice
+   * work: framing the same set again is a thing a reader does — click the same
+   * trace button after panning away — and identity alone would not notice.
+   */
+  let frame = $state.raw<{ ids: string[] | null; nth: number } | null>(null);
+  let framings = 0;
+
+  function frameOn(ids: string[] | null) {
+    framings += 1;
+    frame = { ids, nth: framings };
+  }
   let sources = $state.raw<Map<string, ModuleSource>>(new Map());
 
   /** What the last poll said about the spec, for the banner. */
@@ -169,6 +183,37 @@
   const loose = $derived(unattributed(graph?.diagnostics ?? []));
   const findings = $derived(graph?.findings ?? []);
 
+  /**
+   * The highlighted set, as a value rather than an object identity.
+   *
+   * `trace` is rebuilt whenever anything it reads changes, so comparing the
+   * objects would re-frame the canvas on every render. What matters is which
+   * constructs are lit.
+   */
+  const highlighted = $derived(trace ? [...trace.nodes].sort().join("\u0000") : "");
+  let wasHighlighting = false;
+
+  /**
+   * Frame what a highlight reached, and frame everything again when it lifts.
+   *
+   * Lighting twelve of three hundred constructs says where they are and not
+   * what they are: at the scale the three hundred need, the answer is twelve
+   * slightly brighter specks. Ordinary selection does not move the picture —
+   * only asking a question about it does.
+   */
+  $effect(() => {
+    const lit = highlighted;
+    untrack(() => {
+      if (lit !== "") {
+        wasHighlighting = true;
+        frameOn(lit.split("\u0000"));
+      } else if (wasHighlighting) {
+        wasHighlighting = false;
+        frameOn(null);
+      }
+    });
+  });
+
   /** Where the selected construct's fields point, and what writes them. */
   const links = $derived(fieldLinks(edges, selected));
 
@@ -252,8 +297,7 @@
       }
     }
     select(id);
-    revealed += 1;
-    reveal = { id, nth: revealed };
+    frameOn([id]);
   }
 
   /**
@@ -341,7 +385,7 @@
         edges={visibleEdges}
         {severities}
         selected={selectedId}
-        {reveal}
+        {frame}
         {trace}
         onselect={select}
         onopen={(id) => {

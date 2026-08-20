@@ -16,8 +16,9 @@
   import type { Node } from "../api/Node";
   import type { Severity } from "../api/Severity";
   import Canvas from "./Canvas.svelte";
-  import { FORMS, walkForm, type Form } from "./forms";
+  import { applies, FORMS, walkForm, type Form } from "./forms";
   import { narrow } from "./trace";
+  import { project } from "./views";
 
   interface Props {
     /** The construct this is a view of. */
@@ -42,17 +43,40 @@
   let form = $state<Form>("near");
   let panel = $state<HTMLDialogElement | null>(null);
 
-  // All three, so a form that has nothing to show says so before it is clicked
-  // rather than after. Three walks over a few hundred edges is nothing.
+  // Every form up front, so one with nothing to show says so before it is
+  // clicked rather than after. Four small walks over a few hundred edges is
+  // nothing, and the lifecycle is not a walk at all.
   const answers = $derived(
-    new Map(FORMS.map((option) => [option.form, walkForm(option.form, edges, node.id)])),
+    new Map(FORMS.map((option) => [option.form, drawFor(option.form)])),
   );
-  const trace = $derived(answers.get(form) ?? walkForm(form, edges, node.id));
-  const graph = $derived(narrow(nodes, edges, trace));
+  const graph = $derived(
+    answers.get(form) ?? { nodes: [] as Node[], edges: [] as Edge[] },
+  );
   const alone = $derived(graph.nodes.length <= 1);
 
-  /** How many constructs a form would show, not counting this one. */
-  const connected = (option: Form) => (answers.get(option)?.nodes.size ?? 1) - 1;
+  /**
+   * What one form draws.
+   *
+   * The lifecycle is projected from the entity's own transition list rather
+   * than walked — the same projection the main canvas uses, given one entity
+   * instead of all of them.
+   */
+  function drawFor(option: Form): { nodes: Node[]; edges: Edge[] } {
+    if (!applies(option, node)) {
+      return { nodes: [], edges: [] };
+    }
+    if (option === "lifecycle") {
+      return project("lifecycle", [node], []);
+    }
+    return narrow(nodes, edges, walkForm(option, edges, node.id));
+  }
+
+  /** How much a form would show, not counting the construct itself. */
+  const connected = (option: Form) =>
+    Math.max(0, (answers.get(option)?.nodes.length ?? 1) - 1);
+
+  /** Which layout a form wants: a state machine reads differently from a chain. */
+  const laidOutAs = $derived(form === "lifecycle" ? "lifecycle" : "flow");
 
   // Modal rather than an overlay of our own: it takes the focus, it returns it
   // on close, and Escape works without anyone implementing Escape.
@@ -88,7 +112,9 @@
             aria-current={form === option.form ? "true" : undefined}
             disabled={connected(option.form) === 0}
             title={connected(option.form) === 0
-              ? `Nothing in the spec ${option.empty} ${node.name}`
+              ? option.form === "lifecycle"
+                ? `${node.name} declares no transitions`
+                : `Nothing in the spec ${option.empty} ${node.name}`
               : `${connected(option.form)} — ${option.hint}`}
             onclick={() => (form = option.form)}
           >
@@ -106,19 +132,24 @@
   <div class="stage">
     {#if alone}
       <p class="prose empty">
-        Nothing in the spec {FORMS.find((option) => option.form === form)?.empty}
-        <strong>{node.name}</strong> — or nothing in the modules that are still
-        switched on.
+        {#if form === "lifecycle"}
+          <strong>{node.name}</strong> declares no transitions, so it has no
+          states to move between.
+        {:else}
+          Nothing in the spec {FORMS.find((option) => option.form === form)?.empty}
+          <strong>{node.name}</strong> — or nothing in the modules that are still
+          switched on.
+        {/if}
       </p>
     {:else}
       {#key form}
         <Canvas
-          view="flow"
+          view={laidOutAs}
           nodes={graph.nodes}
           edges={graph.edges}
           {severities}
           selected={node.id}
-          reveal={null}
+          frame={null}
           trace={null}
           onselect={(id) => id !== null && onselect(id)}
           {onopen}
@@ -129,8 +160,12 @@
   </div>
 
   <p class="prose caveat">
-    {graph.nodes.length - 1} connected · double-click a construct to look at that
-    one instead
+    {#if form === "lifecycle"}
+      {connected("lifecycle")} states
+    {:else}
+      {connected(form)} connected · double-click a construct to look at that one
+      instead
+    {/if}
   </p>
 </dialog>
 

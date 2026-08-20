@@ -56,8 +56,15 @@ so a chain can be followed a step at a time. The canvas behind it never moves.
 
 The pop-up asks about the construct rather than about the current view, so it
 shows the rule that creates an entity and the invariants that constrain it even
-from the domain view, which draws neither. A form with no answer is switched off
-and says why rather than opening empty.
+from the domain view, which draws neither. An entity that declares transitions
+also offers its **lifecycle** there — the whole-canvas lifecycle view draws
+eighty state machines at once, and this is the one you are holding. A form with
+no answer is switched off and says why rather than opening empty.
+
+The viewport follows what you are looking at. Switching views frames the new
+one; applying a trace frames what it reached, so a chain that spans the graph is
+on screen in full rather than partly off the edge of a picture scaled for
+something else.
 
 Edges follow the route the layout engine chose for them rather than a curve
 between two handles: ELK reserves channels between the layers as it places the
