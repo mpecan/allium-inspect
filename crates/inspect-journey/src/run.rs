@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 
 use inspect_model::{NodeKind, Program, SpecGraph};
 use inspect_sim::{
-    Truth, Value,
+    Value, enabled,
     step::{Sources, StepOutcome, step},
     value::EntityId,
     world::{Event, World},
@@ -24,7 +24,7 @@ use inspect_sim::{
 
 use crate::{
     check::{self, Verdict},
-    journey::{Assertion, Clause, Comparison, Journey, Path, Step, Term},
+    journey::{Assertion, Clause, Journey, Step, Term},
     outcome::{refusal, verdict_of},
 };
 
@@ -186,11 +186,7 @@ impl Walker<'_> {
     /// Fire an act and keep what it caught.
     fn act(&mut self, act: &Act<'_>, line: usize, about: String) -> Outcome {
         let Act { trigger, arguments, creating } = *act;
-        let module = self
-            .spec
-            .nodes_of(NodeKind::Trigger)
-            .find(|node| node.name == trigger)
-            .map_or_else(String::new, |node| node.module.clone());
+        let module = trigger_module(self.spec, trigger);
 
         // Positional, matched against the trigger's declared parameters — which
         // is how the spec writes the act and how a person reads it back.
@@ -281,19 +277,40 @@ impl Walker<'_> {
     /// silently truncated.
     fn settle(&mut self) {
         const ROUNDS: usize = 32;
+        let mut ran: Vec<(String, Value)> = Vec::new();
         for _ in 0..ROUNDS {
-            let probe =
-                step(self.spec, self.program, self.sources, &self.world, &Event::new("", ""));
-            let waiting: Vec<(String, String)> = probe
-                .newly_enabled
-                .iter()
-                .map(|enabled| (enabled.trigger.clone(), enabled.module.clone()))
-                .collect();
+            // Everything the world makes true, not everything this step made
+            // newly true: a rule enabled before the clock moved and never run
+            // is still waiting, and a journey that skipped it would report a
+            // world the spec does not describe.
+            let waiting: Vec<(String, String, String, Value)> =
+                enabled(self.spec, self.program, self.sources, &self.world)
+                    .into_iter()
+                    .flat_map(|rule| {
+                        let (trigger, module, binding) = (rule.trigger, rule.module, rule.binding);
+                        rule.over.into_iter().map(move |over| {
+                            (trigger.clone(), module.clone(), binding.clone(), over)
+                        })
+                    })
+                    // A rule already run for that same instance is where the
+                    // fixpoint comes from. Without it a rule whose effect keeps
+                    // its own condition true — `status = lost` stays lost —
+                    // runs thirty-two times and then reports never settling.
+                    .filter(|(trigger, _, _, over)| {
+                        !ran.iter().any(|(before, instance)| before == trigger && instance == over)
+                    })
+                    .collect();
             if waiting.is_empty() {
                 return;
             }
-            for (trigger, module) in waiting {
-                self.fire(&Event::new(&trigger, &module));
+            for (trigger, module, binding, over) in waiting {
+                let mut event = Event::new(&trigger, &module);
+                // Under the name the `when` clause gave it. A state rule's
+                // clauses are written about `copy`, and firing without that
+                // binding evaluates every one of them against nothing.
+                event.arguments.insert(binding, over.clone());
+                self.fire(&event);
+                ran.push((trigger, over));
             }
         }
         self.undecided.push("the world never settled".to_owned());
@@ -320,6 +337,18 @@ struct Act<'a> {
     trigger: &'a str,
     arguments: &'a [Term],
     creating: Option<&'a crate::journey::Cast>,
+}
+
+/// Where `trigger` is declared, for the event's label.
+///
+/// Among triggers only. An entity and a state-condition rule's trigger share a
+/// name, and the entity is very often declared in a different module from the
+/// rule that watches it — `Copy` is the catalogue's, and lending is what
+/// reports it lost.
+fn trigger_module(spec: &SpecGraph, trigger: &str) -> String {
+    spec.nodes_of(NodeKind::Trigger)
+        .find(|node| node.name == trigger)
+        .map_or_else(String::new, |node| node.module.clone())
 }
 
 /// The line, as its author wrote it.
@@ -358,134 +387,56 @@ fn written(assertion: &Assertion) -> String {
     }
 }
 
-impl Walker<'_> {
-    /// Evaluate one assertion against the world the last step left.
-    fn assert(&self, assertion: &Assertion, line: usize, about: String) -> Outcome {
-        let (truth, detail) = match assertion {
-            Assertion::Compare { left, operator, right } => {
-                let found = self.read(left);
-                let wanted = self.value_of(right);
-                (
-                    compare(&found, *operator, &wanted),
-                    Some(format!("{} is {}", left.as_written(), found.render())),
-                )
-            }
-            Assertion::Within { needle, haystack } => {
-                let wanted = self.value_of(needle);
-                let inside = self.read(haystack);
-                let truth = match &inside {
-                    Value::Set(items) => Truth::any(items.iter().map(|item| item.equals(&wanted))),
-                    _ => Truth::Unknown,
-                };
-                (truth, Some(format!("{} is {}", haystack.as_written(), inside.render())))
-            }
-            Assertion::Fires { rule, negated } => {
-                let ran = self.fired.iter().any(|name| name == rule);
-                // "did not run" and "could not be told whether it should" are
-                // different answers, and only one of them is about the spec.
-                if !ran && self.undecided.iter().any(|name| name == rule) {
-                    (Truth::Unknown, Some(format!("`{rule}` could not be decided")))
-                } else if !ran && self.waits_on_the_world(rule) {
-                    // Nobody fires a state-condition rule; it becomes true or it
-                    // does not. The simulator lists the ones that became true and
-                    // says nothing about the rest, so a rule whose condition is
-                    // *false* and one whose condition could not be *decided* look
-                    // identical from here — and reporting the second as a flat no
-                    // is the failure this whole design refuses.
-                    (
-                        Truth::Unknown,
-                        Some(format!(
-                            "`{rule}` never became true, and whether its condition is false or \
-                             could not be decided is not visible from here"
-                        )),
-                    )
-                } else {
-                    (
-                        Truth::from_bool(ran != *negated),
-                        (!ran).then(|| format!("`{rule}` did not run")),
-                    )
-                }
-            }
-            Assertion::Exists { path, negated } => {
-                let found =
-                    matches!(self.read(path), Value::Ref(id) if self.world.instance(&id).is_some());
-                (Truth::from_bool(found != *negated), None)
-            }
-        };
+#[cfg(test)]
+mod tests {
+    use inspect_model::Node;
 
-        let verdict = match truth {
-            Truth::True => Verdict::Specified,
-            // A false assertion is the spec doing something other than what
-            // somebody said it should, which is the same thing as a refusal
-            // from the reader's side: this journey is not what this spec does.
-            Truth::False => Verdict::Refused,
-            Truth::Unknown => Verdict::Undecided,
-        };
-        Outcome { line, verdict, about, detail: if truth == Truth::True { None } else { detail } }
+    use super::*;
+
+    #[test]
+    fn an_act_is_labelled_with_the_module_that_declares_its_trigger() {
+        let mut spec = SpecGraph::new("test");
+        spec.nodes.push(Node::new("catalogue", NodeKind::Entity, "MemberBorrows"));
+        spec.nodes.push(Node::new("lending", NodeKind::Trigger, "MemberBorrows"));
+        spec.nodes.push(Node::new("catalogue", NodeKind::Trigger, "LibrarianAddsBook"));
+        assert_eq!(trigger_module(&spec, "MemberBorrows"), "lending");
+        assert_eq!(trigger_module(&spec, "LibrarianAddsBook"), "catalogue");
     }
 
-    /// Whether a rule waits on the world rather than on somebody acting.
-    fn waits_on_the_world(&self, rule: &str) -> bool {
-        use inspect_model::graph::TriggerSource;
-        self.spec
-            .nodes_of(NodeKind::Rule)
-            .find(|node| node.name == rule)
-            .and_then(|node| node.detail.as_rule())
-            .is_some_and(|detail| {
-                matches!(detail.source, TriggerSource::State | TriggerSource::Temporal)
-            })
+    #[test]
+    fn a_trigger_the_spec_does_not_declare_has_no_module() {
+        // Reported elsewhere as an unspecified act. Guessing a module here
+        // would send the event to rules that were never asked for it.
+        assert_eq!(trigger_module(&SpecGraph::new("test"), "MemberYodels"), "");
     }
 
-    /// Can this actor observe this value here?
-    ///
-    /// The checker has already settled whether the surface carries it at all.
-    /// What is left is whether there is a value to see, which needs a world —
-    /// and whether the surface's own filter admits *this* actor, which needs
-    /// the `exposes` clause as an expression rather than as text. That last
-    /// part is not read yet, so an observation of a value that exists comes
-    /// back undecided rather than true, and a `cannot see` of one comes back
-    /// undecided rather than safe. A privacy claim that passes because nothing
-    /// checked it is the worst answer this tool could give.
-    fn observe(&self, path: &Path, negated: bool, line: usize, about: String) -> Outcome {
-        let found = self.read(path);
-        if found.is_unknown() {
-            return Outcome {
-                line,
-                verdict: if negated { Verdict::Specified } else { Verdict::Undecided },
-                about,
-                detail: Some(format!("{} has no value here", path.as_written())),
-            };
+    #[test]
+    fn a_walk_is_only_as_good_as_its_worst_step() {
+        // The summary line, and the exit code in strict mode. A journey with
+        // one unsupported step among nine is not a journey that passes.
+        assert_eq!(worst([].into_iter()), Verdict::Specified);
+        assert_eq!(worst([Verdict::Specified, Verdict::Undecided].into_iter()), Verdict::Undecided);
+        assert_eq!(worst([Verdict::Refused, Verdict::Specified].into_iter()), Verdict::Refused);
+    }
+
+    #[test]
+    fn what_the_spec_forbids_outranks_what_it_never_said() {
+        // Both fail, and a reader can only act on one at a time. A refusal is
+        // a disagreement about behaviour that is specified; the rest are gaps.
+        // Ordering them puts the disagreement first.
+        let all = [
+            Verdict::Specified,
+            Verdict::Remark,
+            Verdict::Unexposed,
+            Verdict::Undecided,
+            Verdict::Unspecified,
+            Verdict::Refused,
+        ];
+        for (at, worse) in all.iter().enumerate() {
+            for better in &all[..at] {
+                assert_eq!(worst([*better, *worse].into_iter()), *worse, "{better:?} {worse:?}");
+                assert_eq!(worst([*worse, *better].into_iter()), *worse, "{worse:?} {better:?}");
+            }
         }
-        Outcome {
-            line,
-            verdict: Verdict::Undecided,
-            about,
-            detail: Some(format!(
-                "{} is {} — whether this surface shows it to this actor is not read yet",
-                path.as_written(),
-                found.render()
-            )),
-        }
-    }
-}
-
-/// Compare two values the way the assertion asked.
-fn compare(found: &Value, operator: Comparison, wanted: &Value) -> Truth {
-    use std::ops::Not;
-    match operator {
-        Comparison::Equal => found.equals(wanted),
-        Comparison::NotEqual => found.equals(wanted).not(),
-        _ => match found.compare(wanted) {
-            Some(ordering) => Truth::from_bool(match operator {
-                Comparison::Less => ordering.is_lt(),
-                Comparison::LessOrEqual => ordering.is_le(),
-                Comparison::Greater => ordering.is_gt(),
-                Comparison::GreaterOrEqual => ordering.is_ge(),
-                Comparison::Equal | Comparison::NotEqual => unreachable!("handled above"),
-            }),
-            // Two kinds that do not order is a question with no answer rather
-            // than a question answered no.
-            None => Truth::Unknown,
-        },
     }
 }

@@ -125,3 +125,214 @@ pub fn as_json(walks: &[Walk]) -> serde_json::Value {
             .collect(),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::run::{Outcome, Walked};
+
+    fn outcome(verdict: Verdict, about: &str, detail: Option<&str>) -> Outcome {
+        Outcome { line: 7, verdict, about: about.to_owned(), detail: detail.map(ToOwned::to_owned) }
+    }
+
+    fn walk(name: &str, steps: Vec<Walked>, stipulated: Vec<String>) -> Walk {
+        Walk { name: name.to_owned(), steps, stipulated }
+    }
+
+    fn step(number: u32, title: &str, outcomes: Vec<Outcome>) -> Walked {
+        Walked { number, title: title.to_owned(), outcomes }
+    }
+
+    fn borrowing(verdict: Verdict) -> Walk {
+        walk(
+            "ACopyGoesOut",
+            vec![step(1, "she borrows it", vec![outcome(verdict, "ada does X on S", Some("why"))])],
+            Vec::new(),
+        )
+    }
+
+    #[test]
+    fn every_verdict_has_a_word_of_its_own() {
+        // A report where two of them print the same is a report that cannot be
+        // read, and `unspecified` and `refused` are the two a reader most needs
+        // to tell apart: one is work to do, the other is a disagreement.
+        let words: Vec<&str> = [
+            Verdict::Specified,
+            Verdict::Undecided,
+            Verdict::Refused,
+            Verdict::Unspecified,
+            Verdict::Unexposed,
+            Verdict::Remark,
+        ]
+        .into_iter()
+        .map(Verdict::as_str)
+        .collect();
+        let mut unique = words.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), words.len(), "{words:?}");
+        assert!(words.iter().all(|word| !word.is_empty()));
+        assert_eq!(Verdict::Specified.as_str(), "holds");
+        assert_eq!(Verdict::Unspecified.as_str(), "unspecified");
+    }
+
+    #[test]
+    fn undecided_is_not_a_failure_in_either_mode() {
+        // A real spec cannot decide its derived values, so a gate that failed
+        // on those would fail on every journey ever written — and the writer
+        // would turn the gate off, which is worse than not having one.
+        assert!(!Verdict::Undecided.is_failure());
+        assert!(!Verdict::Specified.is_failure());
+        assert!(!Verdict::Remark.is_failure());
+    }
+
+    #[test]
+    fn what_the_spec_cannot_support_is_a_failure() {
+        assert!(Verdict::Refused.is_failure());
+        assert!(Verdict::Unspecified.is_failure());
+        assert!(Verdict::Unexposed.is_failure());
+    }
+
+    #[test]
+    fn report_mode_passes_whatever_happened() {
+        // The mode a journey is *written* in: you write the walk, and the steps
+        // the spec cannot support are the backlog rather than an error.
+        for verdict in [Verdict::Refused, Verdict::Unspecified, Verdict::Unexposed] {
+            assert!(passes(&[borrowing(verdict)], Strictness::Report), "{verdict:?}");
+        }
+    }
+
+    #[test]
+    fn strict_mode_fails_on_what_the_spec_cannot_support() {
+        assert!(!passes(&[borrowing(Verdict::Unspecified)], Strictness::Strict));
+        assert!(!passes(&[borrowing(Verdict::Refused)], Strictness::Strict));
+        assert!(!passes(&[borrowing(Verdict::Unexposed)], Strictness::Strict));
+    }
+
+    #[test]
+    fn strict_mode_passes_a_journey_that_only_could_not_be_decided() {
+        assert!(passes(&[borrowing(Verdict::Undecided)], Strictness::Strict));
+        assert!(passes(&[borrowing(Verdict::Specified)], Strictness::Strict));
+    }
+
+    #[test]
+    fn nothing_to_walk_passes_either_way() {
+        assert!(passes(&[], Strictness::Strict));
+        assert!(passes(&[], Strictness::Report));
+    }
+
+    #[test]
+    fn a_report_counts_the_steps_that_hold() {
+        let result = walk(
+            "J",
+            vec![
+                step(1, "one", vec![outcome(Verdict::Specified, "a", None)]),
+                step(2, "two", vec![outcome(Verdict::Refused, "b", Some("no"))]),
+            ],
+            Vec::new(),
+        );
+        let text = render(&[result]);
+        assert!(text.contains("1 of 2 steps hold"), "{text}");
+    }
+
+    #[test]
+    fn a_report_shows_only_the_lines_that_did_not_hold() {
+        // A journey of forty steps that works is one line. What a reader came
+        // for is the four that did not.
+        let result = walk(
+            "J",
+            vec![step(
+                1,
+                "one",
+                vec![
+                    outcome(Verdict::Specified, "the part that worked", None),
+                    outcome(Verdict::Refused, "the part that did not", Some("because")),
+                ],
+            )],
+            Vec::new(),
+        );
+        let text = render(&[result]);
+        assert!(!text.contains("the part that worked"), "{text}");
+        assert!(text.contains("the part that did not"), "{text}");
+        assert!(text.contains("because"), "{text}");
+    }
+
+    #[test]
+    fn a_report_leads_with_what_it_was_told_rather_than_shown() {
+        // The guardrail. An agent can make any journey pass; it cannot make one
+        // pass invisibly, and this is where that is enforced.
+        let result = walk(
+            "J",
+            vec![step(1, "one", vec![outcome(Verdict::Specified, "a", None)])],
+            vec!["ada.is_at_limit = false".to_owned()],
+        );
+        let text = render(&[result]);
+        let stipulation = text.find("stipulated").expect("the stipulation is reported");
+        let first_step = text.find("1.").expect("the step is reported");
+        assert!(stipulation < first_step, "the stipulations come first:\n{text}");
+    }
+
+    #[test]
+    fn a_long_step_title_is_shortened_rather_than_wrapped() {
+        let long = "she does a thing and then another thing and then a third thing entirely";
+        let result = walk(
+            "J",
+            vec![step(1, long, vec![outcome(Verdict::Specified, "a", None)])],
+            Vec::new(),
+        );
+        let text = render(&[result]);
+        assert!(text.contains('…'), "{text}");
+        assert!(!text.contains(long), "{text}");
+        // The verdict still lines up, which is the whole reason for shortening.
+        assert!(text.contains("holds"), "{text}");
+    }
+
+    #[test]
+    fn a_title_that_fits_is_left_exactly_as_written() {
+        let result = walk(
+            "J",
+            vec![step(1, "she borrows it", vec![outcome(Verdict::Specified, "a", None)])],
+            Vec::new(),
+        );
+        let text = render(&[result]);
+        assert!(text.contains("she borrows it"), "{text}");
+        assert!(!text.contains('…'), "{text}");
+    }
+
+    #[test]
+    fn the_json_carries_every_verdict_and_the_line_it_is_about() {
+        // What an agent iterates on. A report it cannot get a line number out
+        // of is one it cannot act on.
+        let result = walk(
+            "J",
+            vec![step(
+                3,
+                "she waits",
+                vec![outcome(Verdict::Unspecified, "ada does X on S", Some("no surface"))],
+            )],
+            vec!["ada.x = 1".to_owned()],
+        );
+        let document = as_json(&[result]);
+        assert_eq!(document[0]["journey"], "J");
+        assert_eq!(document[0]["verdict"], "unspecified");
+        assert_eq!(document[0]["stipulated"][0], "ada.x = 1");
+        assert_eq!(document[0]["steps"][0]["number"], 3);
+        assert_eq!(document[0]["steps"][0]["outcomes"][0]["line"], 7);
+        assert_eq!(document[0]["steps"][0]["outcomes"][0]["verdict"], "unspecified");
+        assert_eq!(document[0]["steps"][0]["outcomes"][0]["detail"], "no surface");
+    }
+
+    #[test]
+    fn the_json_keeps_the_lines_that_held_too() {
+        // Unlike the text, which is for reading. An agent checking off what it
+        // has achieved needs the whole walk.
+        let result = walk(
+            "J",
+            vec![step(1, "one", vec![outcome(Verdict::Specified, "a", None)])],
+            Vec::new(),
+        );
+        let document = as_json(&[result]);
+        assert_eq!(document[0]["steps"][0]["outcomes"].as_array().expect("an array").len(), 1);
+        assert_eq!(document[0]["steps"][0]["outcomes"][0]["detail"], serde_json::Value::Null);
+    }
+}

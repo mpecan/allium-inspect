@@ -14,6 +14,7 @@
 //!
 //! Pure, like the two crates it sits on. No clock, no filesystem, no process.
 
+mod assert;
 pub mod check;
 pub mod journey;
 pub mod outcome;

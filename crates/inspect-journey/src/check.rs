@@ -278,3 +278,84 @@ fn missing_type(member: &Cast, graph: &SpecGraph) -> Option<Note> {
         message: format!("no entity or actor called `{}`", member.type_expr),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn surface(exposes: &[&str]) -> SurfaceDetail {
+        SurfaceDetail {
+            actor: None,
+            actor_binding: None,
+            context: None,
+            exposes: exposes.iter().map(|clause| (*clause).to_owned()).collect(),
+            provides: Vec::new(),
+            guarantees: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_surface_that_names_the_field_exposes_it() {
+        // A journey writes `loan.status` where the surface writes `Loan.status`
+        // — the instance against the type. The tail is the part both agree on,
+        // and matching on the whole would report every real spec as hiding
+        // everything.
+        let desk = surface(&["Loan.status", "Member.open_loan_count"]);
+        assert!(exposes(&desk, "loan.status"));
+        assert!(exposes(&desk, "ada.open_loan_count"));
+    }
+
+    #[test]
+    fn a_surface_that_does_not_name_it_does_not_expose_it() {
+        let desk = surface(&["Loan.status"]);
+        assert!(!exposes(&desk, "copy.shelfmark"));
+        assert!(!exposes(&desk, "loan.window"));
+    }
+
+    #[test]
+    fn a_field_named_partway_through_a_clause_still_counts() {
+        // A projection is the ordinary shape in a real spec: `for m in
+        // group.messages: m.body` exposes `body`, and the clause does not end
+        // there. Requiring the clause to *end* with the field would report the
+        // whole projection as hiding what it plainly shows.
+        let wall = surface(&["for m in group.messages: m.body where m.status = live"]);
+        assert!(exposes(&wall, "message.body"));
+    }
+
+    #[test]
+    fn a_field_named_only_at_the_very_end_still_counts_too() {
+        // The other half of the same test. The two conditions cover different
+        // clauses, and either one alone leaves a real surface misread.
+        let shelf = surface(&["Loan.is_late"]);
+        assert!(exposes(&shelf, "loan.is_late"));
+    }
+
+    #[test]
+    fn a_bare_name_with_no_field_is_matched_whole() {
+        let shelf = surface(&["Loan", "Member.name"]);
+        assert!(exposes(&shelf, "Loan"));
+        assert!(!exposes(&shelf, "Copy"));
+    }
+
+    #[test]
+    fn mentioning_is_by_word_rather_than_by_substring() {
+        // `.status` must not match `.status_history`, and `body` must not match
+        // `nobody`. A substring search would report a surface as exposing a
+        // field it has never heard of, which is the one direction of error this
+        // check must not make: it would say the spec supports a journey it does
+        // not.
+        assert!(mentions("Loan.status", ".status"));
+        assert!(mentions("for m in x: m.body", ".body"));
+        assert!(!mentions("Loan.status_history", ".status"));
+        assert!(!mentions("Loan.statuses where x", ".status"));
+    }
+
+    #[test]
+    fn a_word_that_is_exactly_the_needle_counts() {
+        // `ends_with` covers it too, but only by accident of the needle being
+        // the whole word — and the two halves are read by different clauses.
+        assert!(mentions("Loan status", "status"));
+        assert!(!mentions("Loan", "status"));
+        assert!(!mentions("", "status"));
+    }
+}

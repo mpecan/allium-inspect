@@ -28,7 +28,8 @@ pub use apply::{Application, Applied, Effect};
 pub use eval::{Env, Evaluation, Unresolved, eval};
 pub use seed::seed;
 pub use step::{
-    ClauseVerdict, Disposition, Enabled, InvariantVerdict, RuleOutcome, Sources, StepOutcome, step,
+    ClauseVerdict, Disposition, Enabled, InvariantVerdict, RuleOutcome, Sources, StepOutcome,
+    enabled, step,
 };
 pub use truth::Truth;
 pub use value::{EntityId, Instance, Value};

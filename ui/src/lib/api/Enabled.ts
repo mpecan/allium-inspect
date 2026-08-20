@@ -13,4 +13,10 @@ trigger: string, source: TriggerSource,
 /**
  * The instances it holds for, so the user can pick one.
  */
-over: Array<Value>, };
+over: Array<Value>, 
+/**
+ * What the `when` clause calls the instance — the `copy` in
+ * `when: copy: Copy.status = lost`. Anything running the rule has to bind
+ * it under that name or every clause that mentions it reads as unknown.
+ */
+binding: string, };

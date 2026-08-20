@@ -385,3 +385,179 @@ fn a_false_with_nothing_undecided_before_it_stays_a_refusal() {
     );
     assert_eq!(result.steps[0].outcomes[1].verdict, Verdict::Refused);
 }
+
+const LOSS: &str = include_str!("fixtures/loss.journey");
+const FORMS: &str = include_str!("fixtures/forms.journey");
+
+#[test]
+fn the_world_settles_after_time_passes() {
+    // `ReportLostCopy` waits on `Copy.status = lost` and nobody fires it. The
+    // simulator reports state-condition rules as *newly enabled* rather than
+    // running them, because in the browser a person picks which to follow — but
+    // a journey that says a fortnight passed has already said that whatever
+    // became true in it happened.
+    let walk = walked(LOSS);
+    assert_eq!(walk.verdict(), Verdict::Specified, "{:#?}", outcomes(&walk));
+    let noticed = outcomes(&walk)
+        .into_iter()
+        .find(|(_, about, _)| about.contains("ReportLostCopy"))
+        .expect("the journey asserts the rule fires");
+    assert_eq!(noticed.0, Verdict::Specified, "{noticed:?}");
+}
+
+#[test]
+fn a_rule_already_enabled_before_the_clock_moved_still_runs() {
+    // The trap this walked into once: the simulator's `newly_enabled` subtracts
+    // the rules that already held, which is right for a browser showing "what
+    // your action just made possible" and wrong for a journey asking what the
+    // world now makes true. Driven from that list, a rule enabled by step one
+    // and still waiting in step two would never run at all — and the whole
+    // settle would be silently dead.
+    //
+    // Step 1 leaves the copy lost, so `ReportLostCopy` is enabled before step
+    // 2's clock ever moves. If it runs, this list is not empty.
+    let walk = walked(LOSS);
+    let second = &walk.steps[1];
+    assert!(
+        second.outcomes.iter().all(|outcome| outcome.verdict == Verdict::Specified),
+        "{:#?}",
+        second.outcomes
+    );
+}
+
+#[test]
+fn settling_stops_once_nothing_new_is_true() {
+    // A rule whose effect keeps its own condition true — a copy that is lost
+    // stays lost — re-enables itself every round. Without remembering what has
+    // already run for which instance it would run to the bound and report a
+    // world that never settled, which is a failure invented by this walker
+    // rather than found in the spec.
+    let walk = walked(LOSS);
+    let complaints: Vec<_> = outcomes(&walk)
+        .into_iter()
+        .filter(|(_, _, detail)| {
+            detail.as_deref().is_some_and(|text| text.contains("never settled"))
+        })
+        .collect();
+    assert!(complaints.is_empty(), "{complaints:#?}");
+}
+
+/// Every outcome of the one-step `FORMS` journey, by the line it is about.
+fn forms() -> Vec<(Verdict, String, Option<String>)> {
+    outcomes(&walked(FORMS))
+}
+
+fn form(about: &str) -> (Verdict, String, Option<String>) {
+    forms()
+        .into_iter()
+        .find(|(_, written, _)| written.contains(about))
+        .unwrap_or_else(|| panic!("`{about}` is one of the lines:\n{:#?}", forms()))
+}
+
+#[test]
+fn an_instance_the_journey_caught_exists_and_one_it_never_named_does_not() {
+    assert_eq!(form("loan exists").0, Verdict::Specified);
+    assert_eq!(form("reservation does not exist").0, Verdict::Specified);
+}
+
+#[test]
+fn a_not_equal_assertion_is_not_an_equal_one() {
+    // The copy is on loan by now, so `!= available` holds and `= available`
+    // would not. An operator that fell through to equality would report this
+    // journey passing for the opposite reason.
+    let (verdict, _, detail) = form("copy.status != available");
+    assert_eq!(verdict, Verdict::Specified);
+    assert_eq!(detail, None, "a line that holds needs no explaining");
+}
+
+#[test]
+fn a_line_that_holds_says_nothing_more_and_one_that_does_not_says_what_it_found() {
+    // The report is read by somebody looking for the four lines out of forty
+    // that went wrong. Every holding line carrying "and here is what I found"
+    // buries them.
+    // Assertions only. A sight reports what the actor saw either way, because
+    // "she can see it, and it is empty" is a different fact from "she can see
+    // it" and a reader chasing a gap in the spec wants both.
+    for (verdict, about, detail) in
+        forms().into_iter().filter(|(_, about, _)| about.starts_with("then "))
+    {
+        match verdict {
+            Verdict::Specified => assert_eq!(detail, None, "{about}"),
+            _ => assert!(detail.is_some(), "{about} says why not"),
+        }
+    }
+}
+
+#[test]
+fn membership_is_read_against_the_instances_the_world_holds() {
+    // `Loans` is every loan, which is how a journey says "and it is one of
+    // them" without casting each instance by hand.
+    assert_eq!(form("loan in Loans").0, Verdict::Specified);
+
+    // And an empty collection is a definite no rather than an unknown: the
+    // spec declares `Reservation`, this world holds none, so the loan is
+    // certainly not among them.
+    let (verdict, _, detail) = form("loan in Reservations");
+    assert_eq!(verdict, Verdict::Refused);
+    assert_eq!(detail.as_deref(), Some("Reservations is {}"));
+}
+
+#[test]
+fn a_rule_that_ran_and_one_that_did_not_are_both_reported() {
+    assert_eq!(form("BorrowCopy fires").0, Verdict::Specified);
+    assert_eq!(form("ReturnCopy does not fire").0, Verdict::Specified);
+}
+
+#[test]
+fn a_negated_sight_reports_the_observation_rather_than_the_static_note() {
+    // `cannot see` is checked twice: once against what the surface exposes,
+    // which agrees, and once against the world. The line a reader gets should
+    // be the second one — the first only says the check was allowed to run.
+    let (verdict, _, detail) = form("cannot see copy.shelfmark");
+    assert_eq!(verdict, Verdict::Specified);
+    assert_eq!(detail.as_deref(), Some("copy.shelfmark has no value here"));
+}
+
+const REACHING_PAST: &str = r#"
+journey SheReachesPastTheDesk {
+    goal: One line the spec cannot support, beside one it can.
+
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+
+    given:
+        copy.status = available
+
+    1. she looks, then reaches past the desk
+        then copy.status = available
+        ada does MemberBorrows(ada, copy) on CatalogueDesk
+
+    ends: One of these two lines is the library's problem.
+}
+"#;
+
+#[test]
+fn a_line_the_spec_cannot_support_blocks_only_itself() {
+    // The note that stops a line running is matched by the line it is about.
+    // A filter that took any note anywhere would report the whole step against
+    // one unspecified act, and the reader would go looking for a second fault
+    // that is not there.
+    let walk = walked(REACHING_PAST);
+    let outcomes = outcomes(&walk);
+    assert_eq!(outcomes[0].0, Verdict::Specified, "{outcomes:#?}");
+    assert_eq!(outcomes[0].1, "then copy.status = available");
+    assert_eq!(outcomes[0].2, None);
+
+    assert_eq!(outcomes[1].0, Verdict::Unspecified, "{outcomes:#?}");
+    assert!(outcomes[1].2.is_some(), "and it says why: {outcomes:#?}");
+}
+
+#[test]
+fn a_walk_reports_its_worst_step() {
+    // What the summary line says and what `--strict` exits on. A journey with
+    // one unsupported line among many is not a journey that passes.
+    assert_eq!(walked(FORMS).verdict(), Verdict::Refused);
+    assert_eq!(walked(LOSS).verdict(), Verdict::Specified);
+    assert_eq!(walked(REACHING_PAST).verdict(), Verdict::Unspecified);
+}

@@ -99,6 +99,10 @@ pub struct Enabled {
     pub source: TriggerSource,
     /// The instances it holds for, so the user can pick one.
     pub over: Vec<Value>,
+    /// What the `when` clause calls the instance — the `copy` in
+    /// `when: copy: Copy.status = lost`. Anything running the rule has to bind
+    /// it under that name or every clause that mentions it reads as unknown.
+    pub binding: String,
 }
 
 /// Everything one step produced.
@@ -304,7 +308,20 @@ fn check_invariants(
 }
 
 /// Every state-condition rule whose condition holds over `world`.
-fn enabled(spec: &SpecGraph, program: &Program, sources: &Sources, world: &World) -> Vec<Enabled> {
+/// Every state-condition rule whose condition holds in `world`.
+///
+/// Distinct from [`StepOutcome::newly_enabled`], which subtracts the ones that
+/// already held before the step. That subtraction is right for the browser,
+/// where the list is "what your action just made possible"; it is wrong for
+/// anything asking what the world currently makes true, because a rule that was
+/// already enabled and never run would never appear.
+#[must_use]
+pub fn enabled(
+    spec: &SpecGraph,
+    program: &Program,
+    sources: &Sources,
+    world: &World,
+) -> Vec<Enabled> {
     let mut found = Vec::new();
 
     for node in spec.nodes_of(NodeKind::Rule) {
@@ -320,16 +337,16 @@ fn enabled(spec: &SpecGraph, program: &Program, sources: &Sources, world: &World
 
         let source = sources.get(&node.module).map(String::as_str).unwrap_or_default();
         let entity = detail.trigger.as_str();
+        let binding = when
+            .get("Binding")
+            .and_then(|binding| binding.get("name"))
+            .and_then(|name| name.get("name"))
+            .and_then(|name| name.as_str())
+            .unwrap_or("it");
         let mut over = Vec::new();
 
         for instance in world.instances_of(entity) {
             let mut scope = Env::new(world, &node.module, source);
-            let binding = when
-                .get("Binding")
-                .and_then(|binding| binding.get("name"))
-                .and_then(|name| name.get("name"))
-                .and_then(|name| name.as_str())
-                .unwrap_or("it");
             scope.bindings.insert(binding.to_owned(), Value::Ref(instance.id.clone()));
             scope.bindings.insert("this".to_owned(), Value::Ref(instance.id.clone()));
             // The entity's own name too. `when: copy: Copy.status = lost` reads
@@ -354,6 +371,7 @@ fn enabled(spec: &SpecGraph, program: &Program, sources: &Sources, world: &World
                 trigger: detail.trigger.clone(),
                 source: detail.source,
                 over,
+                binding: binding.to_owned(),
             });
         }
     }

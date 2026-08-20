@@ -272,3 +272,29 @@ fn a_cast_type_that_disagrees_with_the_surface_is_not_rejected() {
     );
     assert!(found.is_empty(), "{found:?}");
 }
+
+#[test]
+fn an_instance_a_step_catches_can_act_in_the_next_one() {
+    // The thing you caught goes on to do something — a member who registers
+    // and then borrows. Only the cast list is written up front, so without
+    // carrying the catch forward every such journey would be told its own
+    // protagonist is nobody, and the author would go add a cast line for
+    // something the journey creates.
+    let reported = notes(
+        "journey SheRegistersAndThenBorrows {
+    cast:
+        staff: Staff
+        copy:  catalogue/Copy
+
+    1. the desk enrols her
+        staff does LibrarianAddsBook(staff, title, medium) on CatalogueDesk
+            creating ada: Member
+
+    2. she borrows a copy
+        ada does MemberBorrows(ada, copy) on MemberShelf
+}",
+    );
+    let strangers: Vec<_> =
+        reported.iter().filter(|(_, message)| message.contains("is nobody")).collect();
+    assert!(strangers.is_empty(), "{reported:#?}");
+}

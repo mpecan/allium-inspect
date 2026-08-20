@@ -375,3 +375,110 @@ fn a_line_at_the_same_indent_is_the_next_clause_and_not_a_continuation() {
     let journeys = parse(source).expect("parses");
     assert_eq!(journeys[0].steps[0].clauses.len(), 2);
 }
+
+#[test]
+fn a_cast_member_needs_both_halves() {
+    // Half a cast line binds a name to nothing or nothing to a type, and every
+    // clause that mentions it afterwards then reads against a hole. Refusing
+    // the file is the only answer that leaves the author somewhere to look.
+    for text in ["ada:", ": Member", ":"] {
+        let message = refuse(&format!("journey J {{\n    cast:\n        {text}\n}}"));
+        assert!(message.contains("name and a type"), "{text}: {message}");
+    }
+}
+
+#[test]
+fn a_given_carries_the_fields_it_was_written_with() {
+    // The instance form. Dropping the fields would leave an instance of the
+    // right type with none of the state the journey said it starts in, and
+    // every later assertion about that state would answer undecided.
+    let journeys =
+        parse("journey J {\n    given:\n        note: Message { author: ada, body: \"hello\" }\n}")
+            .expect("it parses");
+    let Some(Given::Instance { name, type_expr, fields, .. }) = journeys[0].given.first() else {
+        panic!("a given instance: {:#?}", journeys[0].given)
+    };
+    assert_eq!(name, "note");
+    assert_eq!(type_expr, "Message");
+    assert_eq!(fields.len(), 2, "{fields:#?}");
+    assert_eq!(fields[0].0, "author");
+    assert_eq!(fields[1], ("body".to_owned(), Term::Literal(Value::Str("hello".to_owned()))));
+}
+
+#[test]
+fn an_empty_field_list_is_an_instance_with_no_state_rather_than_an_error() {
+    let journeys =
+        parse("journey J {\n    given:\n        note: Message { }\n}").expect("it parses");
+    let Some(Given::Instance { fields, .. }) = journeys[0].given.first() else {
+        panic!("a given instance")
+    };
+    assert!(fields.is_empty());
+}
+
+#[test]
+fn a_brace_closes_and_the_comma_after_it_separates_again() {
+    // `X(copy, {a, b}, member)` is three arguments. A splitter that opened on
+    // `{` and never closed would swallow everything after it into the second,
+    // and the trigger would be called with two arguments where the spec
+    // declares three — silently, and matched positionally.
+    let Clause::Does { arguments, .. } =
+        only_clause("ada does Post(copy, {one, two}, ada) on Wall")
+    else {
+        panic!("an act")
+    };
+    assert_eq!(arguments.len(), 3, "{arguments:#?}");
+    assert_eq!(arguments[0], Term::Path(path_of("copy")));
+    assert_eq!(arguments[2], Term::Path(path_of("ada")));
+    let Term::Set(items) = &arguments[1] else { panic!("a set: {:#?}", arguments[1]) };
+    assert_eq!(items.len(), 2);
+}
+
+/// A bare name, as `term` would read it.
+fn path_of(name: &str) -> inspect_journey::Path {
+    let Clause::Then { assertion: Assertion::Compare { left, .. }, .. } =
+        only_clause(&format!("then {name} = x"))
+    else {
+        panic!("a comparison")
+    };
+    left
+}
+
+#[test]
+fn an_assignment_keeps_everything_to_the_right_of_the_equals() {
+    // Off by one either way and the value carries the operator with it, which
+    // parses as a name rather than failing — so the field is set to something
+    // spelled `= "Ada"` and every comparison against it quietly says no.
+    let journeys =
+        parse("journey J {\n    given:\n        ada.name = \"Ada\"\n}").expect("it parses");
+    assert_eq!(
+        journeys[0].given.first(),
+        Some(&Given::Assign {
+            path: path_of("ada.name"),
+            value: Term::Literal(Value::Str("Ada".to_owned())),
+            line: 3,
+        })
+    );
+}
+
+#[test]
+fn a_given_written_as_a_comparison_is_refused_rather_than_split() {
+    // `given` states what is so, and `>=` states a range. Splitting on the `=`
+    // inside it would bind a field named `ada.open_loan_count >` — a name
+    // nothing will ever read, so the journey would run with that precondition
+    // silently absent.
+    for text in ["ada.open_loan_count >= 3", "ada.name != \"Ada\"", "ada.count <= 3"] {
+        let message = refuse(&format!("journey J {{\n    given:\n        {text}\n}}"));
+        assert!(message.contains("expected"), "{text}: {message}");
+    }
+}
+
+#[test]
+fn a_given_line_knows_which_line_it_was_on() {
+    // What the report points at. Every given on line zero sends the author to
+    // the top of the file for a fault three screens down.
+    let journeys =
+        parse("journey J {\n    given:\n        ada.name = \"Ada\"\n        note: Message { }\n}")
+            .expect("it parses");
+    let lines: Vec<usize> = journeys[0].given.iter().map(Given::line).collect();
+    assert_eq!(lines, vec![3, 4]);
+}

@@ -12,7 +12,7 @@
 //! the spec itself models, with sets like `OutboxEntry.awaiting` naming the
 //! devices that do not have it yet.
 
-use inspect_model::NodeKind;
+use inspect_model::{NodeKind, SpecGraph};
 use inspect_sim::{Value, value::EntityId};
 
 use crate::{
@@ -50,12 +50,7 @@ impl Walker<'_> {
     /// An instance of `type_expr`, in the module that declares it.
     pub(crate) fn create(&mut self, type_expr: &str) -> EntityId {
         let bare = type_expr.rsplit('/').next().unwrap_or(type_expr);
-        let module = self
-            .spec
-            .nodes
-            .iter()
-            .find(|node| node.name == bare && node.kind != NodeKind::Trigger)
-            .map_or_else(|| type_expr.to_owned(), |node| node.module.clone());
+        let module = declaring_module(self.spec, bare);
         self.world.create(bare, &module)
     }
 
@@ -91,16 +86,26 @@ impl Walker<'_> {
                 .map_or(Value::Unknown, |(_, value)| value.clone());
         }
         let Some(id) = self.bound.get(&path.root) else {
-            // Not somebody this journey cast, so it is a state the spec
-            // declares: `available`, `open`, `active`. A name that is neither
-            // reaches a comparison and comes back false, which is the same
-            // answer as comparing against the wrong state and is what the
-            // detail line is for.
-            return if path.segments.is_empty() {
-                Value::Enum(path.root.clone())
-            } else {
-                Value::Unknown
-            };
+            if !path.segments.is_empty() {
+                return Value::Unknown;
+            }
+            // Capitalised and unbound is a collection, which is the rule the
+            // evaluator already follows: `Loans` is every loan in the world.
+            // It is how a journey says "and it is one of them" without having
+            // cast every instance by hand.
+            if let Some(entity) = collection(&path.root) {
+                return Value::Set(
+                    self.world
+                        .instances_of(&entity)
+                        .map(|instance| Value::Ref(instance.id.clone()))
+                        .collect(),
+                );
+            }
+            // Otherwise a state the spec declares: `available`, `open`,
+            // `active`. A name that is neither reaches a comparison and comes
+            // back false, which is the same answer as comparing against the
+            // wrong state and is what the detail line is for.
+            return Value::Enum(path.root.clone());
         };
         let mut current = Value::Ref(id.clone());
         for segment in &path.segments {
@@ -114,5 +119,95 @@ impl Walker<'_> {
             current = instance.field(segment);
         }
         current
+    }
+}
+
+/// The entity a capitalised name collects, if it is one.
+///
+/// `Loans` -> `Loan`, `Copies` -> `Copy`, and `Loan` -> `Loan`, because a
+/// journey that writes the type name means the instances of it either way. A
+/// lowercase name is a state the spec declares and is left alone.
+fn collection(name: &str) -> Option<String> {
+    if !name.chars().next().is_some_and(char::is_uppercase) {
+        return None;
+    }
+    if let Some(stem) = name.strip_suffix("ies") {
+        return Some(format!("{stem}y"));
+    }
+    Some(name.strip_suffix('s').filter(|stem| !stem.is_empty()).unwrap_or(name).to_owned())
+}
+
+/// The module that declares the type called `bare`.
+///
+/// The trigger exclusion is not defensive. A state-condition rule's trigger
+/// *is* the entity name — `when: loan: Loan.window.due_at <= now` puts a
+/// trigger node called `Loan` in the graph beside the entity called `Loan` —
+/// so a search that took the first match would resolve a cast against the
+/// trigger and put the instance in whichever module that trigger came from.
+fn declaring_module(spec: &SpecGraph, bare: &str) -> String {
+    spec.nodes
+        .iter()
+        .find(|node| node.name == bare && node.kind != NodeKind::Trigger)
+        .map_or_else(|| bare.to_owned(), |node| node.module.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use inspect_model::Node;
+
+    use super::*;
+
+    fn spec(nodes: &[(&str, NodeKind, &str)]) -> SpecGraph {
+        let mut graph = SpecGraph::new("test");
+        for (module, kind, name) in nodes {
+            graph.nodes.push(Node::new(module, *kind, name));
+        }
+        graph
+    }
+
+    #[test]
+    fn a_capitalised_name_collects_its_instances_however_it_is_spelled() {
+        assert_eq!(collection("Loans").as_deref(), Some("Loan"));
+        assert_eq!(collection("Loan").as_deref(), Some("Loan"));
+        assert_eq!(collection("Copies").as_deref(), Some("Copy"));
+    }
+
+    #[test]
+    fn a_lowercase_name_is_a_state_rather_than_a_collection() {
+        // `then loan.status = open` compares against the state `open`. Reading
+        // it as the collection of every `ope` would answer that comparison
+        // with an empty set, which is false rather than undecided — a wrong
+        // answer stated confidently.
+        assert_eq!(collection("open"), None);
+        assert_eq!(collection("available"), None);
+        assert_eq!(collection(""), None);
+    }
+
+    #[test]
+    fn a_cast_lands_in_the_module_that_declares_its_type() {
+        let graph =
+            spec(&[("catalogue", NodeKind::Entity, "Copy"), ("lending", NodeKind::Entity, "Loan")]);
+        assert_eq!(declaring_module(&graph, "Copy"), "catalogue");
+        assert_eq!(declaring_module(&graph, "Loan"), "lending");
+    }
+
+    #[test]
+    fn a_trigger_of_the_same_name_does_not_win() {
+        // A state-condition rule's trigger is the entity's own name, so the two
+        // always collide. Resolving to the trigger would file the instance in
+        // whichever module the *rule* lives in, and every clause about it would
+        // then read against an empty module.
+        let graph = spec(&[
+            ("lending", NodeKind::Trigger, "Copy"),
+            ("catalogue", NodeKind::Entity, "Copy"),
+        ]);
+        assert_eq!(declaring_module(&graph, "Copy"), "catalogue");
+    }
+
+    #[test]
+    fn a_type_the_spec_never_declares_stands_for_its_own_module() {
+        // Nothing better is available, and inventing a module would file the
+        // instance somewhere a later lookup would not think to look.
+        assert_eq!(declaring_module(&spec(&[]), "Ghost"), "Ghost");
     }
 }

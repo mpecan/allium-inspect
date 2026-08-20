@@ -10,7 +10,11 @@ export type Event = {
  */
 trigger: string, 
 /**
- * The module whose rules should see it.
+ * Where the trigger is declared.
+ *
+ * A label, not a filter: rules are matched on the trigger's name alone,
+ * because a module that `use`s another reacts to triggers that module
+ * declares. Narrowing to this module would silence exactly those rules.
  */
 module: string, 
 /**

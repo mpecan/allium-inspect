@@ -1,0 +1,28 @@
+-- Every assertion the grammar accepts, in one journey, so a form that stops
+-- working stops working here rather than in somebody's spec.
+
+journey EveryAssertionForm {
+    goal: Exercise each form once against a world the spec can decide.
+
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+
+    given:
+        ada.is_at_limit = false
+        copy.status = available
+
+    1. she borrows it
+        ada does MemberBorrows(ada, copy) on MemberShelf
+            creating loan: Loan
+        then loan exists
+        then reservation does not exist
+        then copy.status != available
+        then loan in Loans
+        then loan in Reservations
+        ada cannot see copy.shelfmark on MemberShelf
+        then BorrowCopy fires
+        then ReturnCopy does not fire
+
+    ends: Every form ran and said something about this world.
+}

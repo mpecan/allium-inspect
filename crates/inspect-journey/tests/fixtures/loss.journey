@@ -1,0 +1,31 @@
+-- The copy that goes out and never comes back, and the catalogue noticing on
+-- its own. `ReportLostCopy` is a state-condition rule: nobody fires it, the
+-- world becoming true does, and a journey that says time passed is saying that
+-- whatever became true happened.
+
+journey ACopyNobodyCanFind {
+    goal: Ada loses a copy she borrowed, and the catalogue writes it off
+          without anybody telling it to.
+
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+
+    given:
+        ada.is_at_limit = false
+        copy.status = available
+
+    1. she borrows it and then loses it
+        ada does MemberBorrows(ada, copy) on MemberShelf
+            creating loan: Loan
+        ada does MemberReportsLoss(loan) on MemberShelf
+        then loan.status = returned
+        then copy.status = lost
+
+    2. the catalogue notices without being told
+        after 1.hour
+        then ReportLostCopy fires
+        then copy.status = lost
+
+    ends: The copy is written off and the loan is closed.
+}
