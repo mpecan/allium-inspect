@@ -22,7 +22,8 @@
     traceMode: TraceMode;
     hasSelection: boolean;
     traceIsEmpty: boolean;
-    findings: number;
+    /** Analysis findings plus anything reported against no construct. */
+    reports: number;
     version: string;
     /** Every construct in the spec set, for search — not only the drawn ones. */
     nodes: Node[];
@@ -30,6 +31,7 @@
     onmodule: (name: string) => void;
     ontrace: (mode: TraceMode) => void;
     onfind: (id: string) => void;
+    onreports: () => void;
   }
 
   const {
@@ -39,13 +41,14 @@
     traceMode,
     hasSelection,
     traceIsEmpty,
-    findings,
+    reports,
     version,
     nodes,
     onmode,
     onmodule,
     ontrace,
     onfind,
+    onreports,
   }: Props = $props();
 
   const VIEWS: { kind: ViewKind; name: string }[] = [
@@ -161,13 +164,16 @@
     </ul>
   </section>
 
-  {#if findings > 0}
-    <footer>
-      <p class="address">
-        {findings} analysis finding{findings === 1 ? "" : "s"}
-      </p>
-    </footer>
-  {/if}
+  <footer>
+    <button type="button" class="reports" onclick={onreports} disabled={reports === 0}>
+      {#if reports === 0}
+        nothing reported
+      {:else}
+        {reports} thing{reports === 1 ? "" : "s"} reported
+      {/if}
+    </button>
+  </footer>
+
 </nav>
 
 <style>
@@ -280,6 +286,24 @@
 
   .empty-trace {
     color: var(--boundary);
+  }
+
+  /* The count used to be a paragraph, which meant the five conflicts the
+   * analyser found were reachable only by guessing which construct to select. */
+  .reports {
+    width: 100%;
+    text-align: left;
+    padding: 2px 0;
+    font-size: var(--t-micro);
+    letter-spacing: var(--track-tight);
+    color: var(--ink-dim);
+  }
+  .reports:not(:disabled):hover {
+    color: var(--ink);
+  }
+  .reports:disabled {
+    color: var(--ink-faint);
+    cursor: default;
   }
 
   .caveat {

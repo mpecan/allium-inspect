@@ -50,6 +50,7 @@ const BUILT_IN: &[&str] = &[
 /// Resolve every reference in `graph`, adding edges and external nodes.
 pub fn link(graph: &mut SpecGraph) {
     resolve_imports(graph);
+    drop_imports_we_resolved(graph);
     let aliases = alias_table(graph);
     let known: BTreeSet<NodeId> = graph.nodes.iter().map(|node| node.id.clone()).collect();
 
@@ -107,6 +108,51 @@ fn resolve_imports(graph: &mut SpecGraph) {
             import.target = module_of_path(&import.path).filter(|name| names.contains(name));
         }
     }
+}
+
+/// The CLI's code for a `use` that named a file it was not given.
+const UNRESOLVED_USE: &str = "allium.use.unresolvedPath";
+
+/// Drop the unresolved-import warnings that only this tool's own ingestion
+/// caused.
+///
+/// The CLI answers about one file at a time, so it is run once per file, and a
+/// file's `use "./identity.allium"` therefore resolves against a check set of
+/// one. The CLI is right to warn: from where it was standing, that path names
+/// nothing. Run over the directory it reports none of these.
+///
+/// Ingesting a *set* is the point of this tool, and it has just resolved that
+/// same import to a module it holds. Passing the warning on anyway would report
+/// a defect the specification does not have, to a reader who came here to find
+/// out whether it has any — which is the most expensive thing this tool could
+/// get wrong.
+///
+/// An import that genuinely did not resolve keeps its warning. A `use` naming a
+/// file nobody passed in is exactly what a reviewer needs to be told.
+fn drop_imports_we_resolved(graph: &mut SpecGraph) {
+    let resolved: BTreeSet<(String, String)> = graph
+        .modules
+        .iter()
+        .flat_map(|module| {
+            module
+                .imports
+                .iter()
+                .filter(|import| import.is_resolved())
+                .map(move |import| (module.name.clone(), import.path.clone()))
+        })
+        .collect();
+
+    graph.diagnostics.retain(|diagnostic| {
+        if diagnostic.code.as_deref() != Some(UNRESOLVED_USE) {
+            return true;
+        }
+        // Matched on the path the message quotes rather than on a line number:
+        // the import's span is a byte offset and this pass has no source text
+        // to turn one into a line.
+        !resolved.iter().any(|(module, path)| {
+            *module == diagnostic.module && diagnostic.message.contains(&format!("\"{path}\""))
+        })
+    });
 }
 
 /// The module name a `use` path refers to: its file stem.
@@ -282,8 +328,134 @@ pub fn is_unresolved(node: &Node) -> bool {
 
 #[cfg(test)]
 mod tests {
+    fn use_warning(module: &str, path: &str) -> Diagnostic {
+        Diagnostic {
+            severity: Severity::Warning,
+            message: format!(
+                "Use path \"{path}\" does not resolve to a file in the current check set."
+            ),
+            code: Some("allium.use.unresolvedPath".to_owned()),
+            location: None,
+            module: module.to_owned(),
+            node: None,
+        }
+    }
+
+    fn named(module: &str) -> Module {
+        Module {
+            name: module.to_owned(),
+            path: format!("specs/{module}.allium"),
+            imports: Vec::new(),
+            language_version: None,
+        }
+    }
+
+    fn importing(module: &str, path: &str, alias: &str) -> Module {
+        let mut built = named(module);
+        built.imports.push(Import {
+            alias: alias.to_owned(),
+            path: path.to_owned(),
+            target: None,
+            span: None,
+        });
+        built
+    }
+
+    #[test]
+    fn an_import_this_tool_resolved_does_not_keep_its_warning() {
+        // The CLI answers about one file, so every cross-file `use` in a spec
+        // set comes back unresolved. Passing that on reports a defect the spec
+        // does not have — over the directory the CLI reports none of them.
+        let mut graph = SpecGraph::new("v");
+        graph.modules.push(importing("archive", "./identity.allium", "identity"));
+        graph.modules.push(named("identity"));
+        graph.diagnostics.push(use_warning("archive", "./identity.allium"));
+
+        link(&mut graph);
+
+        assert!(graph.diagnostics.is_empty(), "{:?}", graph.diagnostics);
+        assert_eq!(graph.modules[0].imports[0].target.as_deref(), Some("identity"));
+    }
+
+    #[test]
+    fn an_import_that_really_does_not_resolve_keeps_its_warning() {
+        // A `use` naming a file nobody passed in is exactly what a reviewer
+        // needs to be told, and it is the same warning either way — so the
+        // distinction has to be drawn on whether *we* found the module.
+        let mut graph = SpecGraph::new("v");
+        graph.modules.push(importing("archive", "./missing.allium", "missing"));
+        graph.diagnostics.push(use_warning("archive", "./missing.allium"));
+
+        link(&mut graph);
+
+        assert_eq!(graph.diagnostics.len(), 1);
+        assert!(graph.modules[0].imports[0].target.is_none());
+    }
+
+    #[test]
+    fn only_the_import_that_resolved_loses_its_warning() {
+        let mut graph = SpecGraph::new("v");
+        let mut archive = importing("archive", "./identity.allium", "identity");
+        archive.imports.push(Import {
+            alias: "missing".to_owned(),
+            path: "./missing.allium".to_owned(),
+            target: None,
+            span: None,
+        });
+        graph.modules.push(archive);
+        graph.modules.push(named("identity"));
+        graph.diagnostics.push(use_warning("archive", "./identity.allium"));
+        graph.diagnostics.push(use_warning("archive", "./missing.allium"));
+
+        link(&mut graph);
+
+        let kept: Vec<&str> = graph.diagnostics.iter().map(|d| d.message.as_str()).collect();
+        assert_eq!(kept.len(), 1);
+        assert!(kept[0].contains("missing.allium"), "{kept:?}");
+    }
+
+    #[test]
+    fn a_warning_about_the_same_path_in_another_module_is_left_alone() {
+        // Two files can both `use "./identity.allium"`, and only one of them
+        // needs to be in the set for the other's warning to be real. The match
+        // is per module for that reason.
+        let mut graph = SpecGraph::new("v");
+        graph.modules.push(importing("archive", "./identity.allium", "identity"));
+        graph.modules.push(named("identity"));
+        graph.diagnostics.push(use_warning("delivery", "./identity.allium"));
+
+        link(&mut graph);
+
+        assert_eq!(graph.diagnostics.len(), 1, "delivery was never ingested");
+    }
+
+    #[test]
+    fn a_diagnostic_that_is_not_about_an_import_is_never_dropped() {
+        // The filter is keyed on the CLI's code, not on the wording, so that a
+        // lifecycle warning that happens to mention a path survives.
+        let mut graph = SpecGraph::new("v");
+        graph.modules.push(importing("archive", "./identity.allium", "identity"));
+        graph.modules.push(named("identity"));
+        graph.diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            message: "Status 'pending' has no observed transition, see \"./identity.allium\""
+                .to_owned(),
+            code: Some("allium.transition.stuck".to_owned()),
+            location: None,
+            module: "archive".to_owned(),
+            node: None,
+        });
+
+        link(&mut graph);
+
+        assert_eq!(graph.diagnostics.len(), 1);
+    }
+
     use super::*;
-    use crate::graph::{EntityDetail, EntityField, EntityKind, Import, Module};
+    use crate::{
+        diagnostic::{Diagnostic, Severity},
+        graph::{EntityDetail, EntityField, EntityKind, Import, Module},
+    };
 
     fn module(name: &str, imports: Vec<Import>) -> Module {
         Module {

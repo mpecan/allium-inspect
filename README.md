@@ -8,7 +8,10 @@ allium-inspect specs/
 ```
 
 Runs the `allium` CLI over a spec set, binds a free port, and opens a browser
-onto four views of it plus a simulator. Nothing is uploaded and nothing is
+onto four views of it plus a simulator. It keeps up: the browser asks once a
+second whether the answer has changed, so an edit lands without a reload, and a
+spec that stops parsing says so across the top rather than leaving you reading a
+picture of a file that no longer says that. Nothing is uploaded and nothing is
 persisted; it is one binary and the specs you point it at.
 
 ## Why

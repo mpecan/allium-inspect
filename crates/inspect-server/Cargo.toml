@@ -16,6 +16,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 tower-http = { workspace = true }
+# ts-rs: generates the TypeScript for /api/health, so the browser's idea of
+# the reload signal cannot drift from the server's.
+ts-rs.workspace = true
 tracing = { workspace = true }
 
 [dev-dependencies]

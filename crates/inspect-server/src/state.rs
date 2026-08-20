@@ -8,7 +8,10 @@
 use std::{
     collections::BTreeMap,
     path::PathBuf,
-    sync::{Arc, RwLock},
+    sync::{
+        Arc, RwLock,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use inspect_model::{
@@ -110,6 +113,17 @@ pub struct AppState {
     /// What the last reload failed with, if it did. Kept so the UI can say the
     /// spec is broken rather than silently showing the version before the edit.
     error: Arc<RwLock<Option<String>>>,
+    /// How many times the spec set has been re-read since the server started.
+    ///
+    /// The browser has no other way to find out. It holds a graph it fetched
+    /// once, and a watcher that reloads the server's copy without telling
+    /// anyone leaves a reader studying a picture of a file that no longer says
+    /// that — which is the one failure this tool cannot afford.
+    ///
+    /// A counter rather than a timestamp: it is compared, never displayed, and
+    /// the two pure crates are kept clear of clocks for the same reason
+    /// everything else here is.
+    revision: Arc<AtomicU64>,
 }
 
 impl AppState {
@@ -119,6 +133,7 @@ impl AppState {
         Self {
             current: Arc::new(RwLock::new(Arc::new(inspection))),
             error: Arc::new(RwLock::new(None)),
+            revision: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -141,12 +156,21 @@ impl AppState {
             *guard = Arc::new(inspection);
         }
         self.set_error(None);
+        self.revision.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record why the last reload failed, or that it did not.
+    ///
+    /// A failure counts as a revision too. The graph did not change, but what
+    /// the reader needs to be told about it did, and they find that out by
+    /// noticing the number move.
     pub fn set_error(&self, message: Option<String>) {
+        let changed = self.error() != message;
         if let Ok(mut guard) = self.error.write() {
             *guard = message;
+        }
+        if changed {
+            self.revision.fetch_add(1, Ordering::Relaxed);
         }
     }
 
@@ -154,5 +178,11 @@ impl AppState {
     #[must_use]
     pub fn error(&self) -> Option<String> {
         self.error.read().ok().and_then(|guard| guard.clone())
+    }
+
+    /// How many times the answer has changed since the server started.
+    #[must_use]
+    pub fn revision(&self) -> u64 {
+        self.revision.load(Ordering::Relaxed)
     }
 }

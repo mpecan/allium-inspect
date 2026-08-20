@@ -16,6 +16,7 @@ use axum::{
 };
 use rust_embed::RustEmbed;
 use serde::Serialize;
+use ts_rs::TS;
 
 use crate::state::{AppState, ModuleSource};
 
@@ -37,8 +38,9 @@ fn is_fingerprinted(path: &str) -> bool {
 struct Assets;
 
 /// What `/api/health` answers.
-#[derive(Serialize)]
-struct Health {
+#[derive(Serialize, TS)]
+#[ts(export, export_to = "../../../ui/src/lib/api/")]
+pub struct Health {
     /// Whether the specification is currently in good order.
     ///
     /// False for either of two different problems, which the fields below tell
@@ -49,6 +51,15 @@ struct Health {
     /// error. Saying `ok` there would be reading the fact that the *tool*
     /// worked as a claim about the *spec*.
     ok: bool,
+    /// How many times the answer has changed since the server started.
+    ///
+    /// The browser polls this and re-fetches when it moves. That is the whole
+    /// of the live-reload mechanism, and it is a poll rather than a stream
+    /// deliberately: one request a second to a loopback socket costs nothing,
+    /// it carries the state of the spec in the same response, and it has no
+    /// connection to lose, reconnect, or leave half-open behind a laptop lid.
+    #[ts(type = "number")]
+    revision: u64,
     allium_version: String,
     modules: Vec<String>,
     /// Why the last reload failed, when it did.
@@ -89,6 +100,7 @@ async fn health(State(state): State<AppState>) -> Json<Health> {
     let errors = count(inspect_model::Severity::Error);
     Json(Health {
         ok: state.error().is_none() && errors == 0,
+        revision: state.revision(),
         allium_version: inspection.graph.allium_version.clone(),
         modules: inspection.modules().map(ToOwned::to_owned).collect(),
         error: state.error(),
@@ -256,6 +268,56 @@ mod tests {
         let json: Value = serde_json::from_str(&body).expect("JSON");
         assert_eq!(json["ok"], true);
         assert_eq!(json["warnings"], 1);
+    }
+
+    #[tokio::test]
+    async fn the_revision_moves_when_the_spec_is_re_read() {
+        // The browser has no other way to find out. It fetched a graph once,
+        // and a watcher that reloads the server's copy without telling anyone
+        // leaves a reader studying a picture of a file that no longer says that.
+        let state = AppState::new(fixture_inspection());
+        let (_, before) = get(router(state.clone()), "/api/health").await;
+        let before: Value = serde_json::from_str(&before).expect("JSON");
+
+        state.replace(fixture_inspection());
+
+        let (_, after) = get(router(state), "/api/health").await;
+        let after: Value = serde_json::from_str(&after).expect("JSON");
+        assert_eq!(
+            after["revision"].as_u64().expect("a number"),
+            before["revision"].as_u64().expect("a number") + 1
+        );
+    }
+
+    #[tokio::test]
+    async fn the_revision_moves_when_a_reload_starts_failing() {
+        // The graph did not change, but what the reader needs to be told about
+        // it did — and they find that out by noticing the number move.
+        let state = AppState::new(fixture_inspection());
+        let (_, before) = get(router(state.clone()), "/api/health").await;
+        let before: Value = serde_json::from_str(&before).expect("JSON");
+
+        state.set_error(Some("expected '{'".to_owned()));
+
+        let (_, after) = get(router(state), "/api/health").await;
+        let after: Value = serde_json::from_str(&after).expect("JSON");
+        assert!(
+            after["revision"].as_u64().expect("a number")
+                > before["revision"].as_u64().expect("a number")
+        );
+    }
+
+    #[tokio::test]
+    async fn the_revision_holds_still_when_nothing_happened() {
+        // Otherwise every poll looks like a change and the browser refetches
+        // the graph once a second forever.
+        let state = AppState::new(fixture_inspection());
+        state.set_error(None);
+        let (_, first) = get(router(state.clone()), "/api/health").await;
+        let (_, second) = get(router(state), "/api/health").await;
+        let first: Value = serde_json::from_str(&first).expect("JSON");
+        let second: Value = serde_json::from_str(&second).expect("JSON");
+        assert_eq!(first["revision"], second["revision"]);
     }
 
     #[tokio::test]

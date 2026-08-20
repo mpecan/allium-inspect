@@ -11,11 +11,22 @@ import type { StepOutcome } from "./api/StepOutcome";
 import type { World } from "./api/World";
 import type { Setup } from "./sim/setup";
 import type { Finding } from "./api/Finding";
+import type { Health } from "./api/Health";
 import type { NodeId } from "./api/NodeId";
 import type { Obligation } from "./api/Obligation";
 import type { SpecGraph } from "./api/SpecGraph";
 
-export type { Diagnostic, Event, Finding, NodeId, Obligation, SpecGraph, StepOutcome, World };
+export type {
+  Diagnostic,
+  Event,
+  Finding,
+  Health,
+  NodeId,
+  Obligation,
+  SpecGraph,
+  StepOutcome,
+  World,
+};
 
 /** A request that did not produce the document it was supposed to. */
 export class ApiError extends Error {
@@ -67,6 +78,17 @@ export class InspectClient {
     private readonly fetcher: Fetcher = (input, init) => fetch(input, init),
     private readonly base = "",
   ) {}
+
+  /**
+   * Whether the specification is in good order, and which revision this is.
+   *
+   * Cheap by design: it is asked once a second so that a spec edited under the
+   * tool does not leave a reader studying a picture of a file that no longer
+   * says that.
+   */
+  async health(signal?: AbortSignal): Promise<Health> {
+    return this.json<Health>("/api/health", signal);
+  }
 
   /** The whole graph: modules, nodes, edges, diagnostics, findings. */
   async spec(signal?: AbortSignal): Promise<SpecGraph> {

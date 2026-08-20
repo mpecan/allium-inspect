@@ -8,4 +8,5 @@ before it, where you can see which findings were fixed, which were argued down,
 and which have been sitting there for three months.
 
 - [20 August 2026](2026-08-20-surface-review.md) — first full pass. Ten
-  findings; four are defects rather than opinions.
+  findings; the four that were defects rather than opinions are fixed, six
+  remain open.

@@ -45,8 +45,8 @@
     {#if severity}
       <span
         class="severity {severity}"
-        title="{severity} reported in this module"
-        aria-label="{severity} reported in this module"
+        title="{severity} reported against this construct"
+        aria-label="{severity} reported against this construct"
       ></span>
     {/if}
   </header>

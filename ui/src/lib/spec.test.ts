@@ -2,7 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import type { Diagnostic } from "./api/Diagnostic";
 import type { SpecGraph } from "./api/SpecGraph";
-import { positionOf, worstByModule, worstByNode } from "./spec";
+import type { Node } from "./api/Node";
+import {
+  positionOf,
+  reportedAgainst,
+  unattributed,
+  worstByModule,
+  worstByNode,
+} from "./spec";
 
 const encoder = new TextEncoder();
 
@@ -122,5 +129,59 @@ describe("worstByModule", () => {
     );
     expect(result.get("catalogue")).toBe("error");
     expect(result.get("lending")).toBe("warning");
+  });
+});
+
+const retirement: Node = {
+  id: "identity::entity::IdentityRetirement",
+  kind: "entity",
+  name: "IdentityRetirement",
+  module: "identity",
+  qualified: "identity/IdentityRetirement",
+  span: null,
+  detail: { type: "none" },
+};
+
+describe("reportedAgainst", () => {
+  it("finds what the server attributed to this construct", () => {
+    const mine = diagnostic({ node: retirement.id, message: "no observed transition" });
+    const theirs = diagnostic({ node: "identity::entity::Device", message: "unused field" });
+    expect(reportedAgainst([mine, theirs], retirement)).toEqual([mine]);
+  });
+
+  it("does not join on the line the diagnostic was reported at", () => {
+    // The bug this replaces. Allium reports a diagnostic on the offending line
+    // *inside* a construct: `IdentityRetirement` is declared at 530 and its two
+    // lifecycle warnings sit at 534. Matching on the line meant the panel never
+    // showed one, while the canvas badge — which matched on `node` — promised
+    // there was one to show.
+    const inside = diagnostic({
+      node: retirement.id,
+      location: { file: "identity.allium", line: 534, column: 3 },
+    });
+    expect(reportedAgainst([inside], retirement)).toEqual([inside]);
+  });
+
+  it("reports nothing when nothing is selected", () => {
+    expect(reportedAgainst([diagnostic({ node: retirement.id })], null)).toEqual([]);
+  });
+
+  it("leaves an unattributed diagnostic to the construct-free surface", () => {
+    // A parse error is reported where the parser gave up, which is not inside
+    // any declaration. Attaching it to whatever was selected would blame a
+    // construct for a mistake somewhere else in the file.
+    expect(reportedAgainst([diagnostic({ node: null })], retirement)).toEqual([]);
+  });
+});
+
+describe("unattributed", () => {
+  it("collects what no construct can carry", () => {
+    const loose = diagnostic({ node: null, message: "expected '{'" });
+    const attached = diagnostic({ node: retirement.id });
+    expect(unattributed([loose, attached])).toEqual([loose]);
+  });
+
+  it("is empty when everything found a home", () => {
+    expect(unattributed([diagnostic({ node: retirement.id })])).toEqual([]);
   });
 });

@@ -3,10 +3,44 @@
 // Small, pure, and here rather than in a component so they can be tested as
 // functions instead of by rendering a canvas and reading pixels back.
 
+import type { Diagnostic } from "./api/Diagnostic";
+import type { Node } from "./api/Node";
 import type { Position } from "./api/Position";
 import type { Severity } from "./api/Severity";
 import type { Span } from "./api/Span";
 import type { SpecGraph } from "./api/SpecGraph";
+
+/**
+ * The diagnostics reported against `node`.
+ *
+ * Joined on the server's own attribution, which is the same key the badge on
+ * the canvas is drawn from. They used to disagree: the badge matched
+ * `diagnostic.node` and the panel matched the line number, and Allium reports a
+ * diagnostic on the offending line *inside* a construct rather than on its
+ * declaration — `IdentityRetirement` is declared at line 530 and its two
+ * lifecycle warnings sit at 534. So the line never matched, and the badge
+ * promised something the panel could not produce.
+ */
+export function reportedAgainst(
+  diagnostics: readonly Diagnostic[],
+  node: Node | null,
+): Diagnostic[] {
+  if (node === null) {
+    return [];
+  }
+  return diagnostics.filter((diagnostic) => diagnostic.node === node.id);
+}
+
+/**
+ * The diagnostics the server could not attribute to any construct.
+ *
+ * A parse error is reported where the parser gave up rather than where the
+ * mistake is, so it belongs to a file and not to a declaration. Nothing on the
+ * canvas can carry it, which is why there is somewhere else to read it.
+ */
+export function unattributed(diagnostics: readonly Diagnostic[]): Diagnostic[] {
+  return diagnostics.filter((diagnostic) => !diagnostic.node);
+}
 
 /** How much a severity matters, for picking the worst of several. */
 const RANK: Record<Severity, number> = { info: 0, warning: 1, error: 2 };

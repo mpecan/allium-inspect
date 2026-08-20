@@ -12,20 +12,21 @@ you can check, not a thing I thought.
 
 Ten findings. Four are defects rather than design opinions: the tool reports
 problems the spec does not have, hides every problem it does have, and tells the
-browser nothing when the spec changes underneath it.
+browser nothing when the spec changes underneath it. **Those four are fixed**;
+see [Fixed](#fixed) for what each one is now.
 
-| | Finding | Who | Severity |
-|---|---|---|---|
-| F1 | Live reload never reaches the browser | Ines | high |
-| F2 | Every diagnostic is unreachable, including the badged ones | Ines, Tomas | high |
-| F3 | Nine of the fourteen diagnostics are the tool's own artefact | Tomas | high |
-| F4 | Analysis findings are a count, not a place | Tomas | high |
-| F5 | The module checkboxes do nothing in the simulator | Dan | medium |
-| F6 | The trace controls explain themselves only on hover | Dan, Aoife | medium |
-| F7 | No path from a field to the rules that write it | Priya | medium |
-| F8 | The trigger picker has no heading | Dan | low |
-| F9 | A cross-module type in the inspector is inert text | Priya | low |
-| F10 | A missing space in an unresolved note | Ines | low |
+| | Finding | Who | Severity | State |
+|---|---|---|---|---|
+| F1 | Live reload never reaches the browser | Ines | high | fixed |
+| F2 | Every diagnostic is unreachable, including the badged ones | Ines, Tomas | high | fixed |
+| F3 | Nine of the fourteen diagnostics are the tool's own artefact | Tomas | high | fixed |
+| F4 | Analysis findings are a count, not a place | Tomas | high | fixed |
+| F5 | The module checkboxes do nothing in the simulator | Dan | medium | open |
+| F6 | The trace controls explain themselves only on hover | Dan, Aoife | medium | open |
+| F7 | No path from a field to the rules that write it | Priya | medium | open |
+| F8 | The trigger picker has no heading | Dan | low | open |
+| F9 | A cross-module type in the inspector is inert text | Priya | low | open |
+| F10 | A missing space in an unresolved note | Ines | low | open |
 
 Nine checks passed outright and are recorded below, because a review that lists
 only faults gives no sense of where the bar already is.
@@ -258,3 +259,86 @@ on change and never says so. Three of the four commands it goes to the trouble
 of running end in a surface that drops what they returned.
 
 F1 to F4 are one shape of mistake, and they are the ones to fix.
+
+---
+
+## Fixed
+
+Same day, in the order the severities argued for. Each was re-checked against
+`friend-mesh` with the persona's own test.
+
+### F3 — 14 diagnostics became 4, and all four are real
+
+`link()` now drops an `allium.use.unresolvedPath` warning whose import this tool
+resolved to a module it holds. An import that genuinely names a file nobody
+passed in keeps its warning, because that is exactly what Tomas needs told.
+
+```
+$ allium-inspect --print-graph ../friend-mesh/specs/
+diagnostics now 4
+  info    | identity : 201 | Field 'Device.is_last' is declared but not referenced
+  warning | identity : 534 | Status 'pending' … has no observed transition
+  warning | identity : 534 | Status 'effective' … is never assigned by any rule
+  info    | membership : 72 | Field 'Group.members' is declared but not referenced
+```
+
+Every survivor carries a `node`.
+
+### F2 — the panel joins on the key the badge already used
+
+`reportedAgainst` matches `diagnostic.node`, which is the server's own
+attribution and the same key `worstByNode` draws the badge from. The line-number
+join is gone. The badge's tooltip now says "reported against this construct"
+rather than "in this module", which is what it always meant.
+
+Selecting each of the three badged constructs:
+
+| | Panel now says |
+|---|---|
+| `IdentityRetirement` | **Reported** — both lifecycle warnings |
+| `Device` | **Reported** — `Field 'Device.is_last' is declared but not referenced` |
+| `Group` | **Reported** — `Field 'Group.members' is declared but not referenced` |
+
+A diagnostic the server could not attribute to any construct now has somewhere
+to be read, which is F4's dialog.
+
+### F4 — the count is the way in
+
+The rail's footer is a control. It opens **What allium found**: every analysis
+finding with its kind, its module, its summary, and a button to each construct
+it names — plus any diagnostic no construct can carry.
+
+Clicking `VetoDeletion` in the fifth conflict closes the dialog, switches to the
+Flow view because that is one that draws rules, selects it, and the source strip
+reads `messaging.allium:609`. Tomas gets from a finding to `file:line` in two
+clicks.
+
+The names the analyser reports are disambiguated by the finding's own module
+first, because two modules can both declare a `Device`.
+
+### F1 — the browser asks, once a second
+
+`/api/health` carries a `revision` that moves whenever the answer changes —
+a reload, or a reload starting or stopping failing. The client polls it and
+re-fetches the graph when it moves, dropping its cached source with it.
+
+A poll rather than a stream, deliberately: one request a second to a loopback
+socket costs nothing, it carries the state of the spec in the same response, and
+there is no connection to lose, reconnect or leave half-open behind a laptop lid.
+
+Ines's test, run against a copy of `friend-mesh`:
+
+| She does | It says |
+|---|---|
+| appends a rule that does not parse | amber banner: *The spec has 8 errors. This is what allium could still read of it.* |
+| reverts the file | banner clears |
+| appends a rule that does parse | `PersonaProbeRule` is in search within seconds, no reload |
+
+The two failures are told apart because her next move differs. A **failed read**
+means the graph is from before the edit and is not to be trusted — red, and it
+says so. A spec that **carries errors** means the graph is current, because
+Allium still describes a file it could not fully parse — amber, and it says that
+too. A server that has gone away says so and keeps asking.
+
+Warnings get no banner. They are the normal state of a spec under development,
+and one that was up permanently would stop meaning anything.
