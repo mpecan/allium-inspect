@@ -3,8 +3,9 @@ import { describe, expect, it } from "vitest";
 import type { Edge } from "../api/Edge";
 import type { Node } from "../api/Node";
 import type { NodeKind } from "../api/NodeKind";
-import { familyOf, layout, measure, optionsFor, rowsOf } from "./layout";
+import { familyOf, layout, measure, optionsFor } from "./layout";
 import type { ElkLike } from "./layout";
+import { summaryRows } from "./rows";
 
 function node(partial: Partial<Node> & Pick<Node, "id" | "kind" | "name">): Node {
   return {
@@ -14,6 +15,30 @@ function node(partial: Partial<Node> & Pick<Node, "id" | "kind" | "name">): Node
     detail: { type: "none" },
     ...partial,
   } as Node;
+}
+
+function entityOf(
+  name: string,
+  fields: { name: string; type_expr: string }[],
+): Node {
+  return node({
+    id: `catalogue::entity::${name}`,
+    kind: "entity",
+    name,
+    detail: {
+      type: "entity",
+      kind: "internal",
+      parent: null,
+      transitions: [],
+      fields: fields.map((field) => ({
+        ...field,
+        enum_values: [],
+        derived: false,
+        relationship: false,
+        when: null,
+      })),
+    },
+  });
 }
 
 function edge(from: string, to: string): Edge {
@@ -47,79 +72,64 @@ describe("measure", () => {
     expect(measure(node({ id: "a", kind: "entity", name: "A" })).width).toBe(96);
   });
 
-  it("caps the width so one long name does not set the canvas scale", () => {
-    const huge = measure(
-      node({ id: "a", kind: "entity", name: "A".repeat(200) }),
-    );
-    expect(huge.width).toBe(260);
+  it("never clips a name, however long", () => {
+    // One entity with a long field list should not set the scale for the whole
+    // canvas — but a construct whose name is cut off cannot be identified, and
+    // identifying it is the one thing a box on a graph is for.
+    // `AttestersAreDistinctIdentities` is a real invariant in a real spec.
+    const long = "AttestersAreDistinctIdentities";
+    const box = measure(node({ id: "a", kind: "invariant", name: long }));
+    expect(box.width).toBeGreaterThanOrEqual(long.length * 9);
   });
 
-  it("grows with the rows it will show", () => {
-    const bare = measure(node({ id: "a", kind: "entity", name: "Book" }), 0);
-    const full = measure(node({ id: "a", kind: "entity", name: "Book" }), 5);
+  it("caps how wide the rows can make a node", () => {
+    // The value column ellipsises, so a forty-character type name costs
+    // nothing. Only the labels can grow the box, and they stop.
+    const wide = entityOf(
+      "Book",
+      Array.from({ length: 3 }, (_, index) => ({
+        name: `${"field_name".repeat(6)}${index}`,
+        type_expr: "String".repeat(10),
+      })),
+    );
+    expect(measure(wide).width).toBeLessThanOrEqual(260);
+  });
+
+  it("grows taller with each row it will show", () => {
+    const bare = measure(entityOf("Book", []));
+    const full = measure(entityOf("Book", [
+      { name: "title", type_expr: "String" },
+      { name: "medium", type_expr: "Medium" },
+    ]));
     expect(full.height).toBeGreaterThan(bare.height);
   });
 
-  it("caps the rows so a wide entity does not become a column", () => {
-    const eight = measure(node({ id: "a", kind: "entity", name: "Book" }), 8);
-    const forty = measure(node({ id: "a", kind: "entity", name: "Book" }), 40);
-    expect(forty.height).toBe(eight.height);
-  });
-});
-
-describe("rowsOf", () => {
-  it("counts an entity's fields", () => {
-    const entity = node({
-      id: "a",
-      kind: "entity",
-      name: "Book",
-      detail: {
-        type: "entity",
-        kind: "internal",
-        parent: null,
-        transitions: [],
-        fields: [
-          { name: "title", type_expr: "String", enum_values: [], derived: false, relationship: false, when: null },
-          { name: "medium", type_expr: "Medium", enum_values: [], derived: false, relationship: false, when: null },
-        ],
-      },
-    });
-    expect(rowsOf(entity)).toBe(2);
-  });
-
-  it("counts an enum's values and a config's parameters", () => {
-    expect(
-      rowsOf(node({ id: "a", kind: "enum", name: "Medium", detail: { type: "enum", values: ["print", "audio"] } })),
-    ).toBe(2);
-    expect(
-      rowsOf(
-        node({
-          id: "b",
-          kind: "config",
-          name: "config",
-          detail: { type: "config", parameters: [{ name: "loan_limit", type_expr: "Integer", default_expr: "5" }] },
-        }),
-      ),
-    ).toBe(1);
-  });
-
-  it("caps a rule at four rows because a clause is a sentence", () => {
-    const clauses = Array.from({ length: 9 }, () => ({
-      keyword: "requires",
-      text: "x",
-      span: null,
+  it("reserves a row for every row the node will actually draw", () => {
+    // The one property that matters: ELK packs to the sizes it is given, so a
+    // node measured smaller than it is drawn overlaps its neighbour. Asking
+    // `summaryRows` — the same function the component asks — is what keeps the
+    // two from drifting apart.
+    const fields = Array.from({ length: 40 }, (_, index) => ({
+      name: `field_${index}`,
+      type_expr: "String",
     }));
-    const rule = node({
-      id: "a",
-      kind: "rule",
-      name: "BorrowCopy",
-      detail: { type: "rule", trigger: "T", source: "external", clauses, creates: [], emits: [] },
-    });
-    expect(rowsOf(rule)).toBe(4);
+    const many = entityOf("Book", fields);
+    const few = entityOf("Book", fields.slice(0, 2));
+    const perRow =
+      (measure(many).height - measure(few).height) /
+      (summaryRows(many).length - summaryRows(few).length);
+    expect(perRow).toBeGreaterThan(10);
+    expect(measure(many).height).toBe(
+      measure(entityOf("Book", [])).height + summaryRows(many).length * perRow,
+    );
   });
 
-  it("gives a node with no detail no rows", () => {
-    expect(rowsOf(node({ id: "a", kind: "external", name: "Phantom" }))).toBe(0);
+  it("widens for a long row label, which is not ellipsised", () => {
+    const terse = entityOf("Book", [{ name: "id", type_expr: "String" }]);
+    const wordy = entityOf("Book", [
+      { name: "acknowledged_by_the_lender", type_expr: "String" },
+    ]);
+    expect(measure(wordy).width).toBeGreaterThan(measure(terse).width);
   });
 });
 
@@ -173,6 +183,7 @@ describe("layout", () => {
     };
     await expect(layout(failing, "domain", [], [])).resolves.toEqual({
       nodes: [],
+      routes: new Map(),
       width: 0,
       height: 0,
     });
@@ -253,5 +264,59 @@ describe("familyOf", () => {
     // It gets no fill on the canvas, so it reads as an absence rather than as
     // another kind of construct.
     expect(familyOf("external")).toBe("unresolved");
+  });
+});
+
+describe("edge routing", () => {
+  it("asks the engine to route the edges, not only place the nodes", () => {
+    // Without this the canvas draws a bezier from handle to handle, straight
+    // across whatever nodes lie between — which is what a dense view looks like
+    // when nobody asked the layout engine the second question.
+    for (const view of ["domain", "flow", "lifecycle", "journey"] as const) {
+      expect(optionsFor(view)["elk.edgeRouting"]).toBe("ORTHOGONAL");
+    }
+  });
+
+  it("hands back each route against the edge it was given", async () => {
+    // Keyed by position in the *given* list, so that filtering some edges out
+    // before layout does not shift every later route onto the wrong edge.
+    const nodes = [
+      node({ id: "a", kind: "entity", name: "A" }),
+      node({ id: "b", kind: "entity", name: "B" }),
+    ];
+    const edges = [
+      edge("a", "gone"),
+      edge("a", "b"),
+    ];
+    const engine: ElkLike = {
+      layout: (graph) =>
+        Promise.resolve({
+          ...graph,
+          children: graph.children?.map((child) => ({ ...child, x: 0, y: 0 })),
+          edges: graph.edges?.map((given) => ({
+            ...given,
+            sections: [
+              { startPoint: { x: 1, y: 2 }, bendPoints: [{ x: 5, y: 2 }], endPoint: { x: 5, y: 9 } },
+            ],
+          })),
+        }),
+    };
+
+    const placed = await layout(engine, "domain", nodes, edges);
+    expect(placed.routes.get(0)).toBeUndefined();
+    expect(placed.routes.get(1)).toEqual([
+      { x: 1, y: 2 },
+      { x: 5, y: 2 },
+      { x: 5, y: 9 },
+    ]);
+  });
+
+  it("has no routes when the layout failed and the grid took over", async () => {
+    // The grid has no opinion about where an edge runs, and inventing one would
+    // draw confident lines through a fallback nobody should trust.
+    const broken: ElkLike = { layout: () => Promise.reject(new Error("no")) };
+    const placed = await layout(broken, "domain", [node({ id: "a", kind: "entity", name: "A" })], []);
+    expect(placed.routes.size).toBe(0);
+    expect(placed.nodes).toHaveLength(1);
   });
 });

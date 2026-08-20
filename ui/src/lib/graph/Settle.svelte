@@ -40,19 +40,6 @@
 
   const { ids, focus }: Props = $props();
 
-  /**
-   * Closest the canvas will zoom on its own.
-   *
-   * A reflowed trace can be two constructs, and fitting two boxes to a
-   * 1500-pixel canvas draws them at four times life size — which reads as a
-   * mistake rather than as a small answer. Zooming in past this stays the
-   * reader's decision.
-   */
-  const CLOSE = 1.1;
-
-  /** The last focus honoured, so a later reshape frames everything again. */
-  let framed = 0;
-
   const store = useStore();
   const update = useUpdateNodeInternals();
 
@@ -61,9 +48,22 @@
   // settling on our own last settle.
   const drawn = $derived(ids.join("\u0000"));
 
-  /** Frames to keep asking for. Half a second; a canvas that has not settled
-   *  by then is not going to, and a loop with no end is worse than a gap. */
+  /**
+   * Closest the canvas will zoom on its own.
+   *
+   * A reflowed chain can be two constructs, and fitting two boxes to a
+   * 1500-pixel canvas draws them at four times life size — which reads as a
+   * mistake rather than as a small answer. Zooming in past this stays the
+   * reader's decision.
+   */
+  const CLOSE = 1.1;
+
+  /** How long to wait between attempts, and how many to make. */
+  const STEP = 16;
   const PATIENCE = 30;
+
+  /** The last focus honoured, so a later reshape frames everything again. */
+  let framed = 0;
 
   $effect(() => {
     void drawn;
@@ -75,16 +75,22 @@
       return;
     }
 
-    let frame = 0;
-    // A frame late, and again until it takes. Measuring looks each node up in
+    let timer = 0;
+
+    // A tick late, and again until it takes. Measuring looks each node up in
     // the DOM by id, and on the pass that hands Svelte Flow a new set they are
     // not painted yet — a lookup that finds nothing settles nothing, and there
     // is no second trigger to fall back on.
     //
+    // A timer rather than an animation frame, because animation frames do not
+    // run in a hidden tab. Opening the tool and looking at something else while
+    // it loads used to leave every node unmeasured and therefore every edge
+    // undrawn, permanently: nothing else was ever going to ask again.
+    //
     // Everything inside is untracked: all of it reads and writes the canvas's
     // own node array, and tracked, settling would be its own trigger.
     const settle = (left: number) => {
-      frame = requestAnimationFrame(() => {
+      timer = window.setTimeout(() => {
         untrack(() => {
           // Measured *and* showing what was asked for. `nodesInitialized` alone
           // still reads true for the set the canvas is about to replace, and
@@ -97,11 +103,9 @@
           if (showing) {
             if (wanted !== null && wanted.nth > framed) {
               framed = wanted.nth;
-              void store.fitView({
-                nodes: [{ id: wanted.id }],
-                maxZoom: CLOSE,
-                duration: 220,
-              });
+              // No `duration`: Svelte Flow resolves an animated fit straight out
+              // of a derived, which its own source calls a no-go.
+              void store.fitView({ nodes: [{ id: wanted.id }], maxZoom: CLOSE });
             } else {
               void store.fitView({ maxZoom: CLOSE });
             }
@@ -112,10 +116,22 @@
             settle(left - 1);
           }
         });
-      });
+      }, STEP);
     };
-    settle(PATIENCE);
 
-    return () => cancelAnimationFrame(frame);
+    // A tab that was hidden the whole time never laid anything out to measure,
+    // so coming back to it is a reason to start over rather than a moment to
+    // discover the canvas gave up while nobody was looking.
+    const restart = () => {
+      clearTimeout(timer);
+      settle(PATIENCE);
+    };
+    restart();
+    document.addEventListener("visibilitychange", restart);
+
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", restart);
+    };
   });
 </script>

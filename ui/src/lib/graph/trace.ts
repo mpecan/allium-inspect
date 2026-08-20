@@ -124,9 +124,9 @@ export function isMeaningful(trace: Trace): boolean {
  *
  * Dimming answers "which of these three hundred?" by leaving all three hundred
  * on the canvas. This answers it by removing the rest, so the layout can run
- * again over what is left and the chain reads as a chain. It is opt-in because
- * it moves the picture, and a reader who was only looking something up did not
- * ask for the picture to move.
+ * again over what is left and the chain reads as a chain. It happens in the
+ * pop-up rather than in place: a reader who was only looking something up did
+ * not ask for the canvas they were reading to rearrange itself.
  *
  * Every edge *between* the reached nodes is kept, not only the ones the walk
  * followed. How the traced constructs relate to each other is part of the

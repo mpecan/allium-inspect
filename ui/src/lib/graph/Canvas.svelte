@@ -25,8 +25,10 @@
   import type { Severity } from "../api/Severity";
   import type { ViewKind } from "../client";
   import ConstructNode from "./ConstructNode.svelte";
+  import RoutedEdge from "./RoutedEdge.svelte";
   import Settle from "./Settle.svelte";
   import { familyOf, layout } from "./layout";
+  import type { Point } from "./route";
   import { paint } from "./paint";
   import type { Trace } from "./trace";
 
@@ -40,19 +42,60 @@
     reveal: { id: string; nth: number } | null;
     trace: Trace | null;
     onselect: (id: string | null) => void;
+    /** A construct the reader asked to look at on its own. */
+    onopen?: (id: string) => void;
+    /**
+     * Drop the overview map. It earns its place on a view of three hundred
+     * constructs and is clutter over four, where the whole graph is already on
+     * screen and the map covers part of it.
+     */
+    bare?: boolean;
   }
 
-  const { view, nodes, edges, severities, selected, reveal, trace, onselect }: Props =
-    $props();
+  const {
+    view,
+    nodes,
+    edges,
+    severities,
+    selected,
+    reveal,
+    trace,
+    onselect,
+    onopen,
+    bare = false,
+  }: Props = $props();
+
+  /**
+   * Which construct a pointer event landed on, if any.
+   *
+   * Read off the DOM rather than from Svelte Flow, which has no double-click
+   * event for a node — and the node component should not have to know that the
+   * canvas has a second thing you can do to it.
+   */
+  function constructAt(event: MouseEvent): string | null {
+    const element = (event.target as HTMLElement | null)?.closest(".svelte-flow__node");
+    return element?.getAttribute("data-id") ?? null;
+  }
 
   const elk = new ELK();
   const nodeTypes = { construct: ConstructNode };
+  /**
+   * Low enough that "fit" means fit.
+   *
+   * Routing the edges properly makes a three-hundred-node view considerably
+   * taller, and a floor of 0.15 left two thirds of the journey view off the
+   * screen with nothing on the canvas to say it was there.
+   */
+  const MIN_ZOOM = 0.05;
+  const edgeTypes = { routed: RoutedEdge };
 
   // Two arrays, and the split matters. `placed` is ours: what ELK decided, in
   // the order the graph gave. `flowNodes` and `flowEdges` are Svelte Flow's —
   // it is bound to them and writes each node's measured box back into them, and
   // that measurement is what its edge routing depends on.
   let placed = $state.raw<FlowNode[]>([]);
+  /** ELK's route for each edge, by its position in `edges`. */
+  let routes = $state.raw<Map<number, Point[]>>(new Map());
   let flowNodes = $state.raw<FlowNode[]>([]);
   let flowEdges = $state.raw<FlowEdge[]>([]);
   let placing = $state(true);
@@ -72,6 +115,7 @@
       if (cancelled) {
         return;
       }
+      routes = result.routes;
       const byId = new Map(result.nodes.map((node) => [node.id, node]));
       placed = nodes.map((node) => {
         const place = byId.get(node.id);
@@ -111,6 +155,8 @@
       const lit = trace === null || traced;
       return {
         id: `e${index}:${key}`,
+        type: "routed",
+        data: { points: routes.get(index) },
         source: edge.from,
         target: edge.to,
         // Labelled only on a traced path. A real spec set has hundreds of
@@ -137,18 +183,31 @@
   }
 </script>
 
-<div class="canvas" class:placing>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+  class="canvas"
+  class:placing
+  ondblclick={(event) => {
+    const id = constructAt(event);
+    if (id) {
+      onopen?.(id);
+    }
+  }}
+>
   {#if nodes.length === 0}
     <p class="empty prose">
       Nothing to draw in this view. Try another view, or turn a module back on.
     </p>
   {:else}
+    <!-- `zoomOnDoubleClick` is off because double-clicking opens a construct. -->
     <SvelteFlow
       bind:nodes={flowNodes}
       bind:edges={flowEdges}
       {nodeTypes}
+      {edgeTypes}
       fitView
-      minZoom={0.15}
+      zoomOnDoubleClick={false}
+      minZoom={MIN_ZOOM}
       maxZoom={2.5}
       proOptions={{ hideAttribution: false }}
       onnodeclick={({ node }) => onselect(node.id)}
@@ -163,14 +222,16 @@
       />
       <Settle ids={flowNodes.map((node) => node.id)} focus={reveal} />
       <Controls showLock={false} />
-      <MiniMap
-        nodeColor={minimapColour}
-        bgColor="var(--ground-panel)"
-        maskColor="color-mix(in srgb, var(--ground-canvas) 78%, transparent)"
-        nodeStrokeWidth={0}
-        pannable
-        zoomable
-      />
+      {#if !bare}
+        <MiniMap
+          nodeColor={minimapColour}
+          bgColor="var(--ground-panel)"
+          maskColor="color-mix(in srgb, var(--ground-canvas) 78%, transparent)"
+          nodeStrokeWidth={0}
+          pannable
+          zoomable
+        />
+      {/if}
     </SvelteFlow>
   {/if}
 </div>

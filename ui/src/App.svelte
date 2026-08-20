@@ -1,10 +1,10 @@
 <script lang="ts">
   import type { Severity } from "./lib/api/Severity";
   import Canvas from "./lib/graph/Canvas.svelte";
+  import Focus from "./lib/graph/Focus.svelte";
   import {
     isMeaningful,
     journey,
-    narrow,
     neighbourhood,
     origins,
     type Trace,
@@ -35,9 +35,9 @@
   let hidden = $state.raw<Set<string>>(new Set());
   let traceMode = $state<"off" | "forward" | "backward" | "near">("off");
   let sourceOpen = $state(false);
-  // Off by default. Re-laying out on every click would move the picture out
-  // from under a reader who was only looking something up.
-  let reflow = $state(false);
+  // The construct the reader double-clicked, shown on its own. Null is the
+  // ordinary state: the canvas behind it never moves.
+  let focused = $state<string | null>(null);
   let reveal = $state.raw<{ id: string; nth: number } | null>(null);
   let revealed = 0;
   let sources = $state.raw<Map<string, ModuleSource>>(new Map());
@@ -97,10 +97,21 @@
   );
 
   /**
-   * What the canvas draws: the whole view, or — with reflow on — only what the
-   * trace reached, laid out again over that.
+   * Everything the reader has not switched off.
+   *
+   * The pop-up asks about a construct rather than about the current view, so it
+   * gets the whole spec set less the hidden modules — a module checkbox is a
+   * deliberate "not this", and a view is only a way of looking.
    */
-  const drawn = $derived(narrow(visibleNodes, visibleEdges, reflow ? trace : null));
+  const present = $derived(nodes.filter((node) => !hidden.has(node.module)));
+  const between = $derived.by(() => {
+    const shown = new Set(present.map((node) => node.id));
+    return edges.filter((edge) => shown.has(edge.from) && shown.has(edge.to));
+  });
+
+  const focusedNode = $derived(
+    focused === null ? null : (nodes.find((node) => node.id === focused) ?? null),
+  );
 
   const selectedModule = $derived(
     selected ? modules.find((module) => module.name === selected.module) : undefined,
@@ -211,8 +222,6 @@
     {traceIsEmpty}
     {nodes}
     onfind={find}
-    {reflow}
-    onreflow={() => (reflow = !reflow)}
   />
 
   {#if mode === "simulate"}
@@ -234,14 +243,33 @@
     {:else}
       <Canvas
         {view}
-        nodes={drawn.nodes}
-        edges={drawn.edges}
+        nodes={visibleNodes}
+        edges={visibleEdges}
         {severities}
         selected={selectedId}
         {reveal}
         {trace}
         onselect={select}
+        onopen={(id) => {
+          select(id);
+          focused = id;
+        }}
       />
+
+      {#if focusedNode}
+        <Focus
+          node={focusedNode}
+          nodes={present}
+          edges={between}
+          {severities}
+          onselect={select}
+          onopen={(id) => {
+            select(id);
+            focused = id;
+          }}
+          onclose={() => (focused = null)}
+        />
+      {/if}
     {/if}
 
     <SourceStrip

@@ -44,12 +44,22 @@ Two things follow from reading the set as a set:
 is in — and opening a result clears whatever was in the way, turning its module
 back on and switching to a view that draws it.
 
-Tracing dims what the chain did not reach. **Reflow**, which is off until asked
-for, instead draws only what it did and lays that out again: following
-`MeshExchange` forward goes from twelve lit boxes among three hundred to a
-thirty-seven node chain that reads left to right. It is opt-in because it moves
-the picture, and a reader who was only looking something up did not ask for the
-picture to move.
+Tracing dims what the chain did not reach, which answers "which of these three
+hundred?" by leaving all three hundred on the canvas. **Double-clicking a
+construct** opens it on its own instead: the construct, everything joined to it,
+and three ways of asking — adjacent, what follows, what leads to it — each laid
+out and framed on its own. Double-clicking inside walks to the next construct,
+so a chain can be followed a step at a time. The canvas behind it never moves.
+
+The pop-up asks about the construct rather than about the current view, so it
+shows the rule that creates an entity and the invariants that constrain it even
+from the domain view, which draws neither. A form with no answer is switched off
+and says why rather than opening empty.
+
+Edges follow the route the layout engine chose for them rather than a curve
+between two handles: ELK reserves channels between the layers as it places the
+nodes, and drawing along those is the difference between a diagram and a bowl of
+spaghetti on any view with more than a dozen constructs.
 
 Selecting anything shows its source, anchored to the byte span the parser
 reported. The spec text gets permanent space along the bottom rather than a
