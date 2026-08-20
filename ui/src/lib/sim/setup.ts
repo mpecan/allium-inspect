@@ -44,6 +44,19 @@ export interface Setup {
 }
 
 /**
+ * The triggers from modules the reader has not switched off.
+ *
+ * The module checkboxes were inert here — present, enabled, and doing nothing —
+ * while filtering the canvas four inches above. They mean the same thing in
+ * both places: what to *show*. Nothing about the specification changes, so a
+ * rule in a hidden module still fires when its trigger does; what changes is
+ * whether this thirty-surface list offers it to you.
+ */
+export function offered(triggers: Fireable[], hidden: ReadonlySet<string>): Fireable[] {
+  return triggers.filter((trigger) => !hidden.has(trigger.module));
+}
+
+/**
  * Triggers grouped by where they come from.
  *
  * Surfaces first and named, because a trigger a surface provides is something a

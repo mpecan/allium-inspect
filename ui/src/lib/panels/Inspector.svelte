@@ -11,6 +11,7 @@
   import type { Node } from "../api/Node";
   import type { Obligation } from "../api/Obligation";
   import type { Position } from "../api/Position";
+  import type { FieldLinks } from "../spec";
   import { familyOf } from "../graph/layout";
   import Verdict from "./Verdict.svelte";
 
@@ -21,7 +22,26 @@
     diagnostics: Diagnostic[];
     findings: Finding[];
     obligations: Obligation[];
+    /** Where each field points, and which rules write it. */
+    links: FieldLinks;
+    /**
+     * Open the construct with this id.
+     *
+     * Ids, not names — the field links come from edges the linker resolved, and
+     * they already say exactly which construct is meant.
+     */
     onselect: (id: string) => void;
+    /**
+     * Open the construct with this name.
+     *
+     * The analyser reports names rather than ids, so a finding's rules can only
+     * be offered this way. Separate from `onselect` because both are
+     * `(string) => void` and passing one where the other belongs is a mistake
+     * no type can catch — which is exactly what happened.
+     */
+    onselectByName: (name: string) => void;
+    /** The name to show for a node id, for a link out of a field. */
+    nameOf: (id: string) => string;
   }
 
   const {
@@ -31,7 +51,10 @@
     diagnostics,
     findings,
     obligations,
+    links,
     onselect,
+    onselectByName,
+    nameOf,
   }: Props = $props();
 
   const family = $derived(node ? familyOf(node.kind) : "thing");
@@ -74,13 +97,39 @@
               {field.name}
             </dt>
             <dd>
-              {field.enum_values.length > 0
-                ? field.enum_values.join(" | ")
-                : field.type_expr}
+              {#if field.enum_values.length > 0}
+                {field.enum_values.join(" | ")}
+              {:else if links.points.has(field.name)}
+                <!-- The linker already resolved this type to a construct. It
+                     was rendered as text, which left the reader searching for
+                     a name the tool was holding an id for. -->
+                <button
+                  type="button"
+                  class="to-type"
+                  onclick={() => onselect(links.points.get(field.name) ?? "")}
+                >{field.type_expr}</button>
+              {:else}
+                {field.type_expr}
+              {/if}
               {#if field.when}<span class="when">when {field.when}</span>{/if}
+              {#if links.written.has(field.name)}
+                <span class="written">
+                  <span class="written-by">written by</span>
+                  {#each links.written.get(field.name) ?? [] as rule (rule)}
+                    <button type="button" onclick={() => onselect(rule)}>{nameOf(rule)}</button>
+                  {/each}
+                </span>
+              {/if}
             </dd>
           {/each}
         </dl>
+        {#if links.written.size > 0}
+          <p class="prose caveat">
+            "Written by" lists rules whose postconditions name the field. A rule
+            that writes one through a name this tool could not resolve to an
+            entity is not listed.
+          </p>
+        {/if}
       </section>
 
       {#each detail.transitions as lifecycle (lifecycle.field)}
@@ -277,7 +326,7 @@
               {#if finding.rules.length > 0}
                 <span class="rule-links">
                   {#each finding.rules as rule, index (index)}
-                    <button type="button" onclick={() => onselect(rule)}>
+                    <button type="button" onclick={() => onselectByName(rule)}>
                       {rule}
                     </button>
                   {/each}
@@ -384,6 +433,37 @@
     margin: 0;
     color: var(--ink-faint);
     overflow-wrap: anywhere;
+  }
+
+  /* A type that resolved is a way through to what it names. Underlined on
+   * hover only: three hundred underlines in a field list is a hedge, and the
+   * reader already knows a qualified name is a reference. */
+  .to-type {
+    color: inherit;
+    text-align: right;
+  }
+  .to-type:hover {
+    color: var(--ink);
+    text-decoration: underline;
+  }
+
+  /* Which rules assign this field, which is the question asked just before
+   * changing how it is written. */
+  .written {
+    display: block;
+    margin-top: 2px;
+    font-size: var(--t-micro);
+  }
+  .written-by {
+    color: var(--ink-faint);
+  }
+  .written button {
+    margin-left: var(--gap-1);
+    font-size: var(--t-micro);
+    color: var(--behaviour);
+  }
+  .written button:hover {
+    text-decoration: underline;
   }
 
   .when {

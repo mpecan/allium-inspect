@@ -12,8 +12,8 @@ you can check, not a thing I thought.
 
 Ten findings. Four are defects rather than design opinions: the tool reports
 problems the spec does not have, hides every problem it does have, and tells the
-browser nothing when the spec changes underneath it. **Those four are fixed**;
-see [Fixed](#fixed) for what each one is now.
+browser nothing when the spec changes underneath it. **All ten are fixed**; see
+[Fixed](#fixed) for what each one is now.
 
 | | Finding | Who | Severity | State |
 |---|---|---|---|---|
@@ -21,12 +21,12 @@ see [Fixed](#fixed) for what each one is now.
 | F2 | Every diagnostic is unreachable, including the badged ones | Ines, Tomas | high | fixed |
 | F3 | Nine of the fourteen diagnostics are the tool's own artefact | Tomas | high | fixed |
 | F4 | Analysis findings are a count, not a place | Tomas | high | fixed |
-| F5 | The module checkboxes do nothing in the simulator | Dan | medium | open |
-| F6 | The trace controls explain themselves only on hover | Dan, Aoife | medium | open |
-| F7 | No path from a field to the rules that write it | Priya | medium | open |
-| F8 | The trigger picker has no heading | Dan | low | open |
-| F9 | A cross-module type in the inspector is inert text | Priya | low | open |
-| F10 | A missing space in an unresolved note | Ines | low | open |
+| F5 | The module checkboxes do nothing in the simulator | Dan | medium | fixed |
+| F6 | The trace controls explain themselves only on hover | Dan, Aoife | medium | fixed |
+| F7 | No path from a field to the rules that write it | Priya | medium | fixed |
+| F8 | The trigger picker has no heading | Dan | low | fixed |
+| F9 | A cross-module type in the inspector is inert text | Priya | low | fixed |
+| F10 | A missing space in an unresolved note | Ines | low | fixed |
 
 Nine checks passed outright and are recorded below, because a review that lists
 only faults gives no sense of where the bar already is.
@@ -342,3 +342,80 @@ too. A server that has gone away says so and keeps asking.
 
 Warnings get no banner. They are the normal state of a spec under development,
 and one that was up permanently would stop meaning anything.
+
+### F6 — the trace controls say what they do, on screen
+
+`All / Follows / Leads here / Adjacent` now carry `the whole view`, `what
+happens after this`, `what has to happen first` and `one step either way`
+beneath them, the way the view controls four lines above always did. The `title`
+that held those words is gone — Dan watches someone else's screen and never sees
+a tooltip, and Aoife has not met the word "trace".
+
+### F5 — the module checkboxes mean the same thing in both places
+
+They filter the trigger picker now, and the rail says what that means: *"Which
+triggers to offer. Switching one off hides it here; it does not stop its rules
+firing."* Switching `archive` off takes the picker from fifteen groups to
+thirteen and `ArchiveControls` with it.
+
+The wording matters as much as the behaviour. A checkbox that quietly stopped a
+module's rules from firing would be a simulator that lies about what the
+specification does, which costs more than an inert checkbox ever did.
+
+### F8 — the picker says what it is
+
+**What someone can do**, and beneath it: *"Each heading is a surface and the
+actor it faces. Pick one of its operations to fire it, and the panel on the
+right shows what changed."* The panels either side always explained themselves;
+this is the one you have to use first.
+
+### F9 — a field's type is a way through to it
+
+The linker resolves a field's type to a construct and emits an edge for it, and
+the panel was rendering the type as text. `messaging/Message` on
+`OutboxEntry.message` now opens `Message`.
+
+### F7 — which rules write this field
+
+A new ingestion pass reads a rule's postconditions for the fields they assign
+and emits a `mutates` edge per field — an edge kind the graph declared and never
+produced. Over `friend-mesh` that is 239 edges and no unresolved references.
+
+It is sound and incomplete on purpose:
+
+```text
+ensures: OutboxEntry.created(status: queued, …)   read: the type is named
+ensures: entry.status = settled                   read: `when` bound `entry`
+ensures: entry.message.status = tombstoned        skipped: the field is on
+                                                  whatever `message` is
+```
+
+Working the third out means resolving a field's type, and a wrong answer would
+tell Priya a rule writes a field it does not touch — worse for her than the grep
+she was going to do. So the panel says what it is showing: *"Written by" lists
+rules whose postconditions name the field. A rule that writes one through a name
+this tool could not resolve to an entity is not listed.*
+
+Selecting `OutboxEntry`, `status` reads **written by OutboxEntrySettles,
+QueueOnSend**, and clicking either switches to a view that draws rules, selects
+it, and puts `delivery.allium:755` in the source strip.
+
+### F10 — the missing space
+
+`{note.reason}{#if …}` with the dash inside the block: Svelte trims the block's
+leading whitespace, and the panel whose whole job is being believed read
+"not simulated— Membership{…}". The separator carries its own spaces now.
+
+---
+
+## One thing this review did not catch
+
+Chasing F7 in the browser, two links did nothing and the cause was a stale UI:
+`rust-embed` bakes the assets into a release binary at compile time, so a
+`just ui-build` after `cargo build --release` leaves the running server serving
+the previous bundle. That is the documented order — `just build` is the
+frontend, then the workspace — and it cost twenty minutes anyway.
+
+Worth knowing when the next review is run: check the served bundle's hash
+against `crates/inspect-server/assets/assets/` before concluding anything about
+behaviour.

@@ -58,12 +58,16 @@
     { kind: "journey", name: "Journey" },
   ];
 
+  // Each carries what it does on screen rather than in a `title`. The view
+  // buttons four lines above always did, and the difference showed: a reader
+  // watching over someone's shoulder never sees a tooltip, and someone who has
+  // not met the word "trace" has no way to find out what these four are for.
   const TRACES: { mode: TraceMode; label: string; hint: string }[] = [
-    { mode: "off", label: "All", hint: "Show the whole view" },
+    { mode: "off", label: "All", hint: "the whole view" },
     // Not "Leads to", which reads as "this leads to …" — the other direction.
-    { mode: "forward", label: "Follows", hint: "What happens after this" },
-    { mode: "backward", label: "Leads here", hint: "What has to happen first" },
-    { mode: "near", label: "Adjacent", hint: "One step in either direction" },
+    { mode: "forward", label: "Follows", hint: "what happens after this" },
+    { mode: "backward", label: "Leads here", hint: "what has to happen first" },
+    { mode: "near", label: "Adjacent", hint: "one step either way" },
   ];
 </script>
 
@@ -115,12 +119,11 @@
             type="button"
             class:current={traceMode === option.mode}
             disabled={!hasSelection && option.mode !== "off"}
-            title={hasSelection
-              ? option.hint
-              : "Select a construct to trace from it"}
+            title={hasSelection ? undefined : "Select a construct to trace from it"}
             onclick={() => ontrace(option.mode)}
           >
-            {option.label}
+            <span class="trace-name">{option.label}</span>
+            <span class="trace-hint">{option.hint}</span>
           </button>
         </li>
       {/each}
@@ -143,6 +146,11 @@
 
   <section>
     <h2>Modules</h2>
+    <p class="prose caveat modules-hint">
+      {mode === "simulate"
+        ? "Which triggers to offer. Switching one off hides it here; it does not stop its rules firing."
+        : "What to draw."}
+    </p>
     <ul class="modules">
       {#each modules as module (module.name)}
         <li>
@@ -264,16 +272,30 @@
     gap: 2px;
   }
   .traces button {
+    display: block;
     padding: 3px var(--gap-2);
-    font-size: var(--t-micro);
+    text-align: left;
     border: 1px solid var(--line);
     border-radius: var(--radius);
-    color: var(--ink-dim);
     width: 100%;
+  }
+  .trace-name {
+    display: block;
+    font-size: var(--t-micro);
+    color: var(--ink-dim);
+  }
+  .trace-hint {
+    display: block;
+    font-size: var(--t-micro);
+    line-height: 1.3;
+    color: var(--ink-faint);
   }
   .traces button:hover:not(:disabled) {
     border-color: var(--line-strong);
     color: var(--ink);
+  }
+  .traces button.current .trace-name {
+    color: var(--behaviour);
   }
   .traces button.current {
     border-color: var(--behaviour);
@@ -304,6 +326,10 @@
   .reports:disabled {
     color: var(--ink-faint);
     cursor: default;
+  }
+
+  .modules-hint {
+    margin: 0 0 var(--gap-2);
   }
 
   .caveat {

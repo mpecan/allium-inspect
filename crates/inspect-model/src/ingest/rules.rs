@@ -27,7 +27,7 @@ use crate::{
         Edge, EdgeKind, Node, NodeDetail, NodeId, NodeKind, RuleClause, RuleDetail, TriggerDetail,
         TriggerSource,
     },
-    ingest::{Ingestion, json, text},
+    ingest::{Ingestion, json, text, writes},
     program::RuleAst,
     span::Span,
 };
@@ -74,7 +74,28 @@ pub fn ingest(block: &Value, module: &str, source: &str, into: &mut Ingestion) {
         }
     }
 
+    // Which fields the postconditions assign, before the AST is handed over.
+    // The `when` binding is what makes `entry.status = settled` readable at all,
+    // so it has to be known first — see `writes` for what is deliberately not
+    // read.
+    let bound = trigger.as_ref().and_then(|(_, detail)| {
+        Some((detail.parameters.first()?.as_str(), detail.entity.as_deref()?))
+    });
+    let assigned = writes::writes(&ast.ensures, bound);
+
     into.program.add_rule(rule_id.as_str(), ast);
+
+    for write in assigned {
+        // Pointed at the entity by name; `link` resolves it, including across a
+        // module boundary, and labelled with the field so the panel can ask
+        // which rules write one field rather than which touch the entity.
+        into.graph.edges.push(Edge::new(
+            rule_id.clone(),
+            NodeId::new(module, NodeKind::Entity, &write.entity),
+            EdgeKind::Mutates,
+            write.field,
+        ));
+    }
 
     let (trigger_name, detail) = trigger.unwrap_or_else(|| {
         // A rule with no `when` cannot be fired by anything. It is kept rather

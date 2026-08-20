@@ -26,7 +26,7 @@
     stepCount,
     type History,
   } from "./history";
-  import type { Setup } from "./setup";
+  import { offered, type Setup } from "./setup";
   import Timeline from "./Timeline.svelte";
   import Trace from "./Trace.svelte";
   import TriggerPicker from "./TriggerPicker.svelte";
@@ -34,9 +34,11 @@
 
   interface Props {
     client: InspectClient;
+    /** Modules the reader has switched off, which are not offered here either. */
+    hidden: ReadonlySet<string>;
   }
 
-  const { client }: Props = $props();
+  const { client, hidden }: Props = $props();
 
   let setup = $state.raw<Setup | null>(null);
   let history = $state.raw<History | null>(null);
@@ -107,7 +109,7 @@
     </div>
   {:else}
     <TriggerPicker
-      triggers={setup.triggers}
+      triggers={offered(setup.triggers, hidden)}
       {instances}
       {pending}
       onfire={(trigger, module, args) => void fire(trigger, module, args)}

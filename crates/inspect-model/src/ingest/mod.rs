@@ -23,6 +23,7 @@ mod plan;
 mod rules;
 mod surfaces;
 mod text;
+mod writes;
 
 use std::path::{Path, PathBuf};
 

@@ -24,7 +24,13 @@
     type ViewKind,
   } from "./lib/client";
   import { standing, type Trouble } from "./lib/reload";
-  import { positionOf, reportedAgainst, unattributed, worstByNode } from "./lib/spec";
+  import {
+    fieldLinks,
+    positionOf,
+    reportedAgainst,
+    unattributed,
+    worstByNode,
+  } from "./lib/spec";
 
   const client = new InspectClient();
 
@@ -162,6 +168,9 @@
   /** What no construct carries, and therefore has nowhere else to be read. */
   const loose = $derived(unattributed(graph?.diagnostics ?? []));
   const findings = $derived(graph?.findings ?? []);
+
+  /** Where the selected construct's fields point, and what writes them. */
+  const links = $derived(fieldLinks(edges, selected));
 
   const focusedNode = $derived(
     focused === null ? null : (nodes.find((node) => node.id === focused) ?? null),
@@ -311,7 +320,7 @@
 
   {#if mode === "simulate"}
     <div class="stage">
-      <Simulator {client} />
+      <Simulator {client} {hidden} />
     </div>
   {:else}
   <main>
@@ -372,6 +381,10 @@
     node={selected}
     position={selectedPosition}
     modulePath={selectedModule?.path ?? ""}
+    {links}
+    nameOf={(id) => nodes.find((node) => node.id === id)?.name ?? id}
+    onselect={find}
+    onselectByName={selectByName}
     diagnostics={reportedAgainst(graph?.diagnostics ?? [], selected)}
     findings={graph?.findings.filter(
       (finding) =>
@@ -386,7 +399,6 @@
         (obligation.construct === selected.name ||
           obligation.construct.startsWith(`${selected.name}.`)),
     ) ?? []}
-    onselect={selectByName}
   />
   {/if}
 </div>

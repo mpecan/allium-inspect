@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import type { Diagnostic } from "./api/Diagnostic";
+import type { Edge } from "./api/Edge";
 import type { SpecGraph } from "./api/SpecGraph";
 import type { Node } from "./api/Node";
 import {
+  fieldLinks,
   positionOf,
   reportedAgainst,
   unattributed,
@@ -183,5 +185,84 @@ describe("unattributed", () => {
 
   it("is empty when everything found a home", () => {
     expect(unattributed([diagnostic({ node: retirement.id })])).toEqual([]);
+  });
+});
+
+describe("fieldLinks", () => {
+  const outbox: Node = {
+    id: "delivery::entity::OutboxEntry",
+    kind: "entity",
+    name: "OutboxEntry",
+    module: "delivery",
+    qualified: "delivery/OutboxEntry",
+    span: null,
+    detail: { type: "none" },
+  };
+
+  const edge = (
+    from: string,
+    to: string,
+    kind: Edge["kind"],
+    label: string,
+  ): Edge => ({ from, to, kind, label, span: null });
+
+  const edges: Edge[] = [
+    edge(outbox.id, "messaging::entity::Message", "field", "message"),
+    edge(outbox.id, "identity::entity::Device", "relationship", "awaiting"),
+    edge("delivery::rule::QueueOnSend", outbox.id, "mutates", "status"),
+    edge("delivery::rule::OutboxEntrySettles", outbox.id, "mutates", "status"),
+    edge("delivery::rule::QueueOnSend", outbox.id, "mutates", "queued_at"),
+    edge("delivery::rule::QueueOnSend", outbox.id, "creates", "OutboxEntry"),
+    edge("messaging::entity::Message", "membership::entity::Group", "field", "group"),
+  ];
+
+  it("says where a field's type resolved to", () => {
+    // The linker already worked it out; the panel was rendering the type as
+    // inert text and making the reader search for the name by hand.
+    const { points } = fieldLinks(edges, outbox);
+    expect(points.get("message")).toBe("messaging::entity::Message");
+    expect(points.get("awaiting")).toBe("identity::entity::Device");
+  });
+
+  it("says nothing about a field whose type is not a construct", () => {
+    expect(fieldLinks(edges, outbox).points.get("queued_at")).toBeUndefined();
+  });
+
+  it("does not take another entity's fields for this one's", () => {
+    // `Message.group` is a field edge too, and it is not on OutboxEntry.
+    expect(fieldLinks(edges, outbox).points.has("group")).toBe(false);
+  });
+
+  it("collects every rule that writes one field", () => {
+    expect(fieldLinks(edges, outbox).written.get("status")).toEqual([
+      "delivery::rule::QueueOnSend",
+      "delivery::rule::OutboxEntrySettles",
+    ]);
+  });
+
+  it("keeps a rule that writes two fields against both", () => {
+    const { written } = fieldLinks(edges, outbox);
+    expect(written.get("queued_at")).toEqual(["delivery::rule::QueueOnSend"]);
+    expect(written.get("status")).toContain("delivery::rule::QueueOnSend");
+  });
+
+  it("lists a rule once per field however many edges carry it", () => {
+    const twice = [...edges, edge("delivery::rule::QueueOnSend", outbox.id, "mutates", "status")];
+    expect(fieldLinks(twice, outbox).written.get("status")).toEqual([
+      "delivery::rule::QueueOnSend",
+      "delivery::rule::OutboxEntrySettles",
+    ]);
+  });
+
+  it("does not mistake creating the entity for writing a field", () => {
+    // The `creates` edge is labelled with the entity, not with a field, and
+    // reading it as one would invent a field called OutboxEntry.
+    expect(fieldLinks(edges, outbox).written.has("OutboxEntry")).toBe(false);
+  });
+
+  it("has nothing to say when nothing is selected", () => {
+    const { points, written } = fieldLinks(edges, null);
+    expect(points.size).toBe(0);
+    expect(written.size).toBe(0);
   });
 });

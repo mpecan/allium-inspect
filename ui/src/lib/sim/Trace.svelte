@@ -67,8 +67,13 @@
                   <ul class="why">
                     {#each clause.unresolved as note, at (at)}
                       <li class="prose">
-                        {note.reason}{#if note.expression}
-                          — <code>{note.expression}</code>{/if}
+                        <!-- The separator carries its own spaces. Written as
+                             `{note.reason}{#if …}` with the dash inside the
+                             block, Svelte trims the block's leading whitespace
+                             and the line reads "not simulated— Membership{…}". -->
+                        {note.reason}{#if note.expression}{" — "}<code
+                            >{note.expression}</code
+                          >{/if}
                       </li>
                     {/each}
                   </ul>

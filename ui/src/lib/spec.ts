@@ -4,6 +4,7 @@
 // functions instead of by rendering a canvas and reading pixels back.
 
 import type { Diagnostic } from "./api/Diagnostic";
+import type { Edge } from "./api/Edge";
 import type { Node } from "./api/Node";
 import type { Position } from "./api/Position";
 import type { Severity } from "./api/Severity";
@@ -108,4 +109,49 @@ export function positionOf(text: string, span: Span | null): Position | null {
   const lines = upto.split("\n");
   const last = lines.at(-1) ?? "";
   return { line: lines.length, column: [...last].length + 1 };
+}
+
+/** Where one entity's fields point, and which rules write them. */
+export interface FieldLinks {
+  /** Field name → the construct its type refers to, when one is in the set. */
+  points: Map<string, string>;
+  /** Field name → the rules that assign it, by node id, in graph order. */
+  written: Map<string, string[]>;
+}
+
+/**
+ * What the linker already worked out about `node`'s fields.
+ *
+ * Both halves are edges the ingestion produced rather than anything re-derived
+ * here: a `field` or `relationship` edge is where a field's type resolved to,
+ * and a `mutates` edge labelled with the field is a rule whose postconditions
+ * assign it.
+ *
+ * The write list is sound and incomplete by construction — see
+ * `ingest/writes.rs` for what it declines to guess at — so the panel showing it
+ * says as much rather than implying it is the whole set.
+ */
+export function fieldLinks(edges: readonly Edge[], node: Node | null): FieldLinks {
+  const points = new Map<string, string>();
+  const written = new Map<string, string[]>();
+  if (node === null) {
+    return { points, written };
+  }
+
+  for (const edge of edges) {
+    if (edge.from === node.id && (edge.kind === "field" || edge.kind === "relationship")) {
+      points.set(edge.label, edge.to);
+    }
+    if (edge.to === node.id && edge.kind === "mutates") {
+      const rules = written.get(edge.label);
+      if (rules) {
+        if (!rules.includes(edge.from)) {
+          rules.push(edge.from);
+        }
+      } else {
+        written.set(edge.label, [edge.from]);
+      }
+    }
+  }
+  return { points, written };
 }

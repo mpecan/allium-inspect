@@ -78,6 +78,14 @@
     </div>
   {/if}
 
+  <div class="what">
+    <h2>What someone can do</h2>
+    <p class="prose hint">
+      Each heading is a surface and the actor it faces. Pick one of its
+      operations to fire it, and the panel on the right shows what changed.
+    </p>
+  </div>
+
   {#each groups as group (group.label)}
     <div class="group">
       <p class="eyebrow">{group.label}</p>
@@ -139,6 +147,23 @@
 </section>
 
 <style>
+  /* The picker is the panel a reader has to use first, and it opened straight
+   * into `ARCHIVECONTROLS · IDENTITY/IDENTITYOWNER` with no sentence saying
+   * what any of it was. The two panels either side both explain themselves. */
+  .what {
+    padding-bottom: var(--gap-3);
+    border-bottom: 1px solid var(--line);
+  }
+
+  h2 {
+    margin: 0;
+    font-size: var(--t-small);
+    font-weight: 500;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--ink);
+  }
+
   .picker {
     display: flex;
     flex-direction: column;
