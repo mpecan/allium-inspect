@@ -352,9 +352,10 @@ fn candidate_kinds(kind: EdgeKind) -> &'static [NodeKind] {
             &[NodeKind::Entity, NodeKind::Value, NodeKind::Variant]
         }
         EdgeKind::IdentifiedBy => &[NodeKind::Entity, NodeKind::External],
-        // A sum type is an entity, and a variant of one is drawn as a variant —
-        // so a `variant X : Y` where Y is itself a variant resolves too.
-        EdgeKind::VariantOf => &[NodeKind::Entity, NodeKind::Variant],
+        // `VariantOf` is deliberately not listed. A sum type is an entity and a
+        // variant of one is drawn as a variant, and the fallback already allows
+        // both — a narrower arm here would change no outcome, which is the sort
+        // of code that looks like a decision and is not one.
         _ => &[NodeKind::Entity, NodeKind::Value, NodeKind::Variant, NodeKind::Enum],
     }
 }
