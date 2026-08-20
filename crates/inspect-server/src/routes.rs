@@ -39,11 +39,23 @@ struct Assets;
 /// What `/api/health` answers.
 #[derive(Serialize)]
 struct Health {
+    /// Whether the specification is currently in good order.
+    ///
+    /// False for either of two different problems, which the fields below tell
+    /// apart: the reload itself failed, or it succeeded and the spec it read
+    /// carries error-severity diagnostics. The second is the common one — a
+    /// spec that stops parsing mid-edit still produces a document describing
+    /// what is wrong, so the graph rebuilds fine and is simply reporting an
+    /// error. Saying `ok` there would be reading the fact that the *tool*
+    /// worked as a claim about the *spec*.
     ok: bool,
     allium_version: String,
     modules: Vec<String>,
     /// Why the last reload failed, when it did.
     error: Option<String>,
+    /// How many error-severity diagnostics the current spec carries.
+    errors: usize,
+    warnings: usize,
 }
 
 /// The router, with `state` behind every API route.
@@ -72,11 +84,16 @@ pub async fn serve(listener: tokio::net::TcpListener, state: AppState) -> std::i
 
 async fn health(State(state): State<AppState>) -> Json<Health> {
     let inspection = state.get();
+    let count =
+        |severity| inspection.graph.diagnostics.iter().filter(|d| d.severity == severity).count();
+    let errors = count(inspect_model::Severity::Error);
     Json(Health {
-        ok: state.error().is_none(),
+        ok: state.error().is_none() && errors == 0,
         allium_version: inspection.graph.allium_version.clone(),
         modules: inspection.modules().map(ToOwned::to_owned).collect(),
         error: state.error(),
+        errors,
+        warnings: count(inspect_model::Severity::Warning),
     })
 }
 
@@ -186,6 +203,59 @@ mod tests {
         assert_eq!(json["allium_version"], "allium 3.5.3");
         assert_eq!(json["modules"][0], "catalogue");
         assert_eq!(json["error"], Value::Null);
+    }
+
+    #[tokio::test]
+    async fn health_is_not_ok_when_the_spec_itself_carries_an_error() {
+        // The common case, and the one worth getting right: a spec that stops
+        // parsing mid-edit still produces a document describing what is wrong,
+        // so the reload succeeds and the graph rebuilds. Reporting `ok` there
+        // would read "the tool worked" as "the spec is fine".
+        let mut graph = inspect_model::SpecGraph::new("v");
+        graph.diagnostics.push(inspect_model::Diagnostic {
+            severity: inspect_model::Severity::Error,
+            message: "expected '{'".to_owned(),
+            code: None,
+            location: None,
+            module: "catalogue".to_owned(),
+            node: None,
+        });
+        graph.diagnostics.push(inspect_model::Diagnostic {
+            severity: inspect_model::Severity::Warning,
+            message: "a state is never assigned".to_owned(),
+            code: None,
+            location: None,
+            module: "catalogue".to_owned(),
+            node: None,
+        });
+
+        let state = AppState::new(Inspection::from_parts(graph, Vec::new()));
+        let (_, body) = get(router(state), "/api/health").await;
+        let json: Value = serde_json::from_str(&body).expect("JSON");
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["errors"], 1);
+        assert_eq!(json["warnings"], 1);
+        assert_eq!(json["error"], Value::Null, "the reload itself was fine");
+    }
+
+    #[tokio::test]
+    async fn health_counts_warnings_without_calling_the_spec_unwell() {
+        // Warnings are the normal state of a spec under development; a tool
+        // that flagged them as failure would cry wolf constantly.
+        let mut graph = inspect_model::SpecGraph::new("v");
+        graph.diagnostics.push(inspect_model::Diagnostic {
+            severity: inspect_model::Severity::Warning,
+            message: "unused".to_owned(),
+            code: None,
+            location: None,
+            module: "m".to_owned(),
+            node: None,
+        });
+        let state = AppState::new(Inspection::from_parts(graph, Vec::new()));
+        let (_, body) = get(router(state), "/api/health").await;
+        let json: Value = serde_json::from_str(&body).expect("JSON");
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["warnings"], 1);
     }
 
     #[tokio::test]

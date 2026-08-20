@@ -1,0 +1,182 @@
+# allium-inspect
+
+A local tool that runs the `allium` CLI over a spec set and serves an explorable
+graph and a rule simulator in a browser. See `README.md` for what it does and
+why; this file is about working on it.
+
+## Layout
+
+```
+crates/inspect-model   CLI JSON → one linked SpecGraph, plus view projections
+crates/inspect-sim     three-valued evaluator, world, step engine
+crates/inspect-server  axum routes; the built UI embedded via rust-embed
+apps/inspect           args, a free port, a browser, a file watcher
+ui                     Svelte 5; wire types generated from the Rust by ts-rs
+```
+
+## Stipulations
+
+These are the decisions everything else rests on. Changing one is a decision to
+make deliberately, not a refactor to make in passing.
+
+### 1. The simulator never guesses
+
+An Allium expression can be true, false, or **undecidable by this simulator**.
+The third case is not a defect to be papered over; it is the honest answer, and
+`Truth::Unknown` carries the sub-expression and span that could not be settled.
+
+Two failure modes to watch for in any change:
+
+- treating unknown as false — rules get reported blocked by a precondition
+  nothing checked;
+- treating unknown as true — rules fire that should not have.
+
+Both make the simulator state a conclusion it did not reach, which is worse than
+useless in a tool people use to trust a specification.
+
+**An unknown with no reason is indistinguishable from a bug.** Every path that
+returns `Value::Unknown` must attach an `Unresolved` saying which sub-expression
+and why. `crates/inspect-sim/tests/eval.rs` asserts this as a property.
+
+### 2. Determinism is not negotiable
+
+Ordered maps throughout, monotonic entity ids, and `now` is a field the user
+advances — never a reading of the system clock. The same world and event produce
+a byte-identical outcome.
+
+Everything downstream assumes it: snapshot tests, a shared link, a diff between
+two versions of a spec, and mutation testing having any signal at all. `HashMap`
+iteration order or `Instant::now()` anywhere in the two pure crates breaks all
+four at once.
+
+### 3. Show what the author wrote
+
+Clause and expression text is sliced from the spec source by byte span, never
+reconstructed from the AST. The person reading the panel wrote the file; showing
+them a normalised spelling of their own rule is a small lie that costs trust.
+
+The one processing applied is dropping `--` comments from the collapsed one-line
+form, because a surface's `exposes` block is mostly prose in a real spec and
+collapsing it verbatim buries the field list in an essay. The untouched text is
+one click away in the source strip.
+
+### 4. Byte offsets are not string indices
+
+The parser counts **bytes**. JavaScript indexes strings in **UTF-16 units**. A
+person reading a column expects **characters**. All three agree for ASCII, which
+is exactly why conflating them survives every test written against an ASCII
+fixture and then puts the highlight a line off on the first spec with an em-dash
+in a comment — which is every real spec.
+
+Any test touching spans must build them from byte offsets
+(`TextEncoder().encode(text.slice(0, at)).length`), not from `indexOf`.
+
+### 5. The CLI is reached only through a trait
+
+`AlliumRunner` is the single impure seam in `inspect-model`. Ingestion and
+simulation are tested against recorded real output with no `allium` installed.
+
+Recordings live in `crates/inspect-model/tests/fixtures/cli/` and are stamped
+with the CLI version that produced them; a test fails loudly when the installed
+version differs. Refresh with `just refresh-fixtures` and **read the diff** — a
+shape change upstream is exactly what those recordings exist to surface.
+
+Hand-built fixtures prove the code does what you believed the CLI emits. Only
+recorded output proves the belief was right. Four wrong beliefs have been caught
+this way so far, including `external entity` being its own AST block kind and a
+when-guard naming its target `action`.
+
+### 6. Ingest all four commands
+
+`model` describes entities and carries no spans. `parse` is the only source of
+rules, surfaces, actors, invariants and positions. `plan` supplies the trigger →
+rule → entity chain already computed. `analyse` contributes findings. The passes
+run in that order per file, and linking runs once over the whole set.
+
+The expression trees go in `Program`, not in `SpecGraph`. The graph is what the
+browser draws and is under half a megabyte for a five-module spec set; the ASTs
+are an order of magnitude larger and only the simulator reads them.
+
+### 7. Gates must be able to fail
+
+Every gate is driven in both directions by `scripts/gates-selftest.sh`, which
+runs inside `just check`. A gate that cannot fail is worse than no gate: it
+reports success and suppresses scrutiny.
+
+Shapes that have shipped green-forever in sister repos:
+
+- `find … | while read; do status=1; done` — the body is a subshell, so the
+  assignment is discarded and the gate always exits 0. Use `done < <(find …)`.
+- `covered=$(grep -c '^DA:' f | grep -v ',0$')` — a *count* piped into a filter,
+  so the value is always 1.
+- `grep -rql` — `-q` suppresses the list `-l` asks for.
+
+**When you add or change a gate, prove both directions**: construct an input that
+must fail, see the non-zero exit, then confirm the clean tree still passes.
+
+### 8. Never edit a shell script while it is running
+
+Bash reads a script incrementally by byte offset. Editing one mid-execution makes
+it resume mid-token. This happened here: a 16-minute mutation run completed and
+then died in its own scoring step on `cope: command not found`.
+
+## Quality gates
+
+| Gate | Recipe | In `check`? |
+|---|---|---|
+| Format | `just fmt-check` | yes |
+| Clippy (denies unwrap/expect/panic outside tests) | `just lint` | yes |
+| Doc, warnings denied | `just doc` | yes |
+| Tests | `just test` | yes |
+| File size — 500 warn, 700 fail; tests exempt | `just file-size` | yes |
+| Gate self-test | `just gates-selftest` | yes |
+| Generated types in sync | `just types-check` | yes |
+| Frontend typecheck and tests | `just ui-check`, `just ui-test` | yes |
+| Coverage freshness | `just coverage-fresh` | yes |
+| **Mutation debt** | `just mutation-debt` | yes, sub-second |
+| Coverage measurement | `just coverage-check` | `check-all` |
+| **Mutation run** | `just mutants` | `check-all` |
+| Dependency audit | `just deny` | `check-all` |
+
+**Coverage** has a floor in `scripts/coverage-floor.txt` that `just
+coverage-ratchet` raises toward 95% and never lowers. It is enforced by proxy in
+the hot path: `coverage-check` writes a receipt, and the sub-second
+`coverage-fresh` blocks once HEAD is more than ten Rust-touching commits past it.
+So `check` says *coverage was measured recently and cleared the floor*, not
+*coverage passes now*; the drift bound is what keeps that gap small.
+
+**Mutation is a decision, not a step.** It is the strongest signal here —
+coverage says a line ran, mutation asks whether any assertion would notice it
+changing — and it costs about twenty minutes for a full pass. Run it when the
+assurance is worth buying. What runs automatically is the debt gate, which
+measures Rust lines changed since the last recorded run (working tree included,
+untracked files included) and escalates: silent under 250, warns to 500, blocks
+past that or past 20 Rust-touching commits.
+
+A green `just check` therefore says: it compiles, it is linted, its tests pass,
+coverage was recently measured, and mutation is not overdue. It does **not** say
+the tests would notice the code changing. Only `just mutants` says that.
+
+## Definition of done
+
+1. `just check` exits 0 — the whole recipe, not the part you ran.
+2. Tests you wrote ran and passed, and you saw them fail first.
+3. No new code is unreachable from a test or a running path.
+4. Every new dependency has a one-line rent comment in `Cargo.toml` saying who
+   uses it and for what.
+5. Anything you could not finish is stated plainly in your summary, not left
+   implied by silence.
+6. **Anything touching the graph or the simulator has been run in the browser.**
+   Not reviewed — run. Three defects shipped past a green suite and were found
+   in the first minute of using it: a duplicate list key that unmounted the
+   whole canvas, byte-versus-UTF-16 drift in the source panel, and every
+   invariant reporting "could not be checked" while the panel claimed to check
+   them. `just run crates/inspect-model/tests/fixtures/specs/` is two seconds.
+
+## Commit conventions
+
+- Conventional Commits: `type(scope): description`
+- Types: `feat`, `fix`, `docs`, `test`, `refactor`, `chore`, `ci`, `perf`
+- Scopes: `model`, `sim`, `server`, `app`, `ui`
+- Stage explicit paths. Never `git add -A` — it sweeps in whatever else is in
+  the tree.

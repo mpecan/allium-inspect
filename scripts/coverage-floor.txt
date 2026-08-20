@@ -1,4 +1,4 @@
 # The enforced line-coverage floor, in percent.
 # Raised by 'just coverage-ratchet' when a measurement clears it by 2 points.
 # Never lowered: dropping the floor to make a red run green defeats the gate.
-85
+93

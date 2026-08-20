@@ -244,11 +244,18 @@ impl<'a> Application<'a> {
         let mut evaluated = self.evaluate(value_node);
         // A bare name on the right of a status assignment is a state, the same
         // reading a comparison makes.
+        //
+        // Keyed on the field's *declared states*, not on it having a lifecycle:
+        // a status field may declare `open | returned` and no transitions at
+        // all, and gating on the transition graph leaves every such assignment
+        // undecided. Checking the states also rejects a misspelling instead of
+        // inventing a state nothing declares.
         if evaluated.value.is_unknown()
-            && let Some(state) = bare_name(value_node)
-            && self.lifecycle(&id, &field).is_some()
+            && let Some(name) = bare_name(value_node)
+            && let Some(entity) = self.world.instance(&id).map(|instance| instance.entity.clone())
+            && let Some(state) = self.declared_state(&entity, &field, &name)
         {
-            evaluated = Evaluation { value: Value::Enum(state), unresolved: Vec::new() };
+            evaluated = Evaluation { value: state, unresolved: Vec::new() };
         }
         unresolved.extend(evaluated.unresolved);
 
