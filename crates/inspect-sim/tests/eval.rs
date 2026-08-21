@@ -351,6 +351,45 @@ fn ordering_across_incomparable_kinds_is_undecided_and_says_why() {
 }
 
 #[test]
+fn an_operator_that_could_not_be_applied_quotes_both_sides() {
+    // The note names the two kinds, and the panel shows it beside the text it
+    // is about — so the span has to cover the whole comparison rather than one
+    // operand or neither. A note pointing at nothing sends the reader looking
+    // for a line the tool never told them.
+    let source = "requires: name < window";
+    let world = library();
+    let env = Env::new(&world, "lending", source)
+        .bind("name", Value::Str("Ada".to_owned()))
+        .bind("window", Value::Duration(1000));
+
+    let at = |text: &str| {
+        let start = source.find(text).expect("present");
+        Expr::Ident(Ident {
+            span: AstSpan { start, end: start + text.len() },
+            name: text.to_owned(),
+        })
+    };
+    let node = compare(at("name"), "Lt", at("window"));
+    let note = &eval(&node, &env).unresolved[0];
+    assert_eq!(note.expression.as_deref(), Some("name < window"), "{note:?}");
+}
+
+#[test]
+fn arithmetic_that_could_not_be_applied_quotes_both_sides_too() {
+    let source = "ensures: now + name";
+    let world = library();
+    let env = Env::new(&world, "lending", source).bind("name", Value::Str("Ada".to_owned()));
+
+    let start = source.find("now").expect("present");
+    let left = Expr::Now { span: AstSpan { start, end: start + 3 } };
+    let at = source.find("name").expect("present");
+    let right =
+        Expr::Ident(Ident { span: AstSpan { start: at, end: at + 4 }, name: "name".to_owned() });
+    let note = &eval(&arithmetic(left, "Add", right), &env).unresolved[0];
+    assert_eq!(note.expression.as_deref(), Some("now + name"), "{note:?}");
+}
+
+#[test]
 fn the_operators_are_the_language_s_own_and_cannot_be_anything_else() {
     // This used to assert that an operator the evaluator did not recognise —
     // `Spaceship`, say — was reported by name rather than guessed at. It could
