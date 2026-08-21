@@ -1,4 +1,4 @@
-//! Literals: numbers, booleans, durations and sets.
+//! Literals: numbers, durations and sets.
 //!
 //! Each of these is a small parse with one thing worth getting right, and each
 //! of those things is a place where a plausible shortcut produces a wrong answer
@@ -7,40 +7,30 @@
 //! - a number is reported as *text* so digit separators survive, and
 //!   `2_000_000_000` parsed naively is not a number at all;
 //! - a duration carries a unit, and `21.days` reduced to `21` compares equal to
-//!   twenty-one of anything;
-//! - a boolean may arrive as either a JSON boolean or the word.
+//!   twenty-one of anything.
+//!
+//! Booleans used to be here too, for a third reason that turned out not to be
+//! one: the JSON could carry either a real boolean or the word, so both were
+//! handled. Typed, `BoolLiteral` holds a `bool` and there is nothing to parse.
 
-use serde_json::Value as Json;
+use allium_parser::ast::Expr;
 
-use super::{Evaluation, ast::text_of};
+use super::Evaluation;
 use crate::{eval::Env, value::Value};
 
 /// `20`, `2_000_000_000`, `1.5`.
 #[must_use]
-pub fn number(inner: &Json, node: &Json, env: &Env<'_>) -> Evaluation {
-    let raw = text_of(inner).replace('_', "");
+pub fn number(written: &str, at: &Expr, env: &Env<'_>) -> Evaluation {
+    let raw = written.replace('_', "");
     if raw.is_empty() {
-        return Evaluation::unknown("a number literal with no digits", node, env.source);
+        return Evaluation::unknown("a number literal with no digits", at, env.source);
     }
     if let Ok(whole) = raw.parse::<i64>() {
         return Evaluation::known(Value::Int(whole));
     }
     match raw.parse::<f64>() {
         Ok(decimal) => Evaluation::known(Value::Float(decimal)),
-        Err(_) => Evaluation::unknown(format!("`{raw}` is not a number"), node, env.source),
-    }
-}
-
-/// `true`, `false`.
-#[must_use]
-pub fn boolean(inner: &Json, node: &Json, env: &Env<'_>) -> Evaluation {
-    if let Some(value) = inner.get("value").and_then(Json::as_bool) {
-        return Evaluation::known(Value::Bool(value));
-    }
-    match text_of(inner).as_str() {
-        "true" => Evaluation::known(Value::Bool(true)),
-        "false" => Evaluation::known(Value::Bool(false)),
-        other => Evaluation::unknown(format!("`{other}` is not a boolean"), node, env.source),
+        Err(_) => Evaluation::unknown(format!("`{raw}` is not a number"), at, env.source),
     }
 }
 
@@ -51,24 +41,23 @@ pub fn boolean(inner: &Json, node: &Json, env: &Env<'_>) -> Evaluation {
 /// comparing a duration to a bare number is reported as incomparable instead of
 /// quietly answered.
 #[must_use]
-pub fn duration(inner: &Json, node: &Json, env: &Env<'_>) -> Evaluation {
-    let raw = text_of(inner);
+pub fn duration(raw: &str, at: &Expr, env: &Env<'_>) -> Evaluation {
     let Some((amount, unit)) = raw.split_once('.') else {
-        return Evaluation::unknown(format!("`{raw}` is not a duration"), node, env.source);
+        return Evaluation::unknown(format!("`{raw}` is not a duration"), at, env.source);
     };
     let Ok(amount) = amount.replace('_', "").parse::<i64>() else {
-        return Evaluation::unknown(format!("`{raw}` has no amount"), node, env.source);
+        return Evaluation::unknown(format!("`{raw}` has no amount"), at, env.source);
     };
     let Some(millis) = unit_millis(unit) else {
         return Evaluation::unknown(
             format!("`{unit}` is not a unit of time this evaluator knows"),
-            node,
+            at,
             env.source,
         );
     };
     match amount.checked_mul(millis) {
         Some(total) => Evaluation::known(Value::Duration(total)),
-        None => Evaluation::unknown(format!("`{raw}` is too long to measure"), node, env.source),
+        None => Evaluation::unknown(format!("`{raw}` is too long to measure"), at, env.source),
     }
 }
 
@@ -85,31 +74,24 @@ fn unit_millis(unit: &str) -> Option<i64> {
     }
 }
 
-/// `{a, b, c}`.
+/// `{a, b, c}`, and the ordered `[a, b, c]` beside it.
 #[must_use]
-pub fn set_literal(inner: &Json, env: &Env<'_>) -> Evaluation {
+pub fn set_literal(elements: &[Expr], env: &Env<'_>) -> Evaluation {
     let mut unresolved = Vec::new();
-    let items = inner
-        .get("items")
-        .or_else(|| inner.get("elements"))
-        .and_then(Json::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .map(|item| {
-                    let evaluated = super::eval(item, env);
-                    unresolved.extend(evaluated.unresolved);
-                    evaluated.value
-                })
-                .collect()
+    let items = elements
+        .iter()
+        .map(|item| {
+            let evaluated = super::eval(item, env);
+            unresolved.extend(evaluated.unresolved);
+            evaluated.value
         })
-        .unwrap_or_default();
+        .collect();
     Evaluation { value: Value::Set(items), unresolved }
 }
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use allium_parser::ast::Ident;
 
     use super::*;
     use crate::world::World;
@@ -118,14 +100,24 @@ mod tests {
         Env::new(world, "m", "")
     }
 
+    /// The expression these are read out of. Only its span is used — for the
+    /// note an undecided literal carries — so one shape does for both.
+    fn literal(value: &str) -> Expr {
+        Expr::NumberLiteral {
+            span: allium_parser::Span { start: 0, end: 1 },
+            value: value.to_owned(),
+        }
+    }
+
+    fn at() -> Expr {
+        Expr::Null { span: allium_parser::Span { start: 0, end: 1 } }
+    }
+
     fn evaluate(tag: &str, value: &str) -> Evaluation {
         let world = World::new();
-        let node = json!({ tag: {"span": {"start": 0, "end": 1}, "value": value} });
-        let (_, inner) = super::super::ast::tagged(&node).expect("tagged");
         match tag {
-            "NumberLiteral" => number(inner, &node, &env(&world)),
-            "BoolLiteral" => boolean(inner, &node, &env(&world)),
-            _ => duration(inner, &node, &env(&world)),
+            "NumberLiteral" => number(value, &at(), &env(&world)),
+            _ => duration(value, &at(), &env(&world)),
         }
     }
 
@@ -161,23 +153,11 @@ mod tests {
         assert!(evaluated.unresolved[0].reason.contains("no digits"));
     }
 
-    #[test]
-    fn booleans_parse_from_the_word_or_the_json_value() {
-        assert_eq!(evaluate("BoolLiteral", "true").value, Value::Bool(true));
-        assert_eq!(evaluate("BoolLiteral", "false").value, Value::Bool(false));
-
-        let world = World::new();
-        let node = json!({"BoolLiteral": {"value": true}});
-        let (_, inner) = super::super::ast::tagged(&node).expect("tagged");
-        assert_eq!(boolean(inner, &node, &env(&world)).value, Value::Bool(true));
-    }
-
-    #[test]
-    fn something_that_is_not_a_boolean_says_so() {
-        let evaluated = evaluate("BoolLiteral", "maybe");
-        assert_eq!(evaluated.value, Value::Unknown);
-        assert!(evaluated.unresolved[0].reason.contains("not a boolean"));
-    }
+    // Booleans used to be tested here twice: once for the word `"true"` and
+    // once for a real JSON `true`, because the document could carry either and
+    // the reader handled both. `BoolLiteral` holds a `bool`, so there is
+    // nothing left to parse and nothing left to get wrong — the dispatcher
+    // reads the field.
 
     #[test]
     fn every_unit_of_time_reduces_to_milliseconds() {
@@ -245,11 +225,8 @@ mod tests {
     #[test]
     fn a_set_literal_evaluates_its_elements() {
         let world = World::new();
-        let node = json!({"items": [
-            {"NumberLiteral": {"value": "1"}},
-            {"NumberLiteral": {"value": "2"}},
-        ]});
-        let evaluated = set_literal(&node, &env(&world));
+        let elements = [literal("1"), literal("2")];
+        let evaluated = set_literal(&elements, &env(&world));
         assert_eq!(evaluated.value, Value::Set(vec![Value::Int(1), Value::Int(2)]));
         assert!(evaluated.unresolved.is_empty());
     }
@@ -257,9 +234,11 @@ mod tests {
     #[test]
     fn a_set_literal_carries_what_it_could_not_decide() {
         let world = World::new();
-        let node =
-            json!({"items": [{"Ident": {"span": {"start": 0, "end": 1}, "name": "absent"}}]});
-        let evaluated = set_literal(&node, &env(&world));
+        let elements = [Expr::Ident(Ident {
+            span: allium_parser::Span { start: 0, end: 1 },
+            name: "absent".to_owned(),
+        })];
+        let evaluated = set_literal(&elements, &env(&world));
         assert_eq!(evaluated.value, Value::Set(vec![Value::Unknown]));
         assert_eq!(evaluated.unresolved.len(), 1);
     }
@@ -267,6 +246,6 @@ mod tests {
     #[test]
     fn an_empty_set_literal_is_an_empty_collection() {
         let world = World::new();
-        assert_eq!(set_literal(&json!({}), &env(&world)).value, Value::Set(Vec::new()));
+        assert_eq!(set_literal(&[], &env(&world)).value, Value::Set(Vec::new()));
     }
 }

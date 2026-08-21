@@ -29,6 +29,7 @@
 
 mod analyse;
 mod ast;
+mod clauses;
 mod json;
 mod link;
 mod model;
@@ -184,6 +185,11 @@ pub fn ingest<R: AlliumRunner, S: SourceReader>(
 
         let parsed = allium_parser::parse(&source);
         let file = path.to_string_lossy();
+        // The trees first, straight off allium's typed module: the graph pass
+        // below reads them back for the write-edges rather than parsing the
+        // same clauses a second time out of JSON.
+        clauses::ingest(&parsed.module, &module, &mut into.program);
+
         let ast = ast::document(&parsed, &source, &file)
             .map_err(|source| IngestError::Ast { path: path.clone(), source })?;
         parse::ingest(&ast, &module, &file, &source, &mut into);

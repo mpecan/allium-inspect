@@ -20,14 +20,20 @@
 //! timestamps subtract to a duration; a duration plus an integer is nothing at
 //! all. Collapsing them to integers would let `due_at + 21` typecheck its way
 //! to an answer that means nothing.
+//!
+//! Each operator is one of allium's own closed enums, so none of the three
+//! functions below has a "that is not an operator I know" branch any more. One
+//! of those branches was unreachable: a comparison could never carry `Implies`,
+//! because the language puts it on a connective. Reading the operator out of a
+//! string is what made it look possible.
 
 use std::ops::Not;
 
-use serde_json::Value as Json;
+use allium_parser::ast::{BinaryOp, ComparisonOp, Expr, LogicalOp};
 
 use super::{
     Env, Evaluation, Unresolved,
-    ast::{bare_name, span_of, string_at, truth_value},
+    ast::{bare_name, span_of, truth_value},
     eval,
 };
 use crate::{truth::Truth, value::Value};
@@ -39,12 +45,12 @@ use crate::{truth::Truth, value::Value};
 /// a state — which is what `copy.status = available` means. When neither side
 /// says so, an unbound name stays undecided, so a missing rule argument is
 /// reported rather than quietly satisfied.
-pub fn compare(inner: &Json, env: &Env<'_>) -> Evaluation {
-    let (Some(left_node), Some(right_node)) = (inner.get("left"), inner.get("right")) else {
-        return Evaluation::unknown("a comparison missing a side", inner, env.source);
-    };
-    let operator = string_at(inner, "op").unwrap_or_default();
-
+pub fn compare(
+    left_node: &Expr,
+    operator: ComparisonOp,
+    right_node: &Expr,
+    env: &Env<'_>,
+) -> Evaluation {
     let mut left = eval(left_node, env);
     let mut right = eval(right_node, env);
 
@@ -52,124 +58,142 @@ pub fn compare(inner: &Json, env: &Env<'_>) -> Evaluation {
         && right.value.is_unknown()
         && let Some(state) = bare_name(right_node)
     {
-        right = Evaluation::known(Value::Enum(state));
+        right = Evaluation::known(Value::Enum(state.to_owned()));
     } else if matches!(right.value, Value::Enum(_))
         && left.value.is_unknown()
         && let Some(state) = bare_name(left_node)
     {
-        left = Evaluation::known(Value::Enum(state));
+        left = Evaluation::known(Value::Enum(state.to_owned()));
     }
 
-    let (left_truth, right_truth) = (left.truth(), right.truth());
     let mut unresolved = left.unresolved;
     unresolved.extend(right.unresolved);
 
-    let truth = match operator.as_str() {
-        "Eq" => left.value.equals(&right.value),
-        "NotEq" => left.value.equals(&right.value).not(),
-        "Lt" | "LtEq" | "Gt" | "GtEq" => match left.value.compare(&right.value) {
-            Some(ordering) => Truth::from_bool(match operator.as_str() {
-                "Lt" => ordering.is_lt(),
-                "LtEq" => ordering.is_le(),
-                "Gt" => ordering.is_gt(),
+    let truth = match operator {
+        ComparisonOp::Eq => left.value.equals(&right.value),
+        ComparisonOp::NotEq => left.value.equals(&right.value).not(),
+        ordering_op => match left.value.compare(&right.value) {
+            Some(ordering) => Truth::from_bool(match ordering_op {
+                ComparisonOp::Lt => ordering.is_lt(),
+                ComparisonOp::LtEq => ordering.is_le(),
+                ComparisonOp::Gt => ordering.is_gt(),
                 _ => ordering.is_ge(),
             }),
             None => {
-                unresolved.push(Unresolved {
-                    reason: format!(
-                        "{} cannot be ordered against {}",
-                        left.value.described(),
-                        right.value.described()
-                    ),
-                    expression: span_of(inner)
-                        .and_then(|span| span.slice(env.source))
-                        .map(str::to_owned),
-                    span: span_of(inner),
-                });
+                unresolved.push(unorderable(&left.value, &right.value, left_node, right_node, env));
                 Truth::Unknown
             }
         },
-        "Implies" => left_truth.implies(right_truth),
-        other => {
-            unresolved.push(Unresolved {
-                reason: format!("`{other}` is not a comparison this evaluator knows"),
-                expression: None,
-                span: span_of(inner),
-            });
-            Truth::Unknown
-        }
     };
 
     Evaluation { value: truth_value(truth), unresolved }
 }
 
+/// Why two values could not be ordered, quoting the pair.
+fn unorderable(
+    left: &Value,
+    right: &Value,
+    left_node: &Expr,
+    right_node: &Expr,
+    env: &Env<'_>,
+) -> Unresolved {
+    let span = between(left_node, right_node);
+    Unresolved {
+        reason: format!("{} cannot be ordered against {}", left.described(), right.described()),
+        expression: span.and_then(|span| span.slice(env.source)).map(str::to_owned),
+        span,
+    }
+}
+
+/// The span covering both sides of an operator.
+///
+/// The typed tree does carry a span on the operator node itself, but the two
+/// sides are what a reader needs to see and the operator's own span is not
+/// passed down here. Joining the operands gives the same text without threading
+/// a third argument through every call.
+fn between(left: &Expr, right: &Expr) -> Option<inspect_model::Span> {
+    let (start, end) = (span_of(left)?, span_of(right)?);
+    Some(inspect_model::Span::new(start.start, end.end))
+}
+
 /// `and`, `or`, `implies`.
-pub fn logical(inner: &Json, env: &Env<'_>) -> Evaluation {
-    let (Some(left_node), Some(right_node)) = (inner.get("left"), inner.get("right")) else {
-        return Evaluation::unknown("a connective missing a side", inner, env.source);
-    };
+pub fn logical(
+    left_node: &Expr,
+    operator: LogicalOp,
+    right_node: &Expr,
+    env: &Env<'_>,
+) -> Evaluation {
     let left = eval(left_node, env);
     let right = eval(right_node, env);
     let (left_truth, right_truth) = (left.truth(), right.truth());
     let mut unresolved = left.unresolved;
     unresolved.extend(right.unresolved);
 
-    let truth = match string_at(inner, "op").unwrap_or_default().as_str() {
-        "And" => left_truth.and(right_truth),
-        "Or" => left_truth.or(right_truth),
-        "Implies" => left_truth.implies(right_truth),
-        other => {
-            unresolved.push(Unresolved {
-                reason: format!("`{other}` is not a connective this evaluator knows"),
-                expression: None,
-                span: span_of(inner),
-            });
-            Truth::Unknown
-        }
+    let truth = match operator {
+        LogicalOp::And => left_truth.and(right_truth),
+        LogicalOp::Or => left_truth.or(right_truth),
+        LogicalOp::Implies => left_truth.implies(right_truth),
     };
     Evaluation { value: truth_value(truth), unresolved }
 }
 
 /// `+`, `-`, `*`, `/` over numbers, durations and timestamps.
-pub fn arithmetic(inner: &Json, env: &Env<'_>) -> Evaluation {
-    let (Some(left_node), Some(right_node)) = (inner.get("left"), inner.get("right")) else {
-        return Evaluation::unknown("an operation missing a side", inner, env.source);
-    };
+pub fn arithmetic(
+    left_node: &Expr,
+    operator: BinaryOp,
+    right_node: &Expr,
+    env: &Env<'_>,
+) -> Evaluation {
     let left = eval(left_node, env);
     let right = eval(right_node, env);
     let mut unresolved = left.unresolved;
     unresolved.extend(right.unresolved);
-    let operator = string_at(inner, "op").unwrap_or_default();
 
-    let value = match (&left.value, operator.as_str(), &right.value) {
+    let value = match (&left.value, operator, &right.value) {
         // A timestamp plus a duration is a timestamp; the units are the point.
-        (Value::Timestamp(at), "Add", Value::Duration(by)) => Value::Timestamp(at + by),
-        (Value::Timestamp(at), "Sub", Value::Duration(by)) => Value::Timestamp(at - by),
-        (Value::Timestamp(later), "Sub", Value::Timestamp(earlier)) => {
+        (Value::Timestamp(at), BinaryOp::Add, Value::Duration(by)) => Value::Timestamp(at + by),
+        (Value::Timestamp(at), BinaryOp::Sub, Value::Duration(by)) => Value::Timestamp(at - by),
+        (Value::Timestamp(later), BinaryOp::Sub, Value::Timestamp(earlier)) => {
             Value::Duration(later - earlier)
         }
-        (Value::Duration(left), "Add", Value::Duration(right)) => Value::Duration(left + right),
-        (Value::Duration(left), "Sub", Value::Duration(right)) => Value::Duration(left - right),
-        (Value::Int(left), _, Value::Int(right)) => match operator.as_str() {
-            "Add" => Value::Int(left + right),
-            "Sub" => Value::Int(left - right),
-            "Mul" => Value::Int(left * right),
-            "Div" if *right != 0 => Value::Int(left / right),
-            _ => Value::Unknown,
+        (Value::Duration(left), BinaryOp::Add, Value::Duration(right)) => {
+            Value::Duration(left + right)
+        }
+        (Value::Duration(left), BinaryOp::Sub, Value::Duration(right)) => {
+            Value::Duration(left - right)
+        }
+        (Value::Int(left), _, Value::Int(right)) => match operator {
+            BinaryOp::Add => Value::Int(left + right),
+            BinaryOp::Sub => Value::Int(left - right),
+            BinaryOp::Mul => Value::Int(left * right),
+            BinaryOp::Div if *right != 0 => Value::Int(left / right),
+            BinaryOp::Div => Value::Unknown,
         },
         _ => Value::Unknown,
     };
 
     if value.is_unknown() && !left.value.is_unknown() && !right.value.is_unknown() {
+        let span = between(left_node, right_node);
         unresolved.push(Unresolved {
             reason: format!(
-                "`{operator}` is not defined between {} and {}",
+                "`{}` is not defined between {} and {}",
+                name_of(operator),
                 left.value.described(),
                 right.value.described()
             ),
-            expression: span_of(inner).and_then(|span| span.slice(env.source)).map(str::to_owned),
-            span: span_of(inner),
+            expression: span.and_then(|span| span.slice(env.source)).map(str::to_owned),
+            span,
         });
     }
     Evaluation { value, unresolved }
+}
+
+/// An arithmetic operator as the spec spells it.
+fn name_of(operator: BinaryOp) -> &'static str {
+    match operator {
+        BinaryOp::Add => "+",
+        BinaryOp::Sub => "-",
+        BinaryOp::Mul => "*",
+        BinaryOp::Div => "/",
+    }
 }

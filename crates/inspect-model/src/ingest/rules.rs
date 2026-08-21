@@ -28,7 +28,6 @@ use crate::{
         TriggerSource,
     },
     ingest::{Ingestion, json, text, writes},
-    program::RuleAst,
     span::Span,
 };
 
@@ -43,14 +42,9 @@ pub fn ingest(block: &Value, module: &str, source: &str, into: &mut Ingestion) {
 
     let mut clauses = Vec::new();
     let mut trigger = None;
-    let mut ast = RuleAst::default();
 
     for item in json::array(block, "items") {
         let Some(kind) = item.get("kind") else { continue };
-        if let Some(iteration) = kind.get("For") {
-            ast.iterate = Some(iteration.clone());
-            continue;
-        }
         let Some(clause) = kind.get("Clause") else { continue };
         let keyword = json::string_or_empty(clause, "keyword");
         let span = json::span(item, "span");
@@ -60,17 +54,8 @@ pub fn ingest(block: &Value, module: &str, source: &str, into: &mut Ingestion) {
             span,
         });
 
-        let value = clause.get("value").cloned();
-        match keyword.as_str() {
-            "when" => {
-                if trigger.is_none() {
-                    trigger = clause.get("value").map(trigger_from_when);
-                    ast.when = value;
-                }
-            }
-            "requires" => ast.requires.extend(value),
-            "ensures" => ast.ensures.extend(value),
-            _ => {}
+        if keyword == "when" && trigger.is_none() {
+            trigger = clause.get("value").map(trigger_from_when);
         }
     }
 
@@ -81,9 +66,14 @@ pub fn ingest(block: &Value, module: &str, source: &str, into: &mut Ingestion) {
     let bound = trigger.as_ref().and_then(|(_, detail)| {
         Some((detail.parameters.first()?.as_str(), detail.entity.as_deref()?))
     });
-    let assigned = writes::writes(&ast.ensures, bound);
-
-    into.program.add_rule(rule_id.as_str(), ast);
+    // Read back from the program rather than gathered here. The typed pass has
+    // already taken these clauses off allium's own tree, and parsing them a
+    // second time out of JSON is how the two would come to disagree.
+    let assigned = into
+        .program
+        .rule(rule_id.as_str())
+        .map(|ast| writes::writes(&ast.ensures, bound))
+        .unwrap_or_default();
 
     for write in assigned {
         // Pointed at the entity by name; `link` resolves it, including across a

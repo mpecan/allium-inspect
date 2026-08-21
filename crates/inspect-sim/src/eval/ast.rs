@@ -1,75 +1,106 @@
-//! Small readers over the parser's JSON, and the truth/value bridge.
+//! Small readers over allium's expression tree, and the truth/value bridge.
 //!
-//! Separated from the evaluator because they are about the *shape* of the
-//! parser's output rather than about what an expression means — and because
-//! keeping them apart is what lets each be tested for what it is: these against
-//! malformed and surprising JSON, the evaluator against worlds.
+//! Separated from the evaluator because they are about the *shape* of an
+//! expression rather than about what it means.
+//!
+//! This module used to be twice as long and was mostly about JSON: which key
+//! holds the tag, whether a name is a bare string or a spanned identifier,
+//! whether a span survived being nested one level deeper than expected. None of
+//! those are questions any more. The tree arrives typed from `allium_parser`,
+//! so the shape is the compiler's problem and what is left is the two things
+//! that are genuinely about meaning.
 
+use allium_parser::ast::Expr;
 use inspect_model::Span;
-use serde_json::Value as Json;
 
 use crate::{truth::Truth, value::Value};
 
-/// The single key of a one-key object, with its value.
+/// Where `expr` is in the source.
 ///
-/// The parser's AST is a tagged union spelled `{"Ident": {...}}`, so almost
-/// every step through it is this question.
+/// Exhaustive, and that is the point: every undecided note this evaluator emits
+/// quotes the sub-expression it could not settle, and a form the language gains
+/// stops compiling here rather than producing a note with nothing to point at.
 #[must_use]
-pub fn tagged(node: &Json) -> Option<(&str, &Json)> {
-    let object = node.as_object()?;
-    if object.len() != 1 {
-        return None;
-    }
-    object.iter().next().map(|(tag, inner)| (tag.as_str(), inner))
+pub fn span_of(expr: &Expr) -> Option<Span> {
+    let span = match expr {
+        Expr::Ident(ident) => &ident.span,
+        Expr::StringLiteral(literal) => &literal.span,
+        Expr::QualifiedName(qualified) => &qualified.span,
+        Expr::BacktickLiteral { span, .. }
+        | Expr::NumberLiteral { span, .. }
+        | Expr::BoolLiteral { span, .. }
+        | Expr::Null { span }
+        | Expr::Now { span }
+        | Expr::This { span }
+        | Expr::Within { span }
+        | Expr::DurationLiteral { span, .. }
+        | Expr::SetLiteral { span, .. }
+        | Expr::ListLiteral { span, .. }
+        | Expr::ObjectLiteral { span, .. }
+        | Expr::GenericType { span, .. }
+        | Expr::MemberAccess { span, .. }
+        | Expr::OptionalAccess { span, .. }
+        | Expr::NullCoalesce { span, .. }
+        | Expr::Call { span, .. }
+        | Expr::JoinLookup { span, .. }
+        | Expr::BinaryOp { span, .. }
+        | Expr::Comparison { span, .. }
+        | Expr::LogicalOp { span, .. }
+        | Expr::Not { span, .. }
+        | Expr::In { span, .. }
+        | Expr::NotIn { span, .. }
+        | Expr::Exists { span, .. }
+        | Expr::NotExists { span, .. }
+        | Expr::Where { span, .. }
+        | Expr::With { span, .. }
+        | Expr::Pipe { span, .. }
+        | Expr::Lambda { span, .. }
+        | Expr::Conditional { span, .. }
+        | Expr::For { span, .. }
+        | Expr::ProjectionMap { span, .. }
+        | Expr::TransitionsTo { span, .. }
+        | Expr::Becomes { span, .. }
+        | Expr::Binding { span, .. }
+        | Expr::WhenGuard { span, .. }
+        | Expr::TypeOptional { span, .. }
+        | Expr::LetExpr { span, .. }
+        | Expr::Block { span, .. } => span,
+    };
+    Some(Span::new(span.start, span.end))
 }
 
-/// The `name` of a node, whether it is a bare string or a spanned identifier.
+/// The name of a bare identifier, when that is what `expr` is.
 #[must_use]
-pub fn name_of(node: &Json) -> Option<String> {
-    match node.get("name")? {
-        Json::String(text) => Some(text.clone()),
-        nested => nested.get("name")?.as_str().map(ToOwned::to_owned),
-    }
-}
-
-/// The string at `key`.
-#[must_use]
-pub fn string_at(node: &Json, key: &str) -> Option<String> {
-    node.get(key)?.as_str().map(ToOwned::to_owned)
-}
-
-/// A literal's `value`, as text.
-///
-/// Numbers arrive as strings — `{"value": "20"}`, not `{"value": 20}` — because
-/// the parser preserves how they were written, digit separators and all.
-#[must_use]
-pub fn text_of(node: &Json) -> String {
-    string_at(node, "value").unwrap_or_default()
-}
-
-/// The span of a node, whether it is tagged or already unwrapped.
-#[must_use]
-pub fn span_of(node: &Json) -> Option<Span> {
-    let source =
-        node.get("span").or_else(|| tagged(node).and_then(|(_, inner)| inner.get("span")))?;
-    let start = usize::try_from(source.get("start")?.as_u64()?).ok()?;
-    let end = usize::try_from(source.get("end")?.as_u64()?).ok()?;
-    Some(Span::new(start, end))
-}
-
-/// The name of a bare `Ident`, when that is what `node` is.
-#[must_use]
-pub fn bare_name(node: &Json) -> Option<String> {
-    match tagged(node)? {
-        ("Ident", inner) => name_of(inner),
+pub fn bare_name(expr: &Expr) -> Option<&str> {
+    match expr {
+        Expr::Ident(ident) => Some(ident.name.as_str()),
         _ => None,
     }
 }
 
-/// Whether `node` is the identifier `name`.
+/// Whether `expr` is the identifier `name`.
 #[must_use]
-pub fn is_ident_named(node: &Json, name: &str) -> bool {
-    bare_name(node).is_some_and(|found| found == name)
+pub fn is_ident_named(expr: &Expr, name: &str) -> bool {
+    bare_name(expr) == Some(name)
+}
+
+/// The text of a string literal, with any interpolation left out.
+///
+/// A spec writes `"borrowed by {member.name}"` and this evaluator has no way to
+/// fill the hole in — so it keeps the parts it can read. Nothing compares
+/// against an interpolated string in a real spec; what they are for is prose in
+/// a guidance annotation.
+#[must_use]
+pub fn literal_text(literal: &allium_parser::ast::StringLiteral) -> String {
+    use allium_parser::ast::StringPart;
+    literal
+        .parts
+        .iter()
+        .map(|part| match part {
+            StringPart::Text(text) => text.as_str(),
+            StringPart::Interpolation(_) => "",
+        })
+        .collect()
 }
 
 /// A truth as the value an expression yields.
@@ -87,75 +118,33 @@ pub fn truth_value(truth: Truth) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use allium_parser::{Span as AstSpan, ast::Ident};
 
     use super::*;
 
-    #[test]
-    fn a_tagged_node_yields_its_tag_and_body() {
-        let node = json!({"Ident": {"name": "book"}});
-        let (tag, inner) = tagged(&node).expect("one key");
-        assert_eq!(tag, "Ident");
-        assert_eq!(inner["name"], "book");
+    fn ident(name: &str) -> Expr {
+        Expr::Ident(Ident { span: AstSpan::new(3, 9), name: name.to_owned() })
     }
 
     #[test]
-    fn an_object_with_two_keys_is_not_a_tagged_node() {
-        // Picking either key would be picking one at random.
-        assert!(tagged(&json!({"a": 1, "b": 2})).is_none());
-        assert!(tagged(&json!({})).is_none());
-        assert!(tagged(&json!([1])).is_none());
-        assert!(tagged(&json!("Ident")).is_none());
-    }
-
-    #[test]
-    fn a_name_is_read_through_its_span_wrapper() {
-        let spanned = json!({"name": {"span": {"start": 0, "end": 4}, "name": "Book"}});
-        assert_eq!(name_of(&spanned).as_deref(), Some("Book"));
-        assert_eq!(name_of(&json!({"name": "Book"})).as_deref(), Some("Book"));
-    }
-
-    #[test]
-    fn something_unnamed_has_no_name() {
-        assert_eq!(name_of(&json!({})), None);
-        assert_eq!(name_of(&json!({"name": {"span": {}}})), None);
-        assert_eq!(name_of(&json!({"name": 7})), None);
-    }
-
-    #[test]
-    fn a_literal_keeps_the_text_it_was_written_as() {
-        // The parser reports `20` as the string "20", digit separators intact,
-        // which is what lets `2_000_000_000` survive to the evaluator.
-        assert_eq!(text_of(&json!({"value": "2_000_000_000"})), "2_000_000_000");
-        assert_eq!(text_of(&json!({})), "");
-    }
-
-    #[test]
-    fn a_span_is_read_tagged_or_bare() {
-        let bare = json!({"span": {"start": 3, "end": 9}});
-        assert_eq!(span_of(&bare), Some(Span::new(3, 9)));
-
-        let wrapped = json!({"Ident": {"span": {"start": 1, "end": 2}, "name": "x"}});
-        assert_eq!(span_of(&wrapped), Some(Span::new(1, 2)));
-    }
-
-    #[test]
-    fn a_partial_or_negative_span_is_none() {
-        assert_eq!(span_of(&json!({"span": {"start": 3}})), None);
-        assert_eq!(span_of(&json!({"span": {"start": -1, "end": 4}})), None);
-        assert_eq!(span_of(&json!({})), None);
+    fn every_expression_can_say_where_it_is() {
+        // The undecided note quotes the source it could not settle, so an
+        // expression with no span is one a reader cannot be shown.
+        assert_eq!(span_of(&ident("book")), Some(Span::new(3, 9)));
+        assert_eq!(span_of(&Expr::Now { span: AstSpan::new(1, 4) }), Some(Span::new(1, 4)));
+        assert_eq!(
+            span_of(&Expr::Not { span: AstSpan::new(0, 12), operand: Box::new(ident("x")) }),
+            Some(Span::new(0, 12))
+        );
     }
 
     #[test]
     fn a_bare_identifier_is_recognised_and_anything_else_is_not() {
-        assert_eq!(
-            bare_name(&json!({"Ident": {"name": "available"}})).as_deref(),
-            Some("available")
-        );
-        assert_eq!(bare_name(&json!({"NumberLiteral": {"value": "3"}})), None);
-        assert!(is_ident_named(&json!({"Ident": {"name": "config"}}), "config"));
-        assert!(!is_ident_named(&json!({"Ident": {"name": "other"}}), "config"));
-        assert!(!is_ident_named(&json!({"Now": {}}), "config"));
+        assert_eq!(bare_name(&ident("available")), Some("available"));
+        assert_eq!(bare_name(&Expr::Now { span: AstSpan::new(0, 3) }), None);
+        assert!(is_ident_named(&ident("config"), "config"));
+        assert!(!is_ident_named(&ident("other"), "config"));
+        assert!(!is_ident_named(&Expr::Now { span: AstSpan::new(0, 3) }, "config"));
     }
 
     #[test]

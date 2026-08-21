@@ -674,9 +674,10 @@ fn a_rule_the_parser_did_read_is_judged_on_its_preconditions() {
         "lending::rule::DoNothing",
         RuleAst {
             when: None,
-            requires: vec![serde_json::json!({"BoolLiteral": {
-                "span": {"start": 0, "end": 0}, "value": false,
-            }})],
+            requires: vec![allium_parser::ast::Expr::BoolLiteral {
+                span: allium_parser::Span { start: 0, end: 0 },
+                value: false,
+            }],
             ensures: Vec::new(),
             iterate: None,
         },

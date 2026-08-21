@@ -10,12 +10,18 @@
 
 use std::collections::BTreeMap;
 
+use allium_parser::{
+    Span,
+    ast::{ComparisonOp, Expr},
+};
 use inspect_model::{
     Node, NodeDetail, NodeKind, SpecGraph,
     graph::{EntityDetail, EntityField, EntityKind, TransitionEdge, TransitionGraph},
 };
 use inspect_sim::{Effect, Value, apply::Application, value::EntityId, world::World};
-use serde_json::{Value as Json, json};
+
+mod common;
+use common::*;
 
 // --- the spec -------------------------------------------------------------
 
@@ -68,7 +74,7 @@ fn world() -> (World, EntityId) {
 }
 
 /// Apply `clause` with `bindings` in scope, returning the effects and world.
-fn apply(clause: &Json, bindings: &[(&str, Value)]) -> (Vec<Effect>, Vec<String>, World) {
+fn apply(clause: &Expr, bindings: &[(&str, Value)]) -> (Vec<Effect>, Vec<String>, World) {
     let graph = spec();
     let (mut world, _) = world();
     let scope: BTreeMap<String, Value> =
@@ -84,48 +90,13 @@ fn apply(clause: &Json, bindings: &[(&str, Value)]) -> (Vec<Effect>, Vec<String>
 
 // --- building clauses -----------------------------------------------------
 
-fn ident(name: &str) -> Json {
-    json!({"Ident": {"span": {"start": 0, "end": 0}, "name": name}})
-}
-
-fn field(object: Json, name: &str) -> Json {
-    json!({"MemberAccess": {
-        "span": {"start": 0, "end": 0},
-        "object": object,
-        "field": {"span": {"start": 0, "end": 0}, "name": name},
-    }})
-}
-
-fn assign(target: Json, value: Json) -> Json {
-    json!({"Comparison": {"span": {"start": 0, "end": 0}, "left": target, "op": "Eq", "right": value}})
-}
-
-fn creation(entity: &str, fields: &[(&str, Json)]) -> Json {
-    json!({"Call": {
-        "span": {"start": 0, "end": 0},
-        "function": field(ident(entity), "created"),
-        "args": fields.iter().map(|(name, value)| json!({"Named": {
-            "name": {"span": {"start": 0, "end": 0}, "name": name},
-            "value": value,
-        }})).collect::<Vec<_>>(),
-    }})
-}
-
-fn emission(trigger: &str) -> Json {
-    json!({"Call": {
-        "span": {"start": 0, "end": 0},
-        "function": ident(trigger),
-        "args": [],
-    }})
-}
-
-// --- creation -------------------------------------------------------------
-
 #[test]
 fn a_creation_makes_an_instance_and_sets_its_fields() {
     let copy = EntityId::new("Copy", 1);
-    let (effects, _, world) =
-        apply(&creation("Loan", &[("copy", ident("copy"))]), &[("copy", Value::Ref(copy.clone()))]);
+    let (effects, _, world) = apply(
+        &creation("Loan", vec![("copy", ident("copy"))]),
+        &[("copy", Value::Ref(copy.clone()))],
+    );
 
     assert_eq!(effects.len(), 1);
     let Effect::Created { id, entity } = &effects[0] else { panic!("expected a creation") };
@@ -141,7 +112,7 @@ fn a_bare_state_in_a_creation_is_read_from_the_entitys_declared_states() {
     // At creation there is no previous value to say `open` is a state, so the
     // spec's own declaration settles it. Without this the instance starts with
     // an undecided status and every later rule reading it is undecided too.
-    let (_, _, world) = apply(&creation("Loan", &[("status", ident("open"))]), &[]);
+    let (_, _, world) = apply(&creation("Loan", vec![("status", ident("open"))]), &[]);
     let instance = world.instance(&EntityId::new("Loan", 1)).expect("the loan");
     assert_eq!(instance.field("status"), Value::Enum("open".to_owned()));
 }
@@ -149,7 +120,7 @@ fn a_bare_state_in_a_creation_is_read_from_the_entitys_declared_states() {
 #[test]
 fn a_misspelled_state_stays_undecided_rather_than_becoming_one() {
     // Accepting any bare name would invent a state the lifecycle never mentions.
-    let (_, _, world) = apply(&creation("Loan", &[("status", ident("opne"))]), &[]);
+    let (_, _, world) = apply(&creation("Loan", vec![("status", ident("opne"))]), &[]);
     let instance = world.instance(&EntityId::new("Loan", 1)).expect("the loan");
     assert_eq!(instance.field("status"), Value::Unknown);
 }
@@ -160,14 +131,14 @@ fn a_creation_binds_its_own_name_for_the_clause_after_it() {
     let graph = spec();
     let (mut world, _) = world();
     let mut application = Application::new(&graph, "lending", "", &mut world, BTreeMap::new());
-    application.apply(&creation("Loan", &[]));
+    application.apply(&creation("Loan", vec![]));
     let bindings = application.into_bindings();
     assert_eq!(bindings.get("loan"), Some(&Value::Ref(EntityId::new("Loan", 1))));
 }
 
 #[test]
 fn a_creation_argument_that_cannot_be_evaluated_is_reported() {
-    let (_, reasons, world) = apply(&creation("Loan", &[("copy", ident("nobody"))]), &[]);
+    let (_, reasons, world) = apply(&creation("Loan", vec![("copy", ident("nobody"))]), &[]);
     assert!(reasons.iter().any(|reason| reason.contains("nobody")));
     let instance = world.instance(&EntityId::new("Loan", 1)).expect("the loan is still created");
     assert_eq!(instance.field("copy"), Value::Unknown);
@@ -267,12 +238,7 @@ fn a_field_with_no_lifecycle_takes_any_value() {
 fn a_comparison_that_is_not_an_assignment_is_noted_rather_than_acted_on() {
     // `ensures: a != b` asserts something about the end state; it is not an
     // instruction, and acting on it would mean inventing a value.
-    let clause = json!({"Comparison": {
-        "span": {"start": 0, "end": 0},
-        "left": field(ident("copy"), "status"),
-        "op": "NotEq",
-        "right": ident("lost"),
-    }});
+    let clause = compare(field(ident("copy"), "status"), ComparisonOp::NotEq, ident("lost"));
     let (effects, _, _) = apply(&clause, &[("copy", Value::Ref(EntityId::new("Copy", 1)))]);
     assert!(matches!(effects[0], Effect::Noted { .. }), "{effects:?}");
 }
@@ -302,10 +268,7 @@ fn an_emission_is_reported_without_changing_anything() {
 
 #[test]
 fn a_block_applies_each_of_its_statements_in_order() {
-    let clause = json!({"Block": {
-        "span": {"start": 0, "end": 0},
-        "items": [creation("Loan", &[]), emission("CopyBorrowed")],
-    }});
+    let clause = block(vec![creation("Loan", vec![]), emission("CopyBorrowed")]);
     let (effects, _, _) = apply(&clause, &[]);
     assert!(matches!(effects[0], Effect::Created { .. }));
     assert!(matches!(effects[1], Effect::Emitted { .. }));
@@ -313,22 +276,14 @@ fn a_block_applies_each_of_its_statements_in_order() {
 
 #[test]
 fn a_conditional_applies_its_branch_when_the_condition_holds() {
-    let clause = json!({"Conditional": {
-        "span": {"start": 0, "end": 0},
-        "condition": json!({"BoolLiteral": {"span": {"start": 0, "end": 0}, "value": "true"}}),
-        "then": creation("Loan", &[]),
-    }});
+    let clause = conditional(boolean(true), creation("Loan", vec![]));
     let (effects, _, _) = apply(&clause, &[]);
     assert!(matches!(effects[0], Effect::Created { .. }), "{effects:?}");
 }
 
 #[test]
 fn a_conditional_whose_condition_is_false_applies_nothing() {
-    let clause = json!({"Conditional": {
-        "span": {"start": 0, "end": 0},
-        "condition": json!({"BoolLiteral": {"span": {"start": 0, "end": 0}, "value": "false"}}),
-        "then": creation("Loan", &[]),
-    }});
+    let clause = conditional(boolean(false), creation("Loan", vec![]));
     let (effects, _, world) = apply(&clause, &[]);
     assert!(effects.is_empty());
     assert_eq!(world.count_of("Loan"), 0);
@@ -338,16 +293,7 @@ fn a_conditional_whose_condition_is_false_applies_nothing() {
 fn a_conditional_the_simulator_cannot_decide_is_skipped_and_said_so() {
     // Neither taken nor silently skipped: applying it would be a coin toss with
     // side effects, and skipping it quietly would hide a branch that may matter.
-    let clause = json!({"Conditional": {
-        "span": {"start": 0, "end": 0},
-        "condition": json!({"Comparison": {
-            "span": {"start": 0, "end": 0},
-            "left": ident("nobody"),
-            "op": "Eq",
-            "right": json!({"NumberLiteral": {"span": {"start": 0, "end": 0}, "value": "1"}}),
-        }}),
-        "then": creation("Loan", &[]),
-    }});
+    let clause = conditional(assign(ident("nobody"), number("1")), creation("Loan", vec![]));
     let (effects, reasons, world) = apply(&clause, &[]);
     assert_eq!(world.count_of("Loan"), 0, "the branch was not taken");
     assert!(
@@ -364,12 +310,7 @@ fn an_iteration_applies_its_body_once_per_element() {
     world.create("Copy", "catalogue");
     world.create("Copy", "catalogue");
 
-    let clause = json!({"For": {
-        "span": {"start": 0, "end": 0},
-        "binding": {"span": {"start": 0, "end": 0}, "name": "c"},
-        "collection": ident("Copy"),
-        "body": emission("CopySeen"),
-    }});
+    let clause = iteration("c", ident("Copy"), emission("CopySeen"));
     let applied = {
         let mut application = Application::new(&graph, "lending", "", &mut world, BTreeMap::new());
         application.apply(&clause)
@@ -385,12 +326,7 @@ fn an_iteration_restores_the_binding_it_shadowed() {
     let (mut world, copy) = world();
     let scope = BTreeMap::from([("c".to_owned(), Value::Str("outer".to_owned()))]);
 
-    let clause = json!({"For": {
-        "span": {"start": 0, "end": 0},
-        "binding": {"span": {"start": 0, "end": 0}, "name": "c"},
-        "collection": ident("Copy"),
-        "body": emission("Seen"),
-    }});
+    let clause = iteration("c", ident("Copy"), emission("Seen"));
     let bindings = {
         let mut application = Application::new(&graph, "lending", "", &mut world, scope);
         application.apply(&clause);
@@ -402,12 +338,7 @@ fn an_iteration_restores_the_binding_it_shadowed() {
 
 #[test]
 fn iterating_over_something_that_is_not_a_collection_applies_nothing() {
-    let clause = json!({"For": {
-        "span": {"start": 0, "end": 0},
-        "binding": {"span": {"start": 0, "end": 0}, "name": "x"},
-        "collection": ident("nobody"),
-        "body": emission("Seen"),
-    }});
+    let clause = iteration("x", ident("nobody"), emission("Seen"));
     let (effects, reasons, _) = apply(&clause, &[]);
     assert!(effects.is_empty());
     assert!(!reasons.is_empty());
@@ -417,10 +348,7 @@ fn iterating_over_something_that_is_not_a_collection_applies_nothing() {
 fn a_removal_assertion_is_noted_rather_than_performed() {
     // Removal in Allium asserts something about the end state; guessing which
     // instance was meant would invent one.
-    let clause = json!({"NotExists": {
-        "span": {"start": 0, "end": 0},
-        "operand": ident("Copy"),
-    }});
+    let clause = not_exists(ident("Copy"));
     let (effects, _, world) = apply(&clause, &[]);
     assert!(matches!(effects[0], Effect::Noted { .. }));
     assert_eq!(world.count_of("Copy"), 1, "nothing was removed");
@@ -428,14 +356,14 @@ fn a_removal_assertion_is_noted_rather_than_performed() {
 
 #[test]
 fn a_clause_shape_this_module_does_not_model_changes_nothing() {
-    let (effects, _, world) = apply(&json!({"Lambda": {"span": {"start": 0, "end": 0}}}), &[]);
+    let (effects, _, world) = apply(&unmodelled(), &[]);
     assert!(effects.is_empty());
     assert_eq!(world.entities.len(), 1);
 }
 
 #[test]
 fn applying_is_deterministic() {
-    let clause = creation("Loan", &[("status", ident("open"))]);
+    let clause = creation("Loan", vec![("status", ident("open"))]);
     let (first, _, one) = apply(&clause, &[]);
     let (second, _, two) = apply(&clause, &[]);
     assert_eq!(first, second);
@@ -449,7 +377,7 @@ fn a_created_instance_belongs_to_the_module_that_declares_its_type() {
     // `BorrowCopy` lives in `lending` and creates a `Copy`, which `catalogue`
     // declares. Recording it under `lending` would put it in the wrong module
     // everywhere afterwards: the source strip, the inspector, the world panel.
-    let (effects, _, world) = apply(&creation("Copy", &[]), &[]);
+    let (effects, _, world) = apply(&creation("Copy", vec![]), &[]);
     let Some(Effect::Created { id, .. }) = effects.first() else {
         panic!("expected a creation, got {effects:?}");
     };
@@ -461,7 +389,7 @@ fn a_created_instance_belongs_to_the_module_that_declares_its_type() {
 fn an_instance_of_a_type_the_spec_does_not_declare_falls_back_to_the_rule() {
     // Nothing better is knowable. The point is that it is the rule's own module
     // rather than a guess or a blank.
-    let (effects, _, world) = apply(&creation("Postcard", &[]), &[]);
+    let (effects, _, world) = apply(&creation("Postcard", vec![]), &[]);
     let Some(Effect::Created { id, .. }) = effects.first() else {
         panic!("expected a creation, got {effects:?}");
     };
@@ -471,7 +399,7 @@ fn an_instance_of_a_type_the_spec_does_not_declare_falls_back_to_the_rule() {
 // --- quoting the clause the author wrote ----------------------------------
 
 /// Apply `clause` against `source`, so spans have text to slice.
-fn apply_over(clause: &Json, source: &str) -> Vec<Effect> {
+fn apply_over(clause: &Expr, source: &str) -> Vec<Effect> {
     let graph = spec();
     let (mut world, _) = world();
     let mut application = Application::new(&graph, "lending", source, &mut world, BTreeMap::new());
@@ -485,10 +413,7 @@ fn a_noted_clause_is_quoted_from_the_source_on_one_line() {
     // not there — and the spec wraps clauses across lines, so it is one line
     // here and the author's words either way.
     let source = "ensures not exists\n    Loan where loan.copy = copy\n";
-    let spanned = json!({"NotExists": {
-        "span": {"start": 8, "end": 51},
-        "operand": ident("Loan"),
-    }});
+    let spanned = not_exists_at(ident("Loan"), Span { start: 8, end: 51 });
     let effects = apply_over(&spanned, source);
     assert_eq!(
         effects,
@@ -499,7 +424,7 @@ fn a_noted_clause_is_quoted_from_the_source_on_one_line() {
 #[test]
 fn a_clause_with_no_source_behind_it_says_what_kind_of_clause_it_was() {
     // A span that points outside the text is not a reason to show nothing.
-    let effects = apply_over(&json!({"NotExists": {"span": {"start": 900, "end": 999}}}), "short");
+    let effects = apply_over(&not_exists_at(ident("Loan"), Span { start: 900, end: 999 }), "short");
     assert_eq!(
         effects,
         vec![Effect::Noted { description: "an assertion about what exists".to_owned() }]

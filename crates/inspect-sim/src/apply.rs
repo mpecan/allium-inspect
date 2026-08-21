@@ -25,13 +25,13 @@
 
 use std::collections::BTreeMap;
 
+use allium_parser::ast::{CallArg, ComparisonOp, Expr, ForBinding};
 use inspect_model::{NodeKind, SpecGraph, graph::NodeId};
 use serde::{Deserialize, Serialize};
-use serde_json::Value as Json;
 use ts_rs::TS;
 
 use crate::{
-    eval::{Env, Evaluation, Unresolved, bare_name, eval, span_of, tagged},
+    eval::{Env, Evaluation, Unresolved, bare_name, eval, span_of},
     truth::Truth,
     value::{EntityId, Value},
     world::World,
@@ -111,25 +111,25 @@ impl<'a> Application<'a> {
     }
 
     /// Apply one `ensures` clause.
-    pub fn apply(&mut self, clause: &Json) -> Applied {
-        let Some((tag, inner)) = tagged(clause) else { return Applied::default() };
-
-        match tag {
-            "Call" => self.call(inner),
-            "Comparison" => self.assignment(inner),
-            "Block" => {
+    pub fn apply(&mut self, clause: &Expr) -> Applied {
+        match clause {
+            Expr::Call { function, args, .. } => self.call(function, args),
+            Expr::Comparison { left, op, right, .. } => self.assignment(clause, left, *op, right),
+            Expr::Block { items, .. } => {
                 let mut applied = Applied::default();
-                let empty = Vec::new();
-                let items = inner.get("items").and_then(Json::as_array).unwrap_or(&empty);
                 for item in items {
                     let step = self.apply(item);
                     applied.merge(step);
                 }
                 applied
             }
-            "Conditional" => self.conditional(inner),
-            "For" => self.iteration(inner),
-            "NotExists" | "Exists" => Applied::effect(Effect::Noted {
+            Expr::Conditional { branches, else_body, .. } => {
+                self.conditional(clause, branches, else_body.as_deref())
+            }
+            Expr::For { binding, collection, body, .. } => {
+                self.iteration(binding, collection, body)
+            }
+            Expr::NotExists { .. } | Expr::Exists { .. } => Applied::effect(Effect::Noted {
                 description: self
                     .describe(clause)
                     .unwrap_or_else(|| "an assertion about what exists".to_owned()),
@@ -146,47 +146,36 @@ impl<'a> Application<'a> {
     }
 
     /// `Entity.created(...)` or `TriggerName(...)`.
-    fn call(&mut self, inner: &Json) -> Applied {
-        let Some(function) = inner.get("function") else { return Applied::default() };
-
+    fn call(&mut self, function: &Expr, args: &[CallArg]) -> Applied {
         // `Message.created(...)`: a member access whose field is `created`.
-        if let Some(("MemberAccess", access)) = tagged(function)
-            && access
-                .get("field")
-                .and_then(|field| field.get("name"))
-                .and_then(Json::as_str)
-                .is_some_and(|name| name == "created")
-            && let Some(entity) = access.get("object").and_then(bare_name)
+        if let Expr::MemberAccess { object, field, .. } = function
+            && field.name == "created"
+            && let Some(entity) = bare_name(object)
         {
-            return self.creation(&entity, inner);
+            return self.creation(entity, args);
         }
 
         // Otherwise a bare name: a trigger emission.
         match bare_name(function) {
-            Some(trigger) => {
-                Applied::effect(Effect::Emitted { trigger, module: self.module.to_owned() })
-            }
+            Some(trigger) => Applied::effect(Effect::Emitted {
+                trigger: trigger.to_owned(),
+                module: self.module.to_owned(),
+            }),
             None => Applied::default(),
         }
     }
 
     /// `Entity.created(field: value, ...)`.
-    fn creation(&mut self, entity: &str, call: &Json) -> Applied {
+    fn creation(&mut self, entity: &str, args: &[CallArg]) -> Applied {
         let home = self.declaring_module(entity).unwrap_or_else(|| self.module.to_owned());
         let id = self.world.create(entity, &home);
         let mut applied =
             Applied::effect(Effect::Created { id: id.clone(), entity: entity.to_owned() });
 
-        let empty = Vec::new();
-        let arguments = call.get("args").and_then(Json::as_array).unwrap_or(&empty).clone();
-        for argument in &arguments {
-            let Some(("Named", named)) = tagged(argument) else { continue };
-            let Some(field) =
-                named.get("name").and_then(|name| name.get("name")).and_then(Json::as_str)
-            else {
-                continue;
-            };
-            let Some(value_node) = named.get("value") else { continue };
+        for argument in args {
+            let CallArg::Named(named) = argument else { continue };
+            let field = named.name.name.as_str();
+            let value_node = &named.value;
 
             let mut evaluated = self.evaluate(value_node);
             // `Loan.created(status: open)` — `open` is a state, and at creation
@@ -196,7 +185,7 @@ impl<'a> Application<'a> {
             // status, and every rule that later reads it is undecided too.
             if evaluated.value.is_unknown()
                 && let Some(name) = bare_name(value_node)
-                && let Some(state) = self.declared_state(entity, field, &name)
+                && let Some(state) = self.declared_state(entity, field, name)
             {
                 evaluated = Evaluation { value: state, unresolved: Vec::new() };
             }
@@ -210,29 +199,25 @@ impl<'a> Application<'a> {
     }
 
     /// `copy.status = on_loan`.
-    fn assignment(&mut self, inner: &Json) -> Applied {
-        if inner.get("op").and_then(Json::as_str) != Some("Eq") {
+    fn assignment(
+        &mut self,
+        whole: &Expr,
+        target: &Expr,
+        op: ComparisonOp,
+        value_node: &Expr,
+    ) -> Applied {
+        if op != ComparisonOp::Eq {
             // A comparison that is not an assignment is an assertion about the
             // end state. Noted rather than acted on.
             return Applied::effect(Effect::Noted {
                 description: self
-                    .describe(inner)
+                    .describe(whole)
                     .unwrap_or_else(|| "an assertion about the end state".to_owned()),
             });
         }
 
-        let (Some(target), Some(value_node)) = (inner.get("left"), inner.get("right")) else {
-            return Applied::default();
-        };
-        let Some(("MemberAccess", access)) = tagged(target) else { return Applied::default() };
-        let Some(field) =
-            access.get("field").and_then(|field| field.get("name")).and_then(Json::as_str)
-        else {
-            return Applied::default();
-        };
-        let field = field.to_owned();
-
-        let Some(object) = access.get("object") else { return Applied::default() };
+        let Expr::MemberAccess { object, field, .. } = target else { return Applied::default() };
+        let field = field.name.clone();
         let located = self.evaluate(object);
         let mut unresolved = located.unresolved;
         let Value::Ref(id) = located.value else { return Applied::note(unresolved) };
@@ -249,7 +234,7 @@ impl<'a> Application<'a> {
         if evaluated.value.is_unknown()
             && let Some(name) = bare_name(value_node)
             && let Some(entity) = self.world.instance(&id).map(|instance| instance.entity.clone())
-            && let Some(state) = self.declared_state(&entity, &field, &name)
+            && let Some(state) = self.declared_state(&entity, &field, name)
         {
             evaluated = Evaluation { value: state, unresolved: Vec::new() };
         }
@@ -272,48 +257,60 @@ impl<'a> Application<'a> {
     }
 
     /// `if condition: …`.
-    fn conditional(&mut self, inner: &Json) -> Applied {
-        let Some(condition) = inner.get("condition") else { return Applied::default() };
-        let verdict = self.evaluate(condition);
-
-        match verdict.truth() {
-            Truth::True => match inner.get("then").or_else(|| inner.get("body")) {
-                Some(node) => {
-                    let node = node.clone();
-                    let mut applied = self.apply(&node);
-                    applied.unresolved.extend(verdict.unresolved);
-                    applied
+    fn conditional(
+        &mut self,
+        whole: &Expr,
+        branches: &[allium_parser::ast::CondBranch],
+        otherwise: Option<&Expr>,
+    ) -> Applied {
+        let mut unresolved = Vec::new();
+        for branch in branches {
+            let verdict = self.evaluate(&branch.condition);
+            unresolved.extend(verdict.unresolved);
+            match verdict.value.truth() {
+                Truth::True => {
+                    let body = branch.body.clone();
+                    let mut applied = self.apply(&body);
+                    applied.unresolved.extend(unresolved);
+                    return applied;
                 }
-                None => Applied::note(verdict.unresolved),
-            },
-            Truth::False => Applied::note(verdict.unresolved),
-            // The branch is neither taken nor skipped — the simulator does not
-            // know which, and applying it would be a coin toss with side
-            // effects.
-            Truth::Unknown => {
-                let description =
-                    self.describe(inner).unwrap_or_else(|| "its condition".to_owned());
-                let mut applied = Applied::note(verdict.unresolved);
-                applied.effects.push(Effect::Noted {
-                    description: format!("a conditional postcondition was skipped: {description}"),
-                });
+                Truth::False => {}
+                Truth::Unknown => return self.skipped(whole, unresolved),
+            }
+        }
+        match otherwise {
+            Some(body) => {
+                let body = body.clone();
+                let mut applied = self.apply(&body);
+                applied.unresolved.extend(unresolved);
                 applied
             }
+            None => Applied::note(unresolved),
         }
     }
 
+    /// A branch neither taken nor skipped, because nobody could tell which.
+    ///
+    /// Applying it would be a coin toss with side effects, and saying nothing
+    /// would leave a world that is missing a change with no record of why.
+    fn skipped(&self, whole: &Expr, unresolved: Vec<Unresolved>) -> Applied {
+        let description = self.describe(whole).unwrap_or_else(|| "its condition".to_owned());
+        let mut applied = Applied::note(unresolved);
+        applied.effects.push(Effect::Noted {
+            description: format!("a conditional postcondition was skipped: {description}"),
+        });
+        applied
+    }
+
     /// `for x in collection: …`.
-    fn iteration(&mut self, inner: &Json) -> Applied {
-        let Some(collection) = inner.get("collection").or_else(|| inner.get("source")) else {
-            return Applied::default();
+    fn iteration(&mut self, binding: &ForBinding, collection: &Expr, body: &Expr) -> Applied {
+        let binding = match binding {
+            ForBinding::Single(ident) => ident.name.clone(),
+            ForBinding::Destructured(parts, _) => {
+                parts.first().map_or_else(|| "it".to_owned(), |ident| ident.name.clone())
+            }
         };
-        let binding = inner
-            .get("binding")
-            .and_then(|node| node.get("name"))
-            .and_then(Json::as_str)
-            .unwrap_or("it")
-            .to_owned();
-        let Some(body) = inner.get("body").cloned() else { return Applied::default() };
+        let body = body.clone();
 
         let evaluated = self.evaluate(collection);
         let mut applied = Applied::note(evaluated.unresolved);
@@ -333,7 +330,7 @@ impl<'a> Application<'a> {
 
     // --- helpers ---------------------------------------------------------
 
-    fn evaluate(&self, node: &Json) -> Evaluation {
+    fn evaluate(&self, node: &Expr) -> Evaluation {
         let mut scope = Env::new(self.world, self.module, self.source);
         scope.bindings.clone_from(&self.bindings);
         eval(node, &scope)
@@ -403,7 +400,7 @@ impl<'a> Application<'a> {
     }
 
     /// The clause as the spec wrote it, on one line.
-    fn describe(&self, node: &Json) -> Option<String> {
+    fn describe(&self, node: &Expr) -> Option<String> {
         let span = span_of(node)?;
         span.slice(self.source).map(|text| text.split_whitespace().collect::<Vec<_>>().join(" "))
     }

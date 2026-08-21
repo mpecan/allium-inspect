@@ -630,6 +630,7 @@ dependencies = [
 name = "inspect-sim"
 version = "0.1.0"
 dependencies = [
+ "allium-parser",
  "inspect-model",
  "insta",
  "proptest",

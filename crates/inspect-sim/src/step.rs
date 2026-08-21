@@ -330,19 +330,16 @@ pub fn enabled(
             continue;
         }
         let Some(ast) = program.rule(node.id.as_str()) else { continue };
-        let Some(when) = &ast.when else { continue };
-        let Some(condition) = when.get("Binding").and_then(|binding| binding.get("value")) else {
+        // `when: copy: Copy.status = lost` — a binding, not a call. A state
+        // rule that is written any other way has no instance to range over.
+        let Some(allium_parser::ast::Expr::Binding { name, value: condition, .. }) = &ast.when
+        else {
             continue;
         };
 
         let source = sources.get(&node.module).map(String::as_str).unwrap_or_default();
         let entity = detail.trigger.as_str();
-        let binding = when
-            .get("Binding")
-            .and_then(|binding| binding.get("name"))
-            .and_then(|name| name.get("name"))
-            .and_then(|name| name.as_str())
-            .unwrap_or("it");
+        let binding = name.name.as_str();
         let mut over = Vec::new();
 
         for instance in world.instances_of(entity) {

@@ -8,12 +8,17 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+# allium-parser: the evaluator walks allium's own expression tree, so a form the
+# language gains is a compile error here rather than a silent `unknown`.
+allium-parser = { workspace = true }
 inspect-model = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
 thiserror = { workspace = true }
 ts-rs = { workspace = true }
 
 [dev-dependencies]
+# serde_json: only to round-trip the wire types in tests. The evaluator walks
+# allium's typed tree and no longer touches JSON at all.
+serde_json = { workspace = true }
 insta = { workspace = true }
 proptest = { workspace = true }

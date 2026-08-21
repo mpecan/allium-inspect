@@ -13,6 +13,13 @@
 //! genuinely hard (black-box functions, temporal quantifiers) and is reported
 //! rather than approximated.
 //!
+//! The tree is allium's own, taken from `allium_parser` rather than read back
+//! out of the JSON the CLI prints. That is what turns "an expression form this
+//! evaluator has never heard of" from a run-time `unknown` into a `match` that
+//! does not compile — and the list below is now provably the whole language
+//! minus what is deliberately left out, rather than provably a list somebody
+//! kept up to date by hand.
+//!
 //! One judgement is worth spelling out. In `copy.status = available`, the word
 //! `available` parses as a plain identifier, indistinguishable from a rule
 //! parameter that was never supplied. Resolving it as a state whenever it is
@@ -28,15 +35,15 @@ mod ops;
 
 use std::collections::BTreeMap;
 
-// Re-exported for `apply`, which walks the same AST to decide what a
+use allium_parser::ast::{CondBranch, Expr, Ident, QualifiedName};
+// Re-exported for `apply`, which walks the same tree to decide what a
 // postcondition changes.
-pub use ast::{bare_name, span_of, tagged};
-use ast::{is_ident_named, name_of, string_at, text_of, truth_value};
+pub use ast::{bare_name, span_of};
+use ast::{is_ident_named, literal_text, truth_value};
 use inspect_model::Span;
 use serde::{Deserialize, Serialize};
 use std::ops::Not;
 
-use serde_json::Value as Json;
 use ts_rs::TS;
 
 use crate::{truth::Truth, value::Value, world::World};
@@ -66,8 +73,8 @@ impl Evaluation {
     }
 
     /// Undecided, for `reason`.
-    pub(crate) fn unknown(reason: impl Into<String>, node: &Json, source: &str) -> Self {
-        let span = span_of(node);
+    pub(crate) fn unknown(reason: impl Into<String>, at: &Expr, source: &str) -> Self {
+        let span = span_of(at);
         Self {
             value: Value::Unknown,
             unresolved: vec![Unresolved {
@@ -124,71 +131,102 @@ impl<'a> Env<'a> {
     }
 }
 
-/// Evaluate `node` against `env`.
+/// Evaluate `expr` against `env`.
 #[must_use]
-pub fn eval(node: &Json, env: &Env<'_>) -> Evaluation {
-    let Some((tag, inner)) = tagged(node) else {
-        return Evaluation::unknown(
-            "this is not an expression the parser produced",
-            node,
-            env.source,
-        );
-    };
-
-    match tag {
-        "Ident" => ident(inner, env),
-        "QualifiedName" => qualified(inner, env),
-        "MemberAccess" => member(inner, env),
-        "Comparison" => compare(inner, env),
-        "LogicalOp" => logical(inner, env),
-        "BinaryOp" => arithmetic(inner, env),
-        "Not" => {
-            let operand = operand_of(inner, env);
+pub fn eval(expr: &Expr, env: &Env<'_>) -> Evaluation {
+    match expr {
+        Expr::Ident(name) => ident(name, env),
+        Expr::QualifiedName(name) => qualified(name, env),
+        Expr::MemberAccess { object, field, .. } | Expr::OptionalAccess { object, field, .. } => {
+            member(expr, object, field, env)
+        }
+        Expr::Comparison { left, op, right, .. } => compare(left, *op, right, env),
+        Expr::LogicalOp { left, op, right, .. } => logical(left, *op, right, env),
+        Expr::BinaryOp { left, op, right, .. } => arithmetic(left, *op, right, env),
+        Expr::Not { operand, .. } => {
+            let operand = eval(operand, env);
             let truth = operand.truth().not();
             Evaluation { value: truth_value(truth), unresolved: operand.unresolved }
         }
-        "Exists" => existence(inner, env, false),
-        "NotExists" => existence(inner, env, true),
-        "NumberLiteral" => literals::number(inner, node, env),
-        "StringLiteral" => Evaluation::known(Value::Str(text_of(inner))),
-        "BoolLiteral" => literals::boolean(inner, node, env),
-        "DurationLiteral" => literals::duration(inner, node, env),
-        "EnumVariant" => Evaluation::known(Value::Enum(name_of(inner).unwrap_or_default())),
-        "Null" => Evaluation::known(Value::Null),
-        "Now" => Evaluation::known(Value::Timestamp(env.world.now)),
-        "This" => Evaluation::known(env.bindings.get("this").cloned().unwrap_or(Value::Unknown)),
-        "SetLiteral" => literals::set_literal(inner, env),
-        "Where" | "With" => filtered(inner, env),
-        "Conditional" => conditional(inner, env),
-        "In" => membership(inner, env),
-        "For" => quantified(inner, env),
+        Expr::Exists { operand, .. } => existence(operand, env, false),
+        Expr::NotExists { operand, .. } => existence(operand, env, true),
+        Expr::NumberLiteral { value, .. } => literals::number(value, expr, env),
+        Expr::StringLiteral(literal) => Evaluation::known(Value::Str(literal_text(literal))),
+        // A backtick literal is a name with characters an identifier cannot
+        // hold — `` `de-CH-1996` `` — and it means the state it spells.
+        Expr::BacktickLiteral { value, .. } => Evaluation::known(Value::Enum(value.clone())),
+        Expr::BoolLiteral { value, .. } => Evaluation::known(Value::Bool(*value)),
+        Expr::DurationLiteral { value, .. } => literals::duration(value, expr, env),
+        Expr::Null { .. } => Evaluation::known(Value::Null),
+        Expr::Now { .. } => Evaluation::known(Value::Timestamp(env.world.now)),
+        Expr::This { .. } => {
+            Evaluation::known(env.bindings.get("this").cloned().unwrap_or(Value::Unknown))
+        }
+        Expr::SetLiteral { elements, .. } | Expr::ListLiteral { elements, .. } => {
+            literals::set_literal(elements, env)
+        }
+        Expr::Where { source, condition, .. } => filtered(source, condition, env),
+        Expr::With { source, predicate, .. } => filtered(source, predicate, env),
+        Expr::Conditional { branches, else_body, .. } => {
+            conditional(branches, else_body.as_deref(), env)
+        }
+        Expr::In { element, collection, .. } => membership(element, collection, env, false),
+        Expr::NotIn { element, collection, .. } => membership(element, collection, env, true),
+        Expr::For { binding, collection, filter, body, .. } => {
+            quantified(binding, collection, filter.as_deref(), body, env)
+        }
+        // A block yields its last statement, which is what a multi-line
+        // `requires` means; an empty one has nothing to yield.
+        Expr::Block { items, .. } => match items.last() {
+            Some(last) => eval(last, env),
+            None => Evaluation::known(Value::Null),
+        },
+        // A binding in an expression position is its value: `entry: Outbox.x`
+        // in a `when` clause is asked for the condition, not the name.
+        Expr::Binding { value, .. } | Expr::LetExpr { value, .. } => eval(value, env),
         // Everything else is real Allium this evaluator does not model. Named
-        // rather than lumped together, because "a `Pipe` was not evaluated" is
-        // something a reader can act on and "unsupported" is not.
-        other => Evaluation::unknown(
-            format!("`{other}` expressions are not simulated"),
-            node,
-            env.source,
-        ),
+        // one by one rather than lumped together, because "a pipe was not
+        // evaluated" is something a reader can act on and "unsupported" is not.
+        Expr::Pipe { .. } => unsupported("a `|` alternation", expr, env),
+        Expr::Lambda { .. } => unsupported("a lambda", expr, env),
+        Expr::Call { .. } => unsupported("a function call", expr, env),
+        Expr::JoinLookup { .. } => unsupported("a join lookup", expr, env),
+        Expr::ObjectLiteral { .. } => unsupported("an object literal", expr, env),
+        Expr::GenericType { .. } | Expr::TypeOptional { .. } => {
+            unsupported("a type annotation", expr, env)
+        }
+        Expr::NullCoalesce { .. } => unsupported("a `??` coalesce", expr, env),
+        Expr::ProjectionMap { .. } => unsupported("a projection", expr, env),
+        Expr::TransitionsTo { .. } => unsupported("a `transitions_to` assertion", expr, env),
+        Expr::Becomes { .. } => unsupported("a `becomes` assertion", expr, env),
+        Expr::WhenGuard { .. } => unsupported("a `when` guard", expr, env),
+        Expr::Within { .. } => unsupported("a `within` deadline", expr, env),
     }
 }
 
+/// Undecided because the language has a form this evaluator does not model.
+///
+/// Distinct from every other unknown here, which is about a *world* rather than
+/// about this tool: "nothing is bound to `member`" is something a reader can
+/// fix, and "a lambda is not simulated" is something only this crate can.
+fn unsupported(what: &str, expr: &Expr, env: &Env<'_>) -> Evaluation {
+    Evaluation::unknown(format!("{what} is not simulated"), expr, env.source)
+}
+
 /// A bare name: a binding, an entity type, or a state.
-fn ident(inner: &Json, env: &Env<'_>) -> Evaluation {
-    let Some(name) = name_of(inner) else {
-        return Evaluation::unknown("an identifier with no name", inner, env.source);
-    };
-    if let Some(bound) = env.bindings.get(&name) {
+fn ident(ident: &Ident, env: &Env<'_>) -> Evaluation {
+    let name = &ident.name;
+    if let Some(bound) = env.bindings.get(name) {
         return Evaluation::known(bound.clone());
     }
-    if env.world.count_of(&name) > 0 {
-        return Evaluation::known(collection_of(&name, env));
+    if env.world.count_of(name) > 0 {
+        return Evaluation::known(collection_of(name, env));
     }
     // `for m in Members` names the collection, which is the entity pluralised.
     // Every invariant a real spec writes is quantified this way, so without
     // this they all range over nothing and hold vacuously — a checker that
     // always passes, which is worse than one that admits it cannot check.
-    if let Some(entity) = singular(&name)
+    if let Some(entity) = singular(name)
         && env.world.count_of(&entity) > 0
     {
         return Evaluation::known(collection_of(&entity, env));
@@ -203,19 +241,15 @@ fn ident(inner: &Json, env: &Env<'_>) -> Evaluation {
         value: Value::Unknown,
         unresolved: vec![Unresolved {
             reason: format!("nothing is bound to `{name}`"),
-            expression: Some(name),
-            span: span_of(inner),
+            expression: Some(name.clone()),
+            span: Some(Span::new(ident.span.start, ident.span.end)),
         }],
     }
 }
 
 /// `membership/Membership`: a type in another module.
-fn qualified(inner: &Json, env: &Env<'_>) -> Evaluation {
-    let name = string_at(inner, "name").unwrap_or_default();
-    if name.is_empty() {
-        return Evaluation::unknown("a qualified name with no name", inner, env.source);
-    }
-    Evaluation::known(collection_of(&name, env))
+fn qualified(name: &QualifiedName, env: &Env<'_>) -> Evaluation {
+    Evaluation::known(collection_of(&name.name, env))
 }
 
 /// The entity a plural collection name refers to.
@@ -238,19 +272,12 @@ fn collection_of(entity: &str, env: &Env<'_>) -> Value {
 }
 
 /// `object.field`, including `config.x` and `collection.count`.
-fn member(inner: &Json, env: &Env<'_>) -> Evaluation {
-    let Some(object) = inner.get("object") else {
-        return Evaluation::unknown("a field access with nothing to access", inner, env.source);
-    };
-    let field = inner
-        .get("field")
-        .and_then(name_of)
-        .or_else(|| string_at(inner, "field"))
-        .unwrap_or_default();
+fn member(whole: &Expr, object: &Expr, field: &Ident, env: &Env<'_>) -> Evaluation {
+    let field = &field.name;
 
     // `config.loan_limit` is not a field of anything: `config` is a namespace.
     if is_ident_named(object, "config") {
-        return Evaluation::known(env.world.config(env.module, &field));
+        return Evaluation::known(env.world.config(env.module, field));
     }
 
     let base = eval(object, env);
@@ -264,7 +291,7 @@ fn member(inner: &Json, env: &Env<'_>) -> Evaluation {
             },
             None => Evaluation::unknown(
                 format!("`{field}` is {}, which has no count", base.value.described()),
-                inner,
+                whole,
                 env.source,
             )
             .carrying(unresolved),
@@ -274,24 +301,24 @@ fn member(inner: &Json, env: &Env<'_>) -> Evaluation {
     match &base.value {
         Value::Ref(id) => match env.world.instance(id) {
             Some(instance) => {
-                let value = instance.field(&field);
+                let value = instance.field(field);
                 // A field nobody has set is undecided, and saying *which* field
                 // on which instance is the difference between a panel a reader
                 // can act on and one that says only "unknown". Derived values
                 // land here constantly: the spec computes them and this
                 // simulator does not.
-                if value.is_unknown() && !instance.fields.contains_key(&field) {
+                if value.is_unknown() && !instance.fields.contains_key(field) {
                     unresolved.push(Unresolved {
                         reason: format!("`{id}` has no `{field}` set"),
-                        expression: span_of(inner)
+                        expression: span_of(whole)
                             .and_then(|span| span.slice(env.source))
                             .map(str::to_owned),
-                        span: span_of(inner),
+                        span: span_of(whole),
                     });
                 }
                 Evaluation { value, unresolved }
             }
-            None => Evaluation::unknown(format!("`{id}` is not in this world"), inner, env.source)
+            None => Evaluation::unknown(format!("`{id}` is not in this world"), whole, env.source)
                 .carrying(unresolved),
         },
         // A field read across a collection is a projection: `receipts.reporter`
@@ -303,7 +330,7 @@ fn member(inner: &Json, env: &Env<'_>) -> Evaluation {
                     Value::Ref(id) => env
                         .world
                         .instance(id)
-                        .map_or(Value::Unknown, |instance| instance.field(&field)),
+                        .map_or(Value::Unknown, |instance| instance.field(field)),
                     _ => Value::Unknown,
                 })
                 .collect();
@@ -312,7 +339,7 @@ fn member(inner: &Json, env: &Env<'_>) -> Evaluation {
         Value::Unknown => Evaluation { value: Value::Unknown, unresolved },
         other => Evaluation::unknown(
             format!("`{field}` was read from {}, which has no fields", other.described()),
-            inner,
+            whole,
             env.source,
         )
         .carrying(unresolved),
@@ -322,32 +349,30 @@ fn member(inner: &Json, env: &Env<'_>) -> Evaluation {
 use collections::{existence, filtered, membership, quantified};
 use ops::{arithmetic, compare, logical};
 
-/// `if condition: then else: otherwise`.
-fn conditional(inner: &Json, env: &Env<'_>) -> Evaluation {
-    let Some(condition) = inner.get("condition") else {
-        return Evaluation::unknown("a conditional with no condition", inner, env.source);
-    };
-    let verdict = eval(condition, env);
-    let branch = match verdict.truth() {
-        Truth::True => inner.get("then").or_else(|| inner.get("consequent")),
-        Truth::False => inner.get("otherwise").or_else(|| inner.get("alternative")),
-        Truth::Unknown => {
-            return Evaluation { value: Value::Unknown, unresolved: verdict.unresolved };
+/// `if condition: a else if condition: b else: c`.
+///
+/// A list of branches, which is what the language has. The JSON this used to
+/// read had no such structure and the code guessed between `then`/`consequent`
+/// and `otherwise`/`alternative` — two pairs of key names, at most one of which
+/// was ever right.
+fn conditional(branches: &[CondBranch], otherwise: Option<&Expr>, env: &Env<'_>) -> Evaluation {
+    let mut unresolved = Vec::new();
+    for branch in branches {
+        let verdict = eval(&branch.condition, env);
+        unresolved.extend(verdict.unresolved);
+        match verdict.value.truth() {
+            Truth::True => return eval(&branch.body, env).carrying(unresolved),
+            Truth::False => {}
+            // Undecided: which branch runs is not known, so neither is the
+            // result. Reading on to the next condition would be answering a
+            // question that was never reached.
+            Truth::Unknown => return Evaluation { value: Value::Unknown, unresolved },
         }
-    };
-    match branch {
-        Some(node) => eval(node, env).carrying(verdict.unresolved),
-        // A conditional with no else branch and a false condition yields
-        // nothing, which is what the language means.
-        None => Evaluation { value: Value::Null, unresolved: verdict.unresolved },
     }
-}
-
-// --- shared helpers ------------------------------------------------------
-
-fn operand_of(inner: &Json, env: &Env<'_>) -> Evaluation {
-    match inner.get("operand").or_else(|| inner.get("value")) {
-        Some(node) => eval(node, env),
-        None => Evaluation::unknown("an operator with no operand", inner, env.source),
+    match otherwise {
+        Some(body) => eval(body, env).carrying(unresolved),
+        // A conditional with no else branch and every condition false yields
+        // nothing, which is what the language means.
+        None => Evaluation { value: Value::Null, unresolved },
     }
 }

@@ -5,21 +5,22 @@
 //! undecided rather than empty. They are together because that is the decision
 //! they have in common, and out of the dispatcher because the dispatcher should
 //! read as a table of what the language has.
+//!
+//! Each of these used to begin by looking for its own operands under two or
+//! three possible key names — `collection` or `source`, `value` or `left` —
+//! because the JSON gave no way to know which the parser used. Typed, the
+//! operands are fields and the guessing is gone with them.
 
 use std::ops::Not;
 
-use serde_json::Value as Json;
+use allium_parser::ast::{Expr, ForBinding};
 
-use super::{
-    Env, Evaluation, Unresolved,
-    ast::{name_of, tagged, truth_value},
-    eval, operand_of, span_of,
-};
+use super::{Env, Evaluation, Unresolved, ast::truth_value, eval, span_of};
 use crate::{truth::Truth, value::Value};
 
 /// `exists X` and `not exists X`.
-pub(super) fn existence(inner: &Json, env: &Env<'_>, negated: bool) -> Evaluation {
-    let evaluated = operand_of(inner, env);
+pub(super) fn existence(operand: &Expr, env: &Env<'_>, negated: bool) -> Evaluation {
+    let evaluated = eval(operand, env);
     let present = match &evaluated.value {
         Value::Set(items) => Truth::from_bool(!items.is_empty()),
         Value::Null => Truth::False,
@@ -31,24 +32,18 @@ pub(super) fn existence(inner: &Json, env: &Env<'_>, negated: bool) -> Evaluatio
 }
 
 /// `collection where condition`, and `Entity with predicate`.
-pub(super) fn filtered(inner: &Json, env: &Env<'_>) -> Evaluation {
-    let Some(source_node) = inner.get("source") else {
-        return Evaluation::unknown("a filter with nothing to filter", inner, env.source);
-    };
-    let base = eval(source_node, env);
-    let Some(condition) = inner.get("condition").or_else(|| inner.get("predicate")) else {
-        return base;
-    };
+pub(super) fn filtered(source: &Expr, condition: &Expr, env: &Env<'_>) -> Evaluation {
+    let base = eval(source, env);
     let Value::Set(items) = &base.value else {
         return Evaluation::unknown(
             format!("{} cannot be filtered", base.value.described()),
-            inner,
+            source,
             env.source,
         )
         .carrying(base.unresolved);
     };
 
-    let mut unresolved = base.unresolved;
+    let mut unresolved = base.unresolved.clone();
     let mut kept = Vec::new();
     for item in items {
         // The element is bound as `this`, and its fields are in scope bare —
@@ -77,43 +72,38 @@ pub(super) fn filtered(inner: &Json, env: &Env<'_>) -> Evaluation {
 /// The same node appears in an `ensures` clause, where it means iteration
 /// rather than a claim. Which it is depends on the context, not the syntax:
 /// `apply` handles the postcondition case and this one handles the assertion.
-pub(super) fn quantified(inner: &Json, env: &Env<'_>) -> Evaluation {
-    let Some(collection) = inner.get("collection").or_else(|| inner.get("source")) else {
-        return Evaluation::unknown("an iteration with nothing to iterate", inner, env.source);
+pub(super) fn quantified(
+    binding: &ForBinding,
+    collection: &Expr,
+    filter: Option<&Expr>,
+    body: &Expr,
+    env: &Env<'_>,
+) -> Evaluation {
+    // The one-variable form is every quantifier a real spec writes. A
+    // destructured binding ranges over the same elements; naming it after its
+    // first part keeps the body's references working rather than binding
+    // nothing at all.
+    let name = match binding {
+        ForBinding::Single(ident) => ident.name.clone(),
+        ForBinding::Destructured(parts, _) => {
+            parts.first().map_or_else(|| "it".to_owned(), |ident| ident.name.clone())
+        }
     };
-    let Some(body) = inner.get("body") else {
-        return Evaluation::unknown("an iteration with no body", inner, env.source);
-    };
-
-    let name = inner
-        .get("binding")
-        .and_then(|binding| match tagged(binding) {
-            // `{"Single": {"name": "m"}}` — the one-variable form, which is
-            // every quantifier a real spec writes.
-            Some((_, single)) => name_of(single),
-            None => name_of(binding),
-        })
-        .unwrap_or_else(|| "it".to_owned());
 
     let over = eval(collection, env);
     let mut unresolved = over.unresolved;
     let Value::Set(items) = over.value else {
-        return Evaluation {
-            value: Value::Unknown,
-            unresolved: {
-                unresolved.push(Unresolved {
-                    reason: format!(
-                        "`{name}` ranges over {}, which has no elements",
-                        over.value.described()
-                    ),
-                    expression: span_of(collection)
-                        .and_then(|span| span.slice(env.source))
-                        .map(str::to_owned),
-                    span: span_of(inner),
-                });
-                unresolved
-            },
-        };
+        unresolved.push(Unresolved {
+            reason: format!(
+                "`{name}` ranges over {}, which has no elements",
+                over.value.described()
+            ),
+            expression: span_of(collection)
+                .and_then(|span| span.slice(env.source))
+                .map(str::to_owned),
+            span: span_of(collection),
+        });
+        return Evaluation { value: Value::Unknown, unresolved };
     };
 
     let mut verdicts = Vec::new();
@@ -122,7 +112,7 @@ pub(super) fn quantified(inner: &Json, env: &Env<'_>) -> Evaluation {
         scope.bindings.insert(name.clone(), item.clone());
 
         // `for l in Loans where status = open:` narrows what is claimed about.
-        if let Some(filter) = inner.get("filter").filter(|filter| !filter.is_null()) {
+        if let Some(filter) = filter {
             let keep = eval(filter, &scope);
             let holds = keep.truth();
             unresolved.extend(keep.unresolved);
@@ -153,24 +143,24 @@ fn element_scope<'a>(env: &'a Env<'a>, item: &Value) -> Env<'a> {
     scope
 }
 
-/// `x in collection`.
-pub(super) fn membership(inner: &Json, env: &Env<'_>) -> Evaluation {
-    let (Some(left_node), Some(right_node)) = (
-        inner.get("value").or_else(|| inner.get("left")),
-        inner.get("collection").or_else(|| inner.get("right")),
-    ) else {
-        return Evaluation::unknown("a membership test missing a side", inner, env.source);
-    };
-    let needle = eval(left_node, env);
-    let haystack = eval(right_node, env);
+/// `x in collection`, and `x not in collection`.
+pub(super) fn membership(
+    element: &Expr,
+    collection: &Expr,
+    env: &Env<'_>,
+    negated: bool,
+) -> Evaluation {
+    let needle = eval(element, env);
+    let haystack = eval(collection, env);
     let mut unresolved = needle.unresolved;
     unresolved.extend(haystack.unresolved);
 
-    let truth = match &haystack.value {
+    let inside = match &haystack.value {
         Value::Set(items) => Truth::any(items.iter().map(|item| item.equals(&needle.value))),
         // Anything else — a scalar, or a collection nobody could resolve — is a
         // membership test with no collection to test against.
         _ => Truth::Unknown,
     };
+    let truth = if negated { inside.not() } else { inside };
     Evaluation { value: truth_value(truth), unresolved }
 }

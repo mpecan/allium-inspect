@@ -14,66 +14,113 @@
 
 #![allow(clippy::panic, clippy::expect_used, clippy::unwrap_used)]
 
+use allium_parser::Span as AstSpan;
+use allium_parser::ast::{
+    BinaryOp, ComparisonOp, Expr, ForBinding, Ident, LogicalOp, StringLiteral, StringPart,
+};
 use inspect_sim::{
     Truth, Value,
     eval::{Env, eval},
     value::{EntityId, Instance},
     world::World,
 };
-use serde_json::{Value as Json, json};
 
 // --- building expressions ------------------------------------------------
+//
+// Allium's own tree, built by hand. The builders exist because a whole module
+// of source per assertion would bury what each one is about — but they now
+// build the same type the parser produces, so a case here is a case the
+// evaluator could actually be handed.
 
-fn ident(name: &str) -> Json {
-    json!({"Ident": {"span": {"start": 0, "end": 0}, "name": name}})
+const NOWHERE: AstSpan = AstSpan { start: 0, end: 0 };
+
+fn ident(name: &str) -> Expr {
+    Expr::Ident(Ident { span: NOWHERE, name: name.to_owned() })
 }
 
-fn field(object: Json, name: &str) -> Json {
-    json!({"MemberAccess": {
-        "span": {"start": 0, "end": 0},
-        "object": object,
-        "field": {"span": {"start": 0, "end": 0}, "name": name},
-    }})
+fn field(object: Expr, name: &str) -> Expr {
+    Expr::MemberAccess {
+        span: NOWHERE,
+        object: Box::new(object),
+        field: Ident { span: NOWHERE, name: name.to_owned() },
+    }
 }
 
-fn compare(left: Json, op: &str, right: Json) -> Json {
-    json!({"Comparison": {"span": {"start": 0, "end": 0}, "left": left, "op": op, "right": right}})
+fn comparison_op(op: &str) -> ComparisonOp {
+    match op {
+        "Eq" => ComparisonOp::Eq,
+        "NotEq" => ComparisonOp::NotEq,
+        "Lt" => ComparisonOp::Lt,
+        "LtEq" => ComparisonOp::LtEq,
+        "Gt" => ComparisonOp::Gt,
+        "GtEq" => ComparisonOp::GtEq,
+        other => panic!("`{other}` is not a comparison the language has"),
+    }
 }
 
-fn logical(left: Json, op: &str, right: Json) -> Json {
-    json!({"LogicalOp": {"span": {"start": 0, "end": 0}, "left": left, "op": op, "right": right}})
+fn compare(left: Expr, op: &str, right: Expr) -> Expr {
+    Expr::Comparison {
+        span: NOWHERE,
+        left: Box::new(left),
+        op: comparison_op(op),
+        right: Box::new(right),
+    }
 }
 
-fn arithmetic(left: Json, op: &str, right: Json) -> Json {
-    json!({"BinaryOp": {"span": {"start": 0, "end": 0}, "left": left, "op": op, "right": right}})
+fn logical(left: Expr, op: &str, right: Expr) -> Expr {
+    let op = match op {
+        "And" => LogicalOp::And,
+        "Or" => LogicalOp::Or,
+        "Implies" => LogicalOp::Implies,
+        other => panic!("`{other}` is not a connective the language has"),
+    };
+    Expr::LogicalOp { span: NOWHERE, left: Box::new(left), op, right: Box::new(right) }
 }
 
-fn number(text: &str) -> Json {
-    json!({"NumberLiteral": {"span": {"start": 0, "end": 0}, "value": text}})
+fn arithmetic(left: Expr, op: &str, right: Expr) -> Expr {
+    let op = match op {
+        "Add" => BinaryOp::Add,
+        "Sub" => BinaryOp::Sub,
+        "Mul" => BinaryOp::Mul,
+        "Div" => BinaryOp::Div,
+        other => panic!("`{other}` is not an operator the language has"),
+    };
+    Expr::BinaryOp { span: NOWHERE, left: Box::new(left), op, right: Box::new(right) }
 }
 
-fn duration(text: &str) -> Json {
-    json!({"DurationLiteral": {"span": {"start": 0, "end": 0}, "value": text}})
+fn number(text: &str) -> Expr {
+    Expr::NumberLiteral { span: NOWHERE, value: text.to_owned() }
 }
 
-fn null() -> Json {
-    json!({"Null": {"span": {"start": 0, "end": 0}}})
+fn duration(text: &str) -> Expr {
+    Expr::DurationLiteral { span: NOWHERE, value: text.to_owned() }
 }
 
-fn now() -> Json {
-    json!({"Now": {"span": {"start": 0, "end": 0}}})
+fn null() -> Expr {
+    Expr::Null { span: NOWHERE }
 }
 
-fn not(operand: Json) -> Json {
-    json!({"Not": {"span": {"start": 0, "end": 0}, "operand": operand}})
+fn now() -> Expr {
+    Expr::Now { span: NOWHERE }
 }
 
-fn exists(operand: Json) -> Json {
-    json!({"Exists": {"span": {"start": 0, "end": 0}, "operand": operand}})
+fn not(operand: Expr) -> Expr {
+    Expr::Not { span: NOWHERE, operand: Box::new(operand) }
 }
 
-fn filtered(source: Json, condition: Json) -> Json {
-    json!({"Where": {"span": {"start": 0, "end": 0}, "source": source, "condition": condition}})
+fn exists(operand: Expr) -> Expr {
+    Expr::Exists { span: NOWHERE, operand: Box::new(operand) }
+}
+
+fn text(value: &str) -> Expr {
+    Expr::StringLiteral(StringLiteral {
+        span: NOWHERE,
+        parts: vec![StringPart::Text(value.to_owned())],
+    })
+}
+
+fn filtered(source: Expr, condition: Expr) -> Expr {
+    Expr::Where { span: NOWHERE, source: Box::new(source), condition: Box::new(condition) }
 }
 
 // --- building worlds -----------------------------------------------------
@@ -103,17 +150,17 @@ fn env<'a>(world: &'a World, module: &'a str) -> Env<'a> {
 }
 
 /// Evaluate against the library world, returning the value.
-fn value_of(node: &Json, env: &Env<'_>) -> Value {
+fn value_of(node: &Expr, env: &Env<'_>) -> Value {
     eval(node, env).value
 }
 
 /// Evaluate as a condition.
-fn truth_of(node: &Json, env: &Env<'_>) -> Truth {
+fn truth_of(node: &Expr, env: &Env<'_>) -> Truth {
     eval(node, env).truth()
 }
 
 /// The reasons the evaluator gave for what it could not decide.
-fn reasons(node: &Json, env: &Env<'_>) -> Vec<String> {
+fn reasons(node: &Expr, env: &Env<'_>) -> Vec<String> {
     eval(node, env).unresolved.into_iter().map(|note| note.reason).collect()
 }
 
@@ -304,12 +351,23 @@ fn ordering_across_incomparable_kinds_is_undecided_and_says_why() {
 }
 
 #[test]
-fn a_comparison_this_evaluator_does_not_know_is_reported_by_name() {
+fn the_operators_are_the_language_s_own_and_cannot_be_anything_else() {
+    // This used to assert that an operator the evaluator did not recognise —
+    // `Spaceship`, say — was reported by name rather than guessed at. It could
+    // arrive because the operator was a string read out of JSON.
+    //
+    // It is a closed enum now, so the case cannot be constructed and the branch
+    // that handled it is gone. What is left to check is that each one the
+    // language does have is actually distinguished, which is the property the
+    // old test was standing in for.
     let world = library();
     let env = env(&world, "lending");
-    let node = compare(number("1"), "Spaceship", number("2"));
-    assert_eq!(truth_of(&node, &env), Truth::Unknown);
-    assert!(reasons(&node, &env)[0].contains("Spaceship"));
+    assert_eq!(truth_of(&compare(number("1"), "Lt", number("2")), &env), Truth::True);
+    assert_eq!(truth_of(&compare(number("1"), "Gt", number("2")), &env), Truth::False);
+    assert_eq!(truth_of(&compare(number("2"), "GtEq", number("2")), &env), Truth::True);
+    assert_eq!(truth_of(&compare(number("2"), "LtEq", number("2")), &env), Truth::True);
+    assert_eq!(truth_of(&compare(number("2"), "Eq", number("2")), &env), Truth::True);
+    assert_eq!(truth_of(&compare(number("2"), "NotEq", number("2")), &env), Truth::False);
 }
 
 // --- connectives ---------------------------------------------------------
@@ -479,18 +537,36 @@ fn filtering_something_that_is_not_a_collection_says_so() {
 fn an_expression_kind_this_evaluator_does_not_model_is_named_rather_than_guessed() {
     let world = library();
     let env = env(&world, "lending");
-    let node = json!({"Lambda": {"span": {"start": 0, "end": 0}}});
+    let node =
+        Expr::Lambda { span: NOWHERE, param: Box::new(ident("x")), body: Box::new(ident("x")) };
     assert_eq!(value_of(&node, &env), Value::Unknown);
-    assert_eq!(reasons(&node, &env), ["`Lambda` expressions are not simulated"]);
+    assert_eq!(reasons(&node, &env), ["a lambda is not simulated"]);
 }
 
 #[test]
-fn something_that_is_not_an_expression_at_all_is_reported() {
+fn every_form_the_language_has_is_either_evaluated_or_named() {
+    // There used to be a test here for "something that is not an expression at
+    // all" — a null, a bare string, a two-key object — because the evaluator
+    // took JSON and any of those could reach it. None of them can now: the
+    // argument is `allium_parser::ast::Expr`, so the only things that arrive
+    // are things the parser built.
+    //
+    // What is left to check is the other half of the same promise. A form the
+    // evaluator does not model must say which form it was, because "a lambda
+    // is not simulated" is something a reader can act on and "unknown" is not.
     let world = library();
     let env = env(&world, "lending");
-    for node in [json!(null), json!("text"), json!({"a": 1, "b": 2})] {
+    let unmodelled = [
+        Expr::Lambda { span: NOWHERE, param: Box::new(ident("x")), body: Box::new(ident("x")) },
+        Expr::Pipe { span: NOWHERE, left: Box::new(ident("a")), right: Box::new(ident("b")) },
+        Expr::Within { span: NOWHERE },
+    ];
+    for node in unmodelled {
         assert_eq!(value_of(&node, &env), Value::Unknown);
-        assert!(!reasons(&node, &env).is_empty(), "{node} produced no reason");
+        let said = reasons(&node, &env);
+        assert_eq!(said.len(), 1, "{said:?}");
+        assert!(said[0].ends_with("is not simulated"), "{}", said[0]);
+        assert!(said[0].len() > "is not simulated".len() + 4, "{}", said[0]);
     }
 }
 
@@ -505,12 +581,15 @@ fn every_undecided_result_carries_at_least_one_reason() {
         field(ident("nobody"), "x"),
         compare(ident("nobody"), "Lt", number("1")),
         arithmetic(ident("nobody"), "Add", number("1")),
-        json!({"Pipe": {"span": {"start": 0, "end": 0}}}),
+        Expr::Pipe { span: NOWHERE, left: Box::new(ident("a")), right: Box::new(ident("b")) },
     ];
     for node in cases {
         let evaluated = eval(&node, &env);
         if evaluated.value.is_unknown() {
-            assert!(!evaluated.unresolved.is_empty(), "{node} came back undecided with no reason");
+            assert!(
+                !evaluated.unresolved.is_empty(),
+                "{node:?} came back undecided with no reason"
+            );
         }
     }
 }
@@ -523,10 +602,8 @@ fn an_undecided_note_quotes_the_source_it_came_from() {
     let world = library();
     let env = Env::new(&world, "catalogue", source);
     let start = source.find("copy.status").expect("present");
-    let node = json!({"Ident": {
-        "span": {"start": start, "end": start + 4},
-        "name": "copy",
-    }});
+    let node =
+        Expr::Ident(Ident { span: AstSpan { start, end: start + 4 }, name: "copy".to_owned() });
     let note = &eval(&node, &env).unresolved[0];
     assert_eq!(note.expression.as_deref(), Some("copy"));
     assert!(note.span.is_some());
@@ -557,14 +634,14 @@ fn an_instance_added_by_hand_is_readable_the_same_way() {
 
 // --- quantification ------------------------------------------------------
 
-fn quantify(binding: &str, collection: Json, body: Json, filter: Option<Json>) -> Json {
-    json!({"For": {
-        "span": {"start": 0, "end": 0},
-        "binding": {"Single": {"span": {"start": 0, "end": 0}, "name": binding}},
-        "collection": collection,
-        "filter": filter,
-        "body": body,
-    }})
+fn quantify(binding: &str, collection: Expr, body: Expr, filter: Option<Expr>) -> Expr {
+    Expr::For {
+        span: NOWHERE,
+        binding: ForBinding::Single(Ident { span: NOWHERE, name: binding.to_owned() }),
+        collection: Box::new(collection),
+        filter: filter.map(Box::new),
+        body: Box::new(body),
+    }
 }
 
 #[test]
@@ -618,11 +695,7 @@ fn a_filter_narrows_what_is_claimed_about() {
     // `for c in Copies where status = on_loan: …` says nothing about the rest.
     let world = library();
     let env = env(&world, "catalogue");
-    let claim = compare(
-        ident("shelfmark"),
-        "Eq",
-        json!({"StringLiteral": {"span": {"start": 0, "end": 0}, "value": "QA77"}}),
-    );
+    let claim = compare(ident("shelfmark"), "Eq", text("QA77"));
     let filter = compare(ident("status"), "Eq", ident("on_loan"));
     assert_eq!(
         truth_of(&quantify("c", ident("Copies"), claim.clone(), Some(filter)), &env),
@@ -789,7 +862,7 @@ fn arithmetic_between_kinds_that_do_not_combine_says_which_kinds() {
         .bind("name", Value::Str("Ada".to_owned()));
     let sum = arithmetic(ident("at"), "Add", ident("name"));
     assert_eq!(value_of(&sum, &env), Value::Unknown);
-    assert_eq!(reasons(&sum, &env), vec!["`Add` is not defined between a timestamp and a string"]);
+    assert_eq!(reasons(&sum, &env), vec!["`+` is not defined between a timestamp and a string"]);
 }
 
 #[test]
@@ -810,8 +883,8 @@ fn arithmetic_on_something_already_undecided_adds_no_second_complaint() {
 
 // --- membership ----------------------------------------------------------
 
-fn within(needle: Json, haystack: Json) -> Json {
-    json!({"In": {"span": {"start": 0, "end": 0}, "value": needle, "collection": haystack}})
+fn within(needle: Expr, haystack: Expr) -> Expr {
+    Expr::In { span: NOWHERE, element: Box::new(needle), collection: Box::new(haystack) }
 }
 
 #[test]

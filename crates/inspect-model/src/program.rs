@@ -17,27 +17,37 @@
 
 use std::collections::BTreeMap;
 
-use serde_json::Value;
+use allium_parser::ast::Expr;
 
 /// The parsed clauses of one rule.
-#[derive(Debug, Clone, Default, PartialEq)]
+///
+/// Allium's own tree, not a copy of it. The parser hands these over typed and
+/// they stay typed all the way to the evaluator: an expression form the
+/// language gains is then a non-exhaustive `match` at compile time rather than
+/// a tag nobody wrote a branch for, which is the failure this used to have and
+/// which reported itself as `unknown` at run time if it reported itself at all.
+///
+/// No `PartialEq`: `allium_parser::ast::Expr` does not derive it, and a
+/// structural comparison of two expression trees is not a question anything
+/// here asks.
+#[derive(Debug, Clone, Default)]
 pub struct RuleAst {
     /// The `when` clause: a trigger call, or a state condition.
-    pub when: Option<Value>,
+    pub when: Option<Expr>,
     /// One entry per `requires` clause, in the order the spec declares them.
     ///
     /// Order matters for reporting rather than for logic: preconditions are
     /// conjunctive, but a reader looking at why a rule did not fire reads them
     /// top to bottom against the file.
-    pub requires: Vec<Value>,
+    pub requires: Vec<Expr>,
     /// One entry per `ensures` clause, in declaration order.
     ///
     /// Order matters here for real: `Message.created(...)` binds `message`, and
     /// a later clause emitting `MessageSent(message: message)` depends on the
     /// earlier one having run.
-    pub ensures: Vec<Value>,
+    pub ensures: Vec<Expr>,
     /// The `for x in collection` clause, when the rule iterates.
-    pub iterate: Option<Value>,
+    pub iterate: Option<Expr>,
 }
 
 impl RuleAst {
@@ -53,12 +63,12 @@ impl RuleAst {
 }
 
 /// Every expression tree the simulator can evaluate, keyed by node id.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default)]
 pub struct Program {
     /// Rule node id to its clauses.
     rules: BTreeMap<String, RuleAst>,
     /// Invariant node id to its condition.
-    invariants: BTreeMap<String, Value>,
+    invariants: BTreeMap<String, Expr>,
 }
 
 impl Program {
@@ -74,7 +84,7 @@ impl Program {
     }
 
     /// Record `condition` as the body of the invariant with `id`.
-    pub fn add_invariant(&mut self, id: impl Into<String>, condition: Value) {
+    pub fn add_invariant(&mut self, id: impl Into<String>, condition: Expr) {
         self.invariants.insert(id.into(), condition);
     }
 
@@ -86,7 +96,7 @@ impl Program {
 
     /// The condition of the invariant with `id`.
     #[must_use]
-    pub fn invariant(&self, id: &str) -> Option<&Value> {
+    pub fn invariant(&self, id: &str) -> Option<&Expr> {
         self.invariants.get(id)
     }
 
@@ -96,7 +106,7 @@ impl Program {
     }
 
     /// Every invariant, in id order.
-    pub fn invariants(&self) -> impl Iterator<Item = (&str, &Value)> {
+    pub fn invariants(&self) -> impl Iterator<Item = (&str, &Expr)> {
         self.invariants.iter().map(|(id, condition)| (id.as_str(), condition))
     }
 
@@ -115,9 +125,16 @@ impl Program {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+
+    use allium_parser::{Span, ast::Ident};
 
     use super::*;
+
+    /// A distinguishable expression; what it *is* does not matter here, only
+    /// that two of them can be told apart.
+    fn expr(name: &str) -> Expr {
+        Expr::Ident(Ident { span: Span { start: 0, end: 0 }, name: name.to_owned() })
+    }
 
     #[test]
     fn a_new_program_holds_nothing() {
@@ -134,9 +151,9 @@ mod tests {
         program.add_rule(
             "lending::rule::BorrowCopy",
             RuleAst {
-                when: Some(json!({"Call": {}})),
-                requires: vec![json!({"Comparison": {}})],
-                ensures: vec![json!({"Call": {}}), json!({"Comparison": {}})],
+                when: Some(expr("when")),
+                requires: vec![expr("requires")],
+                ensures: vec![expr("first"), expr("second")],
                 iterate: None,
             },
         );
@@ -149,7 +166,7 @@ mod tests {
     #[test]
     fn an_invariant_is_found_by_its_node_id() {
         let mut program = Program::new();
-        program.add_invariant("m::invariant::Bounded", json!({"For": {}}));
+        program.add_invariant("m::invariant::Bounded", expr("condition"));
         assert!(program.invariant("m::invariant::Bounded").is_some());
         assert_eq!(program.invariant_count(), 1);
     }
@@ -159,9 +176,10 @@ mod tests {
         // Ingestion is re-run wholesale on a file change, so the second answer
         // is the current one.
         let mut program = Program::new();
-        program.add_rule("r", RuleAst { requires: vec![json!(1)], ..RuleAst::default() });
-        program.add_rule("r", RuleAst { requires: vec![json!(2)], ..RuleAst::default() });
-        assert_eq!(program.rule("r").expect("the rule").requires, [json!(2)]);
+        program.add_rule("r", RuleAst { requires: vec![expr("first")], ..RuleAst::default() });
+        program.add_rule("r", RuleAst { requires: vec![expr("second")], ..RuleAst::default() });
+        let kept = &program.rule("r").expect("the rule").requires;
+        assert!(matches!(&kept[..], [Expr::Ident(name)] if name.name == "second"), "{kept:?}");
         assert_eq!(program.rule_count(), 1);
     }
 
@@ -172,8 +190,8 @@ mod tests {
         // unsimulatable instead, because "it succeeded" would be a claim
         // nothing checked.
         assert!(RuleAst::default().is_empty());
-        assert!(!RuleAst { when: Some(json!({})), ..RuleAst::default() }.is_empty());
-        assert!(!RuleAst { ensures: vec![json!({})], ..RuleAst::default() }.is_empty());
+        assert!(!RuleAst { when: Some(expr("w")), ..RuleAst::default() }.is_empty());
+        assert!(!RuleAst { ensures: vec![expr("e")], ..RuleAst::default() }.is_empty());
     }
 
     #[test]
@@ -191,8 +209,8 @@ mod tests {
     #[test]
     fn invariants_are_listed_in_id_order_too() {
         let mut program = Program::new();
-        program.add_invariant("m::invariant::B", json!(1));
-        program.add_invariant("m::invariant::A", json!(2));
+        program.add_invariant("m::invariant::B", expr("b"));
+        program.add_invariant("m::invariant::A", expr("a"));
         let ids: Vec<&str> = program.invariants().map(|(id, _)| id).collect();
         assert_eq!(ids, ["m::invariant::A", "m::invariant::B"]);
     }

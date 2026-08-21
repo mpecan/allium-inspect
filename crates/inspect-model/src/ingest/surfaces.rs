@@ -142,13 +142,11 @@ pub fn ingest_actor(block: &Value, module: &str, source: &str, into: &mut Ingest
 /// Add the invariant declared by `declaration` to `graph`.
 pub fn ingest_invariant(declaration: &Value, module: &str, source: &str, into: &mut Ingestion) {
     let Some(name) = json::declared_name(declaration) else { return };
+    // The condition itself is not taken here: `clauses` has already lifted it
+    // off allium's typed tree, and reading it a second time out of JSON is how
+    // the graph and the simulator would come to disagree about the same
+    // invariant. What this pass wants is the text and what it constrains.
     let body = declaration.get("body");
-    if let Some(condition) = body {
-        into.program.add_invariant(
-            NodeId::new(module, NodeKind::Invariant, &name).as_str(),
-            condition.clone(),
-        );
-    }
     let expression = body.and_then(|body| expression_text(body, source));
     let entities = constrained_entities(body, module, &into.graph);
 
