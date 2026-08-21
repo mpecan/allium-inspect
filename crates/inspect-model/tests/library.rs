@@ -188,3 +188,16 @@ fn a_recorded_runner_still_answers_all_four() {
         assert!(runner.run(command, &path).is_ok(), "{command}");
     }
 }
+
+#[test]
+fn the_version_reported_is_the_cli_s_and_not_invented() {
+    // The stamp still has a job. `model` and `plan` come from the binary, and
+    // the fixtures recorded from them are checked against this string — so a
+    // runner that answered with a version of its own, or with the library's,
+    // would let those two recordings drift behind a check that always agreed.
+    //
+    // With no binary on PATH there is no version to report, and saying so is
+    // the only honest answer available.
+    let outcome = LibraryRunner::new("allium-not-on-path").version();
+    assert!(outcome.is_err(), "invented a version: {outcome:?}");
+}
