@@ -10,7 +10,7 @@
 //   domain     what the spec holds        the things, and how they relate
 //   flow       what happens, in order     triggers, rules, and what they touch
 //   lifecycle  how an entity changes      only entities that have a lifecycle
-//   journey    what follows from an act   the boundary, and the chain from it
+//   chain      what follows from an act   the boundary, and the chain from it
 //
 // An `external` node appears only in the domain view. Everywhere else it would
 // be a dead end in the middle of a chain, and the chain is the point.
@@ -25,7 +25,7 @@ const MEMBERS: Record<ViewKind, readonly NodeKind[]> = {
   domain: ["entity", "value", "variant", "enum", "config", "external"],
   flow: ["rule", "trigger", "entity", "value", "variant"],
   lifecycle: ["entity"],
-  journey: ["surface", "actor", "trigger", "rule", "entity"],
+  chain: ["surface", "actor", "trigger", "rule", "entity"],
 };
 
 /** Whether `node` belongs in `view`. */
@@ -51,7 +51,7 @@ export const ANSWERS: Record<ViewKind, string> = {
   domain: "what the spec holds",
   flow: "what happens, and in what order",
   lifecycle: "how each entity changes state",
-  journey: "what follows from an action",
+  chain: "what follows from an action",
 };
 
 /**

@@ -95,7 +95,7 @@ export function walk(
  * sideways into "this entity has a field of that type" — true, and not part of
  * what happens next.
  */
-export function journey(edges: Edge[], start: string, depth = 12): Trace {
+export function chain(edges: Edge[], start: string, depth = 12): Trace {
   return walk(edges, start, { direction: "forward", depth, kinds: CAUSAL });
 }
 

@@ -21,6 +21,8 @@ use inspect_model::{
 use inspect_sim::step::Sources;
 use serde::Serialize;
 
+use crate::journeys::JourneyReport;
+
 /// One spec file's text, as the source panel needs it.
 #[derive(Debug, Clone, Serialize)]
 pub struct ModuleSource {
@@ -37,6 +39,13 @@ pub struct Inspection {
     pub program: Program,
     sources: BTreeMap<String, ModuleSource>,
     texts: Sources,
+    /// Every authored journey, walked against this graph.
+    ///
+    /// Part of the inspection rather than held beside it, because the answer a
+    /// journey gives is a fact about a particular version of the spec. Edit the
+    /// spec and the verdicts have to move with it; a report that outlived the
+    /// graph it was computed from would be the most confident kind of wrong.
+    journeys: JourneyReport,
 }
 
 impl Inspection {
@@ -46,7 +55,11 @@ impl Inspection {
     ///
     /// Returns [`IngestError`] when the CLI cannot be run or a spec cannot be
     /// read.
-    pub fn build<R: AlliumRunner>(runner: &R, paths: &[PathBuf]) -> Result<Self, IngestError> {
+    pub fn build<R: AlliumRunner>(
+        runner: &R,
+        paths: &[PathBuf],
+        journeys: &[PathBuf],
+    ) -> Result<Self, IngestError> {
         let Ingestion { graph, program } = ingest(runner, &FileReader, paths)?;
         let mut sources = BTreeMap::new();
         for path in paths {
@@ -61,9 +74,10 @@ impl Inspection {
                 );
             }
         }
-        let texts =
+        let texts: Sources =
             sources.iter().map(|(module, source)| (module.clone(), source.text.clone())).collect();
-        Ok(Self { graph, program, sources, texts })
+        let journeys = JourneyReport::build(journeys, &graph, &program, &texts);
+        Ok(Self { graph, program, sources, texts, journeys })
     }
 
     /// An inspection assembled from parts, without running anything.
@@ -77,7 +91,20 @@ impl Inspection {
             sources.into_iter().map(|source| (source.module.clone(), source)).collect();
         let texts =
             sources.iter().map(|(module, source)| (module.clone(), source.text.clone())).collect();
-        Self { graph, program: Program::new(), sources, texts }
+        Self { graph, program: Program::new(), sources, texts, journeys: JourneyReport::empty() }
+    }
+
+    /// Give an assembled inspection a journey report, for the route tests.
+    #[must_use]
+    pub fn with_journeys(mut self, journeys: JourneyReport) -> Self {
+        self.journeys = journeys;
+        self
+    }
+
+    /// Every authored journey, walked.
+    #[must_use]
+    pub fn journeys(&self) -> &JourneyReport {
+        &self.journeys
     }
 
     /// One module's source.

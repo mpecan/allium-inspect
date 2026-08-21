@@ -12,7 +12,9 @@
 //! rather than a second world — which is also what the spec itself models, with
 //! sets like `OutboxEntry.awaiting` naming the devices that do not have it yet.
 
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use ts_rs::TS;
 
 use inspect_model::{NodeKind, Program, SpecGraph};
 use inspect_sim::{
@@ -29,7 +31,8 @@ use crate::{
 };
 
 /// What became of one line.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../ui/src/lib/api/")]
 pub struct Outcome {
     pub line: usize,
     pub verdict: Verdict,
@@ -40,7 +43,8 @@ pub struct Outcome {
 }
 
 /// What became of one step.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../ui/src/lib/api/")]
 pub struct Walked {
     pub number: u32,
     pub title: String,
@@ -56,9 +60,19 @@ impl Walked {
 }
 
 /// What became of a journey.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../ui/src/lib/api/")]
 pub struct Walk {
     pub name: String,
+    /// What the journey said it was for, and how it said it ends.
+    ///
+    /// Carried on the report rather than left in the source, because the whole
+    /// question a reader has is whether the spec delivers *this* — and a list
+    /// of verdicts with the intent stripped off cannot be read against it.
+    pub goal: Vec<String>,
+    pub ends: Vec<String>,
+    /// Where the journey starts in its file, for going there.
+    pub line: usize,
     pub steps: Vec<Walked>,
     /// What the journey was told rather than shown, always reported.
     pub stipulated: Vec<String>,
@@ -104,7 +118,14 @@ pub fn walk(journey: &Journey, spec: &SpecGraph, program: &Program, sources: &So
 
     let steps = journey.steps.iter().map(|step| walker.walk_step(step, &notes)).collect();
 
-    Walk { name: journey.name.clone(), steps, stipulated: walker.stipulated }
+    Walk {
+        name: journey.name.clone(),
+        goal: journey.goal.clone(),
+        ends: journey.ends.clone(),
+        line: journey.line,
+        steps,
+        stipulated: walker.stipulated,
+    }
 }
 
 pub(crate) struct Walker<'a> {

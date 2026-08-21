@@ -148,7 +148,7 @@ describe("optionsFor", () => {
   });
 
   it("reads every view in the direction the language writes it", () => {
-    for (const view of ["domain", "flow", "lifecycle", "journey"] as const) {
+    for (const view of ["domain", "flow", "lifecycle", "chain"] as const) {
       expect(optionsFor(view)["elk.direction"]).toBe("RIGHT");
     }
   });
@@ -274,7 +274,7 @@ describe("edge routing", () => {
     // Without this the canvas draws a bezier from handle to handle, straight
     // across whatever nodes lie between — which is what a dense view looks like
     // when nobody asked the layout engine the second question.
-    for (const view of ["domain", "flow", "lifecycle", "journey"] as const) {
+    for (const view of ["domain", "flow", "lifecycle", "chain"] as const) {
       expect(optionsFor(view)["elk.edgeRouting"]).toBe("ORTHOGONAL");
     }
   });

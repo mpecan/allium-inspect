@@ -136,7 +136,14 @@ mod tests {
     }
 
     fn walk(name: &str, steps: Vec<Walked>, stipulated: Vec<String>) -> Walk {
-        Walk { name: name.to_owned(), steps, stipulated }
+        Walk {
+            name: name.to_owned(),
+            goal: vec!["she does the thing".to_owned()],
+            ends: vec!["the thing is done".to_owned()],
+            line: 1,
+            steps,
+            stipulated,
+        }
     }
 
     fn step(number: u32, title: &str, outcomes: Vec<Outcome>) -> Walked {

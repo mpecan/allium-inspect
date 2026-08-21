@@ -90,6 +90,12 @@
   --verdict-false: #c9736b;
   --verdict-unknown: #e0b341;
   --verdict-unknown-fill: #2e2410;
+  /* A fourth verdict the simulator has no use for and a journey cannot do
+   * without: the spec has no answer because it has never been asked. Not red —
+   * nothing is wrong, the work is simply not done — and not the amber of
+   * undecided, which is this tool failing to reach an answer rather than the
+   * specification not holding one. */
+  --verdict-missing: #8e86c9;
 
   /* --- severity ------------------------------------------------------- */
   --severity-error: #d9695f;
@@ -179,6 +185,8 @@
     --verdict-false: #a83b30;
     --verdict-unknown: #8a6200;
     --verdict-unknown-fill: #fbeec4;
+  --verdict-missing: #5f57a0;
+    --verdict-missing: #5f57a0;
 
     --focus: 0 0 0 2px var(--ground-panel), 0 0 0 4px var(--behaviour);
   }
@@ -223,6 +231,7 @@
   --verdict-false: #a83b30;
   --verdict-unknown: #8a6200;
   --verdict-unknown-fill: #fbeec4;
+  --verdict-missing: #5f57a0;
 
   --focus: 0 0 0 2px var(--ground-panel), 0 0 0 4px var(--behaviour);
 }

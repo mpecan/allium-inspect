@@ -6,7 +6,7 @@
   import Focus from "./lib/graph/Focus.svelte";
   import {
     isMeaningful,
-    journey,
+    chain,
     neighbourhood,
     origins,
     type Trace,
@@ -16,10 +16,12 @@
   import SourceStrip from "./lib/panels/SourceStrip.svelte";
   import Rail from "./lib/Rail.svelte";
   import Reports from "./lib/Reports.svelte";
+  import Journeys from "./lib/journeys/Journeys.svelte";
   import Simulator from "./lib/sim/Simulator.svelte";
   import {
     ApiError,
     InspectClient,
+    type JourneyReport,
     type ModuleSource,
     type Mode,
     type SpecGraph,
@@ -68,6 +70,15 @@
   }
   let sources = $state.raw<Map<string, ModuleSource>>(new Map());
 
+  /**
+   * The journey report, refetched with the graph.
+   *
+   * A journey's verdicts are facts about a particular version of the spec, so a
+   * report that survived a reload would be the most confident kind of wrong.
+   */
+  let report = $state.raw<JourneyReport | null>(null);
+  let reportFailure = $state.raw<string | null>(null);
+
   /** What the last poll said about the spec, for the banner. */
   let trouble = $state.raw<Trouble | null>(null);
   /** The revision the graph on screen came from. */
@@ -78,6 +89,7 @@
     try {
       graph = await client.spec(signal);
       shown = revision;
+      void loadJourneys(signal);
       failure = null;
       // Source is fetched per module on demand and cached; a new revision makes
       // every cached file a file that may no longer say that.
@@ -88,6 +100,21 @@
       }
       failure =
         error instanceof ApiError ? error.message : "Could not load the specification.";
+    }
+  }
+
+  /** Fetch the journey report, which is allowed to fail on its own. */
+  async function loadJourneys(signal: AbortSignal) {
+    try {
+      report = await client.journeys(signal);
+      reportFailure = null;
+    } catch (error: unknown) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
+      // Deliberately not `failure`. The graph is fine and every other view
+      // works; only this one has nothing to show.
+      reportFailure = "Could not load the journeys.";
     }
   }
 
@@ -150,7 +177,7 @@
     }
     const walked =
       traceMode === "forward"
-        ? journey(visibleEdges, selectedId)
+        ? chain(visibleEdges, selectedId)
         : traceMode === "backward"
           ? origins(visibleEdges, selectedId)
           : neighbourhood(visibleEdges, selectedId);
@@ -269,7 +296,7 @@
   }
 
   /** The views a graph node could be drawn in, in the order the rail lists them. */
-  const VIEWS: ViewKind[] = ["domain", "flow", "lifecycle", "journey"];
+  const VIEWS: ViewKind[] = ["domain", "flow", "lifecycle", "chain"];
 
   /**
    * Show `id`, wherever it is.
@@ -338,7 +365,7 @@
     version={graph?.allium_version ?? ""}
     onmode={(next) => {
       mode = next;
-      if (next !== "simulate") {
+      if (next !== "simulate" && next !== "journeys") {
         view = next;
       }
     }}
@@ -362,7 +389,11 @@
     />
   {/if}
 
-  {#if mode === "simulate"}
+  {#if mode === "journeys"}
+    <div class="stage">
+      <Journeys {report} failure={reportFailure} />
+    </div>
+  {:else if mode === "simulate"}
     <div class="stage">
       <Simulator {client} {hidden} />
     </div>
@@ -420,7 +451,7 @@
   </main>
   {/if}
 
-  {#if mode !== "simulate"}
+  {#if mode !== "simulate" && mode !== "journeys"}
   <Inspector
     node={selected}
     position={selectedPosition}

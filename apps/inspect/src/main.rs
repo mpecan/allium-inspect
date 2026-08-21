@@ -12,11 +12,7 @@
 mod args;
 mod watch;
 
-use std::{
-    net::SocketAddr,
-    path::{Path, PathBuf},
-    process::ExitCode,
-};
+use std::{net::SocketAddr, path::PathBuf, process::ExitCode};
 
 use args::Args;
 use clap::Parser;
@@ -54,11 +50,27 @@ async fn run(args: Args) -> Result<(), String> {
         ));
     }
 
-    let runner = ProcessRunner::new(&args.allium);
-    let inspection = Inspection::build(&runner, &paths).map_err(|error| error.to_string())?;
+    // A journey path that names nothing is a typo, and a browser opening on an
+    // empty Journeys view is a slower way to find that out than being told.
+    let journeys = match &args.journeys {
+        Some(path) => {
+            let files = args::journeys(path);
+            if files.is_empty() {
+                return Err(format!("no .journey files found in {}", path.display()));
+            }
+            files
+        }
+        None => Vec::new(),
+    };
 
-    if let Some(path) = &args.journeys {
-        return check_journeys(path, &inspection, args.strict, args.json);
+    let runner = ProcessRunner::new(&args.allium);
+    let inspection =
+        Inspection::build(&runner, &paths, &journeys).map_err(|error| error.to_string())?;
+
+    // `--strict` and `--json` are terminal answers, so asking for either is
+    // asking for the terminal.
+    if args.check || args.strict || args.json {
+        return check_journeys(&journeys, &inspection, args.strict, args.json);
     }
 
     if args.print_graph {
@@ -76,7 +88,7 @@ async fn run(args: Args) -> Result<(), String> {
     // open in an editor beside it, and a reload that needs a restart turns a
     // two-second loop into a ten-second one.
     if !args.no_watch {
-        match watch::watch(paths.clone(), args.allium.clone(), state.clone()) {
+        match watch::watch(paths.clone(), journeys.clone(), args.allium.clone(), state.clone()) {
             Ok(_handle) => println!("watching for changes"),
             // Not fatal. A machine whose watcher limit is exhausted, or a
             // filesystem that does not support notifications, is a reason to
@@ -114,18 +126,13 @@ async fn run(args: Args) -> Result<(), String> {
 /// the spec cannot support are the backlog rather than an error. `--strict` is
 /// the mode a finished journey is defended in.
 fn check_journeys(
-    path: &Path,
+    files: &[PathBuf],
     inspection: &Inspection,
     strict: bool,
     json: bool,
 ) -> Result<(), String> {
-    let files = args::journeys(path);
-    if files.is_empty() {
-        return Err(format!("no .journey files found in {}", path.display()));
-    }
-
     let mut walks = Vec::new();
-    for file in &files {
+    for file in files {
         let source = std::fs::read_to_string(file)
             .map_err(|error| format!("could not read {}: {error}", file.display()))?;
         // A file that does not parse names its own line, and the path is what

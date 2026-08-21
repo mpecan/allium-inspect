@@ -12,6 +12,7 @@ import type { World } from "./api/World";
 import type { Setup } from "./sim/setup";
 import type { Finding } from "./api/Finding";
 import type { Health } from "./api/Health";
+import type { JourneyReport } from "./api/JourneyReport";
 import type { NodeId } from "./api/NodeId";
 import type { Obligation } from "./api/Obligation";
 import type { SpecGraph } from "./api/SpecGraph";
@@ -21,6 +22,7 @@ export type {
   Event,
   Finding,
   Health,
+  JourneyReport,
   NodeId,
   Obligation,
   SpecGraph,
@@ -52,8 +54,8 @@ export interface ModuleSource {
  * `simulate` is not a projection — it replaces the canvas rather than filtering
  * it — but it is a mode the rail switches between, so it lives in the same type.
  */
-export type ViewKind = "domain" | "flow" | "lifecycle" | "journey";
-export type Mode = ViewKind | "simulate";
+export type ViewKind = "domain" | "flow" | "lifecycle" | "chain";
+export type Mode = ViewKind | "simulate" | "journeys";
 
 /**
  * `fetch`, narrowed to the shape this client uses.
@@ -101,6 +103,16 @@ export class InspectClient {
       `/api/spec/source/${encodeURIComponent(module)}`,
       signal,
     );
+  }
+
+  /**
+   * Every authored journey, walked against the spec as it stands.
+   *
+   * Recomputed server-side with the graph rather than cached, so the verdicts
+   * here always describe the specification the rest of the browser is showing.
+   */
+  async journeys(signal?: AbortSignal): Promise<JourneyReport> {
+    return this.json<JourneyReport>("/api/journeys", signal);
   }
 
   /** A seeded world, and what can be done to it. */

@@ -55,7 +55,7 @@
     { kind: "domain", name: "Domain" },
     { kind: "flow", name: "Flow" },
     { kind: "lifecycle", name: "Lifecycle" },
-    { kind: "journey", name: "Journey" },
+    { kind: "chain", name: "Chain" },
   ];
 
   // Each carries what it does on screen rather than in a `title`. The view
@@ -98,6 +98,17 @@
       <li>
         <button
           type="button"
+          class:current={mode === "journeys"}
+          aria-current={mode === "journeys" ? "page" : undefined}
+          onclick={() => onmode("journeys")}
+        >
+          <span class="view-name">Journeys</span>
+          <span class="view-answers">what someone set out to do</span>
+        </button>
+      </li>
+      <li>
+        <button
+          type="button"
           class:current={mode === "simulate"}
           aria-current={mode === "simulate" ? "page" : undefined}
           onclick={() => onmode("simulate")}
@@ -109,7 +120,7 @@
     </ul>
   </section>
 
-  {#if mode !== "simulate"}
+  {#if mode !== "simulate" && mode !== "journeys"}
   <section>
     <h2>Trace</h2>
     <ul class="traces">
@@ -135,9 +146,9 @@
       </p>
     {:else}
       <p class="prose caveat">
-        A trace is derived from which triggers a surface offers and which each
-        rule emits. Allium has no journey construct, so this is what follows —
-        not what a person does.
+        A chain is derived from which triggers a surface offers and which each
+        rule emits — so it is what <em>follows</em>, not what anyone set out to
+        do. For that, somebody has to write it down: see Journeys.
       </p>
     {/if}
   </section>

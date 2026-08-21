@@ -28,21 +28,26 @@ pub struct Args {
     #[arg(long)]
     pub print_graph: bool,
 
-    /// Journeys to check against the spec: a `.journey` file, or a directory.
+    /// Journeys to walk against the spec: a `.journey` file, or a directory.
     ///
     /// Journeys are the demand written first, so a step naming something the
     /// spec does not have is reported as a requirement rather than refused.
+    /// Served in the browser's Journeys view, and re-walked on every reload.
     #[arg(long, value_name = "PATH")]
     pub journeys: Option<PathBuf>,
+
+    /// Print the journey report at the terminal and exit, instead of serving.
+    #[arg(long, requires = "journeys")]
+    pub check: bool,
 
     /// Fail when a journey names something the spec does not have.
     ///
     /// Off by default, because report is the mode a journey is *written* in.
-    /// This is the mode a finished one is defended in.
+    /// This is the mode a finished one is defended in. Implies `--check`.
     #[arg(long, requires = "journeys")]
     pub strict: bool,
 
-    /// Print the journey report as JSON and exit.
+    /// Print the journey report as JSON and exit. Implies `--check`.
     #[arg(long, requires = "journeys")]
     pub json: bool,
 

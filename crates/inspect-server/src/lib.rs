@@ -12,9 +12,11 @@
 
 #![forbid(unsafe_code)]
 
+mod journeys;
 mod routes;
 mod sim;
 mod state;
 
+pub use journeys::{JourneyFile, JourneyReport};
 pub use routes::{router, serve};
 pub use state::{AppState, Inspection, ModuleSource};

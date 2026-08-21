@@ -602,6 +602,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "http",
+ "inspect-journey",
  "inspect-model",
  "inspect-sim",
  "rust-embed",

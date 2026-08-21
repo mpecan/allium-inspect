@@ -9,6 +9,8 @@ rust-version.workspace = true
 
 [dependencies]
 inspect-model = { workspace = true }
+# inspect-journey: walks the authored journeys the Journeys view reports on.
+inspect-journey = { workspace = true }
 inspect-sim = { workspace = true }
 axum = { workspace = true }
 rust-embed = { workspace = true }

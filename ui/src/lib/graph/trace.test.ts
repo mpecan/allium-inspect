@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Edge } from "../api/Edge";
 import type { EdgeKind } from "../api/EdgeKind";
-import { isMeaningful, journey, narrow, neighbourhood, origins, walk } from "./trace";
+import { chain, isMeaningful, narrow, neighbourhood, origins, walk } from "./trace";
 
 function edge(from: string, to: string, kind: EdgeKind = "triggers"): Edge {
   return { from, to, kind, label: `${from}->${to}`, span: null };
@@ -17,7 +17,7 @@ function edge(from: string, to: string, kind: EdgeKind = "triggers"): Edge {
  *
  * plus one non-causal edge, so the filtering has something to exclude.
  */
-const chain: Edge[] = [
+const borrowing: Edge[] = [
   edge("surface:MemberShelf", "trigger:MemberBorrows", "provides"),
   edge("trigger:MemberBorrows", "rule:BorrowCopy", "triggers"),
   edge("rule:BorrowCopy", "entity:Loan", "creates"),
@@ -28,25 +28,25 @@ const chain: Edge[] = [
 
 describe("walk", () => {
   it("includes the node it started from", () => {
-    const trace = walk(chain, "rule:BorrowCopy");
+    const trace = walk(borrowing, "rule:BorrowCopy");
     expect(trace.nodes.has("rule:BorrowCopy")).toBe(true);
   });
 
   it("follows edges forward", () => {
-    const trace = walk(chain, "trigger:MemberBorrows", { direction: "forward" });
+    const trace = walk(borrowing, "trigger:MemberBorrows", { direction: "forward" });
     expect([...trace.nodes]).toContain("rule:BorrowCopy");
     expect([...trace.nodes]).not.toContain("surface:MemberShelf");
   });
 
   it("follows edges backward", () => {
-    const trace = walk(chain, "rule:BorrowCopy", { direction: "backward" });
+    const trace = walk(borrowing, "rule:BorrowCopy", { direction: "backward" });
     expect([...trace.nodes]).toContain("trigger:MemberBorrows");
     expect([...trace.nodes]).toContain("surface:MemberShelf");
     expect([...trace.nodes]).not.toContain("entity:Loan");
   });
 
   it("follows both directions when asked", () => {
-    const trace = walk(chain, "rule:BorrowCopy", { direction: "both", depth: 1 });
+    const trace = walk(borrowing, "rule:BorrowCopy", { direction: "both", depth: 1 });
     expect([...trace.nodes].sort()).toEqual([
       "entity:Loan",
       "rule:BorrowCopy",
@@ -56,22 +56,22 @@ describe("walk", () => {
   });
 
   it("stops at the depth it was given", () => {
-    const one = walk(chain, "surface:MemberShelf", { depth: 1 });
+    const one = walk(borrowing, "surface:MemberShelf", { depth: 1 });
     expect(one.nodes.size).toBe(2);
     expect(one.depth).toBe(1);
 
-    const two = walk(chain, "surface:MemberShelf", { depth: 2 });
+    const two = walk(borrowing, "surface:MemberShelf", { depth: 2 });
     expect([...two.nodes]).toContain("rule:BorrowCopy");
     expect([...two.nodes]).not.toContain("entity:Loan");
   });
 
   it("restricts itself to the edge kinds it was given", () => {
-    const trace = walk(chain, "rule:BorrowCopy", { kinds: ["creates"] });
+    const trace = walk(borrowing, "rule:BorrowCopy", { kinds: ["creates"] });
     expect([...trace.nodes].sort()).toEqual(["entity:Loan", "rule:BorrowCopy"]);
   });
 
   it("records the edges it followed, for drawing the path", () => {
-    const trace = walk(chain, "trigger:MemberBorrows", { depth: 1 });
+    const trace = walk(borrowing, "trigger:MemberBorrows", { depth: 1 });
     expect(trace.edges.size).toBe(1);
     expect([...trace.edges][0]?.to).toBe("rule:BorrowCopy");
   });
@@ -89,7 +89,7 @@ describe("walk", () => {
   });
 
   it("reports a node with no edges as a trace of one", () => {
-    const trace = walk(chain, "entity:Orphan");
+    const trace = walk(borrowing, "entity:Orphan");
     expect([...trace.nodes]).toEqual(["entity:Orphan"]);
     expect(trace.depth).toBe(0);
   });
@@ -99,9 +99,9 @@ describe("walk", () => {
   });
 });
 
-describe("journey", () => {
+describe("chain", () => {
   it("follows the causal chain from a surface operation to its end", () => {
-    const trace = journey(chain, "surface:MemberShelf");
+    const trace = chain(borrowing, "surface:MemberShelf");
     expect([...trace.nodes].sort()).toEqual([
       "entity:Loan",
       "rule:BorrowCopy",
@@ -115,19 +115,19 @@ describe("journey", () => {
   it("does not wander into edges that are true but not causal", () => {
     // `Loan.member: Member` is a fact about the domain, not something that
     // happens next. Following it would make every trace reach everything.
-    const trace = journey(chain, "surface:MemberShelf");
+    const trace = chain(borrowing, "surface:MemberShelf");
     expect([...trace.nodes]).not.toContain("entity:Member");
   });
 
   it("is bounded, so a cyclic spec cannot hang the canvas", () => {
     const loop = [edge("a", "b"), edge("b", "a")];
-    expect(journey(loop, "a", 3).nodes.size).toBe(2);
+    expect(chain(loop, "a", 3).nodes.size).toBe(2);
   });
 });
 
 describe("origins", () => {
   it("answers what had to happen for something to be reached", () => {
-    const trace = origins(chain, "rule:NotifyDesk");
+    const trace = origins(borrowing, "rule:NotifyDesk");
     expect([...trace.nodes].sort()).toEqual([
       "rule:BorrowCopy",
       "rule:NotifyDesk",
@@ -138,13 +138,13 @@ describe("origins", () => {
   });
 
   it("reports nothing upstream of an entry point", () => {
-    expect(origins(chain, "surface:MemberShelf").nodes.size).toBe(1);
+    expect(origins(borrowing, "surface:MemberShelf").nodes.size).toBe(1);
   });
 });
 
 describe("neighbourhood", () => {
   it("is one step in both directions, following any edge kind", () => {
-    const trace = neighbourhood(chain, "entity:Loan");
+    const trace = neighbourhood(borrowing, "entity:Loan");
     expect([...trace.nodes].sort()).toEqual([
       "entity:Loan",
       "entity:Member",
@@ -157,11 +157,11 @@ describe("isMeaningful", () => {
   it("rejects a trace of one node", () => {
     // Dimming the whole canvas to highlight a single box tells the reader
     // nothing and costs them the context.
-    expect(isMeaningful(walk(chain, "entity:Orphan"))).toBe(false);
+    expect(isMeaningful(walk(borrowing, "entity:Orphan"))).toBe(false);
   });
 
   it("accepts a trace that actually goes somewhere", () => {
-    expect(isMeaningful(journey(chain, "surface:MemberShelf"))).toBe(true);
+    expect(isMeaningful(chain(borrowing, "surface:MemberShelf"))).toBe(true);
   });
 });
 
@@ -179,14 +179,14 @@ describe("narrow", () => {
 
   it("leaves the view alone when nothing is being traced", () => {
     // Reflow is opt-in, and off it must be exactly as if it were not there.
-    const same = narrow(nodes, chain, null);
+    const same = narrow(nodes, borrowing, null);
     expect(same.nodes).toBe(nodes);
-    expect(same.edges).toBe(chain);
+    expect(same.edges).toBe(borrowing);
   });
 
   it("keeps only what the trace reached", () => {
-    const trace = journey(chain, "surface:MemberShelf");
-    const kept = narrow(nodes, chain, trace).nodes.map((node) => node.id);
+    const trace = chain(borrowing, "surface:MemberShelf");
+    const kept = narrow(nodes, borrowing, trace).nodes.map((node) => node.id);
     expect(kept).not.toContain("rule:Unrelated");
     expect(kept).toContain("rule:NotifyDesk");
     expect(kept).toHaveLength(trace.nodes.size);
@@ -196,16 +196,16 @@ describe("narrow", () => {
     // `Loan -field-> Member` is not causal, so the walk did not follow it. Both
     // ends are on the chain, though, and how the traced constructs relate is
     // part of the answer — dropping it would draw a chain simpler than the spec.
-    const trace = neighbourhood(chain, "entity:Loan");
-    const { edges } = narrow(nodes, chain, trace);
+    const trace = neighbourhood(borrowing, "entity:Loan");
+    const { edges } = narrow(nodes, borrowing, trace);
     expect(edges.map((edge) => edge.label)).toContain("entity:Loan->entity:Member");
   });
 
   it("drops an edge with only one end on the chain", () => {
     // An arrow into empty space is worse than no arrow, and reflow creates
     // exactly that opportunity by removing the other end.
-    const trace = journey(chain, "trigger:CopyBorrowed");
-    const { nodes: kept, edges } = narrow(nodes, chain, trace);
+    const trace = chain(borrowing, "trigger:CopyBorrowed");
+    const { nodes: kept, edges } = narrow(nodes, borrowing, trace);
     const present = new Set(kept.map((node) => node.id));
     expect(edges.length).toBeGreaterThan(0);
     for (const edge of edges) {

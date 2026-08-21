@@ -15,7 +15,9 @@
 //! same failure as a simulator that guesses. And it does not check anything
 //! about values, which is the runner's job and needs a world.
 
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use ts_rs::TS;
 
 use inspect_model::{
     NodeKind, SpecGraph,
@@ -38,7 +40,9 @@ pub struct Note {
 /// does not. `Unspecified` is a requirement nobody has met yet, which is the
 /// ordinary state of a journey written before the spec it demands; `Unexposed`
 /// is a system that does the right thing and tells nobody.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../../ui/src/lib/api/")]
 pub enum Verdict {
     /// The spec declares everything this line names, and it held.
     Specified,

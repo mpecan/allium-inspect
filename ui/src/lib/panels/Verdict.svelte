@@ -11,7 +11,20 @@
   // the checker's side: error and warning are things the reader must attend to,
   // info is not.
 
-  type Kind = "true" | "false" | "unknown" | "error" | "warning" | "info";
+  // The last two are a journey's, not a simulation's. A step can name
+  // something the spec has never declared, or ask an actor to see something no
+  // surface carries — and neither is the spec saying no, which is what a cross
+  // means everywhere else in this tool. Collapsing them into `false` would
+  // throw away the one distinction a journey exists to draw.
+  type Kind =
+    | "true"
+    | "false"
+    | "unknown"
+    | "unspecified"
+    | "unexposed"
+    | "error"
+    | "warning"
+    | "info";
 
   interface Props {
     kind: Kind;
@@ -26,6 +39,11 @@
     // A hollow diamond: not a tick, not a cross, and not a dimmed version of
     // either. Undecided is its own answer.
     unknown: "◈",
+    // A plus: this is work to add, and it is the shape of a backlog item
+    // rather than of a fault.
+    unspecified: "+",
+    // It happens, and nobody is shown it.
+    unexposed: "⊘",
     error: "✗",
     warning: "▲",
     info: "·",
@@ -35,6 +53,8 @@
     true: "holds",
     false: "does not hold",
     unknown: "could not be decided",
+    unspecified: "the spec does not have this yet",
+    unexposed: "nothing lets this actor see it",
     error: "error",
     warning: "warning",
     info: "note",
@@ -76,6 +96,14 @@
     background: var(--verdict-unknown-fill);
     box-shadow: inset 0 0 0 1px
       color-mix(in srgb, var(--verdict-unknown) 45%, transparent);
+  }
+
+  /* Both gaps, one colour: the difference between them is what is missing,
+   * and the glyph carries that. A second hue would say they are different
+   * kinds of thing, and they are not. */
+  .unspecified,
+  .unexposed {
+    color: var(--verdict-missing);
   }
 
   .error {

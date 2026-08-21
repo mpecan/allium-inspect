@@ -45,6 +45,7 @@ const SETTLE: Duration = Duration::from_millis(150);
 /// Returns a message when no watcher could be set up.
 pub fn watch(
     paths: Vec<PathBuf>,
+    journeys: Vec<PathBuf>,
     allium: PathBuf,
     state: AppState,
 ) -> Result<std::thread::JoinHandle<()>, String> {
@@ -64,7 +65,10 @@ pub fn watch(
     // the old one, which destroys the inode a file watch is attached to — the
     // watch then stops firing after the first save, silently.
     let mut watched = Vec::new();
-    for path in &paths {
+    // Journey directories too. A journey is written against a spec, and the
+    // loop is to save one and watch the verdicts move; watching only the specs
+    // would make every journey edit look like it did nothing.
+    for path in paths.iter().chain(journeys.iter()) {
         let Some(directory) = path.parent() else { continue };
         if watched.contains(&directory.to_path_buf()) {
             continue;
@@ -92,7 +96,7 @@ pub fn watch(
                 }
             }
 
-            match Inspection::build(&runner, &paths) {
+            match Inspection::build(&runner, &paths, &journeys) {
                 Ok(inspection) => {
                     let graph = &inspection.graph;
                     println!(

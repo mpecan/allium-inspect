@@ -6,7 +6,7 @@ import type { NodeDetail } from "../api/NodeDetail";
 import type { ViewKind } from "../client";
 import { ANSWERS, inView, ownerOf, project, stateId } from "./views";
 
-const VIEWS: ViewKind[] = ["domain", "flow", "lifecycle", "journey"];
+const VIEWS: ViewKind[] = ["domain", "flow", "lifecycle", "chain"];
 
 function node(
   kind: Node["kind"],
@@ -67,8 +67,8 @@ describe("inView", () => {
   });
 
   it("puts the boundary in the journey view, which is where a chain starts", () => {
-    expect(inView(node("surface", "MemberShelf"), "journey")).toBe(true);
-    expect(inView(node("actor", "Reader"), "journey")).toBe(true);
+    expect(inView(node("surface", "MemberShelf"), "chain")).toBe(true);
+    expect(inView(node("actor", "Reader"), "chain")).toBe(true);
   });
 
   it("draws only entities that actually have a lifecycle", () => {
@@ -88,7 +88,7 @@ describe("inView", () => {
     // be a stub in the middle of the thing the reader is trying to follow.
     expect(inView(node("external", "Phantom"), "domain")).toBe(true);
     expect(inView(node("external", "Phantom"), "flow")).toBe(false);
-    expect(inView(node("external", "Phantom"), "journey")).toBe(false);
+    expect(inView(node("external", "Phantom"), "chain")).toBe(false);
   });
 
   it("puts every construct in at least one view", () => {

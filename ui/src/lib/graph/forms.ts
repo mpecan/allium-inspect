@@ -17,7 +17,7 @@
 // to, which is Adjacent. Lifecycle was the only one with no per-construct
 // equivalent, because a state machine belongs to exactly one entity.
 
-import { journey, neighbourhood, origins, type Trace } from "./trace";
+import { chain, neighbourhood, origins, type Trace } from "./trace";
 import type { Edge } from "../api/Edge";
 import type { Node } from "../api/Node";
 
@@ -95,7 +95,7 @@ export function applies(form: Form, node: Node): boolean {
 export function walkForm(form: Form, edges: Edge[], id: string): Trace {
   switch (form) {
     case "forward":
-      return journey(edges, id);
+      return chain(edges, id);
     case "backward":
       return origins(edges, id);
     case "lifecycle":

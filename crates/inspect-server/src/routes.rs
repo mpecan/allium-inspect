@@ -75,6 +75,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/health", get(health))
         .route("/api/spec", get(spec))
         .route("/api/spec/source/{module}", get(source))
+        .route("/api/journeys", get(journeys))
         .route("/api/sim/setup", get(crate::sim::setup))
         .route("/api/sim/step", axum::routing::post(crate::sim::take_step))
         .fallback(assets)
@@ -111,6 +112,14 @@ async fn health(State(state): State<AppState>) -> Json<Health> {
 
 async fn spec(State(state): State<AppState>) -> Json<inspect_model::SpecGraph> {
     Json(state.get().graph.clone())
+}
+
+/// Every authored journey, walked against the spec as it stands now.
+///
+/// Recomputed with the inspection on each reload, so this is always a report
+/// about the graph the rest of the browser is showing.
+async fn journeys(State(state): State<AppState>) -> Json<crate::JourneyReport> {
+    Json(state.get().journeys().clone())
 }
 
 async fn source(
@@ -178,7 +187,7 @@ mod tests {
     use tower::ServiceExt;
 
     use super::*;
-    use crate::state::Inspection;
+    use crate::{JourneyReport, state::Inspection};
 
     /// A server over the two fixture modules, with no socket involved.
     fn server() -> Router {
@@ -373,6 +382,38 @@ mod tests {
         ));
         let (status, _) = get(router(state), "/api/spec/source/odd%20name").await;
         assert_eq!(status, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn the_journeys_route_is_served_even_with_none_loaded() {
+        // A server started without `--journeys` must still answer, or the view
+        // reports itself broken when the truth is that nobody asked for any.
+        let (status, body) = get(server(), "/api/journeys").await;
+        assert_eq!(status, StatusCode::OK);
+        let document: Value = serde_json::from_str(&body).expect("JSON");
+        assert_eq!(document["total"], 0);
+        assert_eq!(document["holding"], 0);
+        assert_eq!(document["files"].as_array().expect("an array").len(), 0);
+    }
+
+    #[tokio::test]
+    async fn the_journeys_route_returns_what_was_walked() {
+        let report = JourneyReport {
+            files: vec![crate::JourneyFile {
+                path: "journeys/lending.journey".to_owned(),
+                name: "lending.journey".to_owned(),
+                error: None,
+                walks: Vec::new(),
+            }],
+            holding: 0,
+            total: 0,
+        };
+        let state = AppState::new(fixture_inspection().with_journeys(report));
+        let (status, body) = get(router(state), "/api/journeys").await;
+        assert_eq!(status, StatusCode::OK);
+        let document: Value = serde_json::from_str(&body).expect("JSON");
+        assert_eq!(document["files"][0]["name"], "lending.journey");
+        assert_eq!(document["files"][0]["path"], "journeys/lending.journey");
     }
 
     #[tokio::test]
