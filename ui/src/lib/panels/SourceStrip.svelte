@@ -12,6 +12,7 @@
   // That is usually enough to confirm you are looking at what you think.
 
   import type { Span } from "../api/Span";
+  import { tokens } from "./highlight";
   import { sliceLines } from "./source";
 
   interface Props {
@@ -61,7 +62,8 @@
                 class="line"
                 class:highlit={line.highlit}
                 class:opens={line.opens}
-                ><span class="gutter">{line.number}</span>{line.text}
+                ><span class="gutter">{line.number}</span>{#each tokens(line.text) as token, at (at)}<span
+                    class="t-{token.kind}">{token.text}</span>{/each}
 </span>{/each}</code
           ></pre>
       {/if}
@@ -70,8 +72,9 @@
 </section>
 
 <style>
-  /* The one light surface in the interface. The reader always knows which of
-   * the two things they are looking at: the workbench, or the document. */
+  /* The document, as against the workbench around it. It follows the viewer's
+   * theme like everything else; what tells the two apart is temperature rather
+   * than lightness — see the `--ground-source` note in theme.css. */
   .strip {
     display: flex;
     flex-direction: column;
@@ -170,6 +173,34 @@
   }
   .highlit.opens {
     background: color-mix(in srgb, var(--source-highlight) 78%, transparent);
+  }
+
+  /* Syntax. Every colour is one the reader already learned from the canvas —
+   * see the `--source-*` block in theme.css for why — so nothing here picks a
+   * value, it only says which run of characters wears which. */
+  .t-keyword {
+    color: var(--source-keyword);
+  }
+  .t-type {
+    color: var(--source-type);
+  }
+  .t-string {
+    color: var(--source-string);
+  }
+  .t-number {
+    color: var(--source-number);
+  }
+  .t-annotation {
+    color: var(--source-annotation);
+  }
+  /* Prose, and there is a lot of it in a real spec — six separator rules and a
+   * paragraph above most declarations. Quietened rather than coloured: it is
+   * the thing a reader skips past on the way to the clause. */
+  .t-comment {
+    color: var(--source-comment);
+  }
+  .t-punctuation {
+    color: var(--source-punctuation);
   }
 
   .gutter {

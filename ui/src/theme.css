@@ -1,18 +1,23 @@
 /* allium-inspect — design tokens.
  *
  * Two grounds, one instrument. The canvas is a workbench: cool, recessive,
- * something you work *on*. The source strip is a document: warmer, lighter,
+ * something you work *on*. The source strip is a document: warmer,
  * something you *read*. Every other surface belongs to one or the other, and
  * nothing sits between them — the split is the layout's main structural claim,
  * because in a spec explorer the text is the artifact and the graph is a way of
  * looking at it, not the other way round.
  *
- * Colour encodes what a construct *is*, in four families rather than eleven
- * hues. Eleven hues is a rainbow nobody can hold in their head; four groups
- * — things, behaviour, boundary, constraint — is a distinction a reader can
- * actually learn in a minute. Within a group, form does the rest: an entity is
- * square, a value type is rounded, an enum is a pill, an unresolved reference
- * is a dashed outline with no fill.
+ * Colour encodes what a construct *is*, in four bands and eleven hues. The
+ * band — things, behaviour, boundary, constraint — is what a reader learns in
+ * a minute, and it survives because every kind in one shares a temperature and
+ * a chroma. The hue rotates inside it, so a trigger is tellable from a rule at
+ * a glance without either leaving the band it belongs to. Form carries the
+ * rest: an entity is square, a value type is rounded, an enum is a pill, an
+ * unresolved reference is a dashed outline with no fill.
+ *
+ * The source strip borrows the same eleven. A type name in the text is the
+ * colour of its box on the canvas and a keyword the colour of a rule, so the
+ * vocabulary a reader learned from the graph reads the spec too.
  *
  * Violet is the accent because it is the flower's own colour, and because the
  * things it marks — rules and triggers — are the active half of a
@@ -31,14 +36,38 @@
   --ground-raised: #1e242e;
   --ground-input: #0e1218;
 
-  /* The document. Warm, and the only light surface in the interface, so the
-   * eye knows immediately which of the two things it is looking at. */
-  --ground-source: #f7f4ee;
-  --ground-source-gutter: #efeade;
-  --ink-source: #2a2721;
-  --ink-source-dim: #7d7869;
-  --source-highlight: #ffe08a;
-  --source-highlight-edge: #d9a520;
+  /* The document.
+   *
+   * It used to be the one light surface in the interface whatever the viewer
+   * had chosen, so the eye could tell the workbench from the thing being read.
+   * It follows the theme now — asked for, and right: a dark-mode reader gets a
+   * light rectangle in the middle of the screen otherwise, which is the one
+   * place they are doing the most reading.
+   *
+   * What carries the distinction instead is temperature. The workbench is
+   * blue-slate; the document is warm at both ends of the theme, in the ground
+   * when it is light and in the ink when it is dark. */
+  --ground-source: #15171c;
+  --ground-source-gutter: #1a1c22;
+  --ink-source: #ddd7cb;
+  --ink-source-dim: #7e786c;
+  --source-highlight: #3a3116;
+  --source-highlight-edge: #8a6f1e;
+
+  /* Syntax, borrowed rather than invented.
+   *
+   * A type name in the source is the colour of its box on the canvas, a
+   * keyword the colour of a rule, a literal the colour of a value. The reader
+   * has already learned this vocabulary from the graph, and teaching them a
+   * second one for the same things would be a cost with nothing bought. It
+   * also means the two themes come for free: these already have both. */
+  --source-keyword: var(--kind-rule);
+  --source-type: var(--kind-entity);
+  --source-string: var(--kind-surface);
+  --source-number: var(--kind-value);
+  --source-annotation: var(--kind-actor);
+  --source-comment: var(--ink-source-dim);
+  --source-punctuation: var(--ink-source-dim);
 
   /* --- ink ----------------------------------------------------------- */
   --ink: #e4e7ec;
@@ -214,6 +243,14 @@
     --kind-external: #8d877b;
     --unresolved: var(--kind-external);
 
+    /* Warm paper, which is what it always was. */
+    --ground-source: #f7f4ee;
+    --ground-source-gutter: #efeade;
+    --ink-source: #2a2721;
+    --ink-source-dim: #7d7869;
+    --source-highlight: #ffe08a;
+    --source-highlight-edge: #d9a520;
+
     --verdict-true: #2f7c4c;
     --verdict-false: #a83b30;
     --verdict-unknown: #8a6200;
@@ -263,6 +300,14 @@
 
   --kind-external: #8d877b;
   --unresolved: var(--kind-external);
+
+  /* Warm paper, which is what it always was. */
+  --ground-source: #f7f4ee;
+  --ground-source-gutter: #efeade;
+  --ink-source: #2a2721;
+  --ink-source-dim: #7d7869;
+  --source-highlight: #ffe08a;
+  --source-highlight-edge: #d9a520;
 
   --verdict-true: #2f7c4c;
   --verdict-false: #a83b30;
