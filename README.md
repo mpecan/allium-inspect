@@ -7,12 +7,44 @@ run its rules.
 allium-inspect specs/
 ```
 
-Runs the `allium` CLI over a spec set, binds a free port, and opens a browser
-onto four views of it plus a simulator. It keeps up: the browser asks once a
-second whether the answer has changed, so an edit lands without a reload, and a
-spec that stops parsing says so across the top rather than leaving you reading a
-picture of a file that no longer says that. Nothing is uploaded and nothing is
-persisted; it is one binary and the specs you point it at.
+Reads a spec set, binds a free port, and opens a browser onto five views of it
+plus a simulator. It keeps up: the browser asks once a second whether the answer
+has changed, so an edit lands without a reload, and a spec that stops parsing
+says so across the top rather than leaving you reading a picture of a file that
+no longer says that. Nothing is uploaded and nothing is persisted; it is one
+binary and the specs you point it at.
+
+There is a second command in the box. `allium-journey` walks
+[journeys](#journeys) — executable claims about what an actor can do — against
+the same spec set, from a Makefile rather than a browser:
+
+```sh
+allium-journey walk specs/ journeys/
+```
+
+## Install
+
+There are no binary releases yet — build it from source:
+
+```sh
+git clone https://github.com/mpecan/allium-inspect
+cd allium-inspect
+just ui-install && just build-release
+```
+
+You also need the **`allium` CLI** on `PATH`:
+
+```sh
+brew install juxt/allium/allium
+```
+
+Two of the four documents this reads come from that binary. The other two —
+`parse` and `analyse` — are calls into `allium-parser`, allium's own library
+crate, pinned to the version the recorded fixtures were made from. So this never
+reimplements allium's parser, and an upstream change to the AST is a compile
+error here rather than a fixture that silently misparses. `model` and `plan`
+still need the process, because allium builds those in a crate with no library
+target.
 
 ## Why
 
@@ -40,8 +72,14 @@ Two things follow from reading the set as a set:
 | **Domain** | what the spec holds — entities, fields, relationships, enums |
 | **Flow** | what happens and in what order — trigger → rule → entity → trigger |
 | **Lifecycle** | how each entity changes state — one state machine per entity |
-| **Journey** | what follows from an action, traced forward or backward |
+| **Chain** | what *follows* from an action, traced forward or backward |
+| **Journeys** | what somebody *set out to do*, walked against the spec |
 | **Simulate** | fire a trigger against a world and watch |
+
+Chain and Journeys answer next to each other on purpose. A chain is derived —
+which triggers a surface offers, which each rule emits — so it is what follows.
+A journey is written by a person. The language has no construct for one, so
+somebody has to say it.
 
 `/` opens search, which matches a construct's name, its kind or the module it
 is in — and opening a result clears whatever was in the way, turning its module
@@ -116,21 +154,20 @@ The clock is a field you advance rather than a reading of the system clock, so a
 rule waiting on a due date is something you step *to*, and a run reproduces
 exactly.
 
-## Requirements
-
-The `allium` CLI on `PATH` — this drives the real parser rather than
-reimplementing it. Get it from [juxt/allium-tools](https://github.com/juxt/allium-tools).
-
 ## Options
 
 ```
 allium-inspect [PATHS]...
 
-  --port <PORT>      bind this port instead of a free one
-  --no-open          do not open a browser
-  --no-watch         do not reload when a spec changes
-  --print-graph      print the whole graph as JSON and exit
-  --allium <PATH>    the allium binary to run
+  --port <PORT>          bind this port instead of a free one
+  --no-open              do not open a browser
+  --no-watch             do not reload when a spec changes
+  --journeys <PATH>      journeys to walk, shown in the Journeys view
+  --check                print the journey report and exit, without serving
+  --strict               with --check: fail on what the spec cannot support
+  --json                 with --check: print the report as JSON
+  --print-graph          print the whole graph as JSON and exit
+  --allium <PATH>        the allium binary to run
 ```
 
 `--print-graph` makes the whole pipeline scriptable:
@@ -152,18 +189,25 @@ just check     # every fast gate
 ## How it is put together
 
 ```
-crates/inspect-model   ingest the CLI's JSON → one linked SpecGraph      [pure]
-crates/inspect-sim     three-valued evaluator, world, step engine        [pure]
-crates/inspect-server  axum routes; the built UI embedded in the binary
-apps/inspect           argument parsing, a free port, a browser, a watcher
-ui                     Svelte 5, with wire types generated from the Rust
+crates/inspect-model     four documents per file → one linked SpecGraph   [pure]
+crates/inspect-sim       three-valued evaluator, world, step engine       [pure]
+crates/inspect-journey   journeys: a grammar, a static check, a walk      [pure]
+crates/inspect-server    axum routes; the built UI embedded in the binary
+apps/inspect             the browser: a free port, a browser, a watcher
+apps/journey             allium-journey: the same engine, as a command
+ui                       Svelte 5, with wire types generated from the Rust
 ```
 
-The two pure crates hold all the logic and touch no clock, socket or random
-number generator. The `allium` CLI is reached only through a trait, so ingestion
-and simulation are tested against recorded real output with no binary installed.
+The three pure crates hold all the logic and touch no clock, socket or random
+number generator. `inspect-sim` walks `allium_parser::ast::Expr` directly and
+touches no JSON at all, so an expression form the language gains stops the build
+here rather than reporting itself as `unknown` at run time.
 
-Four commands are ingested per spec file, not one: `model` describes entities but
+The two commands that still need the process are reached through a trait, so
+ingestion and simulation are tested against recorded real output with no binary
+installed.
+
+Four documents are read per spec file, not one: `model` describes entities but
 carries no spans, `parse` is the only source of rules, surfaces and positions,
 `plan` supplies the trigger → rule → entity chain, and `analyse` the findings.
 Linking then runs once over the whole set.
@@ -190,9 +234,72 @@ A **journey** is an executable claim about what an actor can do, written beside
 the spec rather than in it — and written *first*, so a step naming a surface the
 spec does not have is a requirement nobody has met rather than an error.
 
+```
+journey ACopyGoesOutAndComesBack {
+    goal: Ada borrows a copy, keeps it a fortnight, and brings it back
+          before it falls due.
+
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+
+    given:
+        ada.is_at_limit = false
+        copy.status = available
+
+    1. she borrows it
+        ada does MemberBorrows(ada, copy) on MemberShelf
+            creating loan: Loan
+        then loan.status = open
+        then copy.status = on_loan
+
+    2. a fortnight passes
+        after 14.days
+
+    3. she brings it back
+        ada does MemberReturns(loan) on MemberShelf
+        then copy.status = available
+
+    ends: The copy is back on the shelf and Ada owes nothing.
+}
+```
+
+Every name in it is one the spec declares — the checker rejects any that is not.
+What a journey adds is the part the spec has no way to say: *these particular
+people, in this order, and this is what should be true afterwards.* The cast is
+instances rather than roles, because two members with different preconditions is
+the ordinary case.
+
+### Two ways to run one
+
+In the browser, as a view:
+
 ```sh
 allium-inspect --journeys journeys/ specs/
 ```
+
+Or as a command that sits beside `allium` in a Makefile:
+
+```sh
+allium-journey walk specs/ journeys/     # run them
+allium-journey check specs/ journeys/    # the static half, without a world
+```
+
+Each `PATH` is a spec, a journey, or a directory holding either — searched
+recursively, told apart by extension. It prints one JSON document per journey
+file, in the envelope `allium analyse` uses, so anything that already reads
+allium reads this:
+
+```sh
+allium-journey walk specs/ journeys/ | jq -r '.findings[].summary'
+allium-journey walk specs/ journeys/ --text     # for a person instead
+```
+
+Exit codes follow allium's: `0` nothing to say, `1` something reported, `2`
+nothing to read. `--report` exits 0 anyway, which is the mode a journey is
+*written* in.
+
+### What a step can come back as
 
 ```
 AReaderRenewsALoan  —  0 of 1 steps hold
@@ -203,12 +310,15 @@ AReaderRenewsALoan  —  0 of 1 steps hold
           no rule called `RenewLoan`
 ```
 
-Every step gets one of six verdicts. Three are the simulator's own — **holds**,
-**refused**, **undecided** — and two are what a journey needs and a simulation
-does not: **unspecified**, which is the backlog, and **unexposed**, which is a
-system that does the right thing and tells nobody. `--strict` turns the first
-two into a failure, for the journeys somebody has decided are done; reporting is
-the default, because report is the mode a journey is *written* in.
+Six verdicts. Three are the simulator's own — **holds**, **refused**,
+**undecided** — and two are what a journey needs and a simulation does not:
+**unspecified**, which is the backlog, and **unexposed**, which is a system that
+does the right thing and tells nobody. The sixth is a **remark**.
+
+Telling them apart is the whole point. "The spec forbids this", "the spec has
+never heard of this" and "this tool could not tell" are three different pieces
+of work, and a reader who sees one failure for all three will go and change a
+specification that is not wrong.
 
 The design, and what is deliberately left out of it, is in
 [`docs/journeys/`](docs/journeys/).
@@ -230,6 +340,20 @@ recorded run and escalates: silent under 250 lines, a warning to 500, and a bloc
 past that or past 20 Rust-touching commits. So the cadence follows code volume,
 and the deferral is bounded.
 
+## Contributing
+
+Bug reports and patches are welcome. [`CONTRIBUTING.md`](CONTRIBUTING.md) covers
+getting set up, what `just check` does, and the three gates here that are shaped
+unusually enough to be worth reading about before you fight them.
+
+The shortest useful bug report is the spec that provoked it.
+
 ## Licence
 
-MIT.
+MIT — see [`LICENSE`](LICENSE). The same licence allium itself uses, which is
+what makes a contribution upstream frictionless if any of this ever belongs
+there.
+
+The binaries built here contain `allium-parser`, which is MIT and © JUXT.
+[`NOTICE`](NOTICE) carries that attribution; ship it alongside any binary you
+distribute. `just deny` audits every other dependency's licence.

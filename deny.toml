@@ -36,4 +36,11 @@ highlight = "all"
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
-allow-git = []
+# allium's own parser, which this tool calls rather than reimplements. A git
+# source rather than a crates.io one because juxt do not publish there — they
+# ship binaries from GitHub releases — and it is pinned to a tag rather than a
+# branch, so the code behind this line cannot change without the lockfile
+# changing with it.
+#
+# The one exception, and it stays one: everything else comes from crates.io.
+allow-git = ["https://github.com/juxt/allium-tools"]
