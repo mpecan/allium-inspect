@@ -173,6 +173,11 @@
   .kind-enum {
     border-radius: 999px;
     padding: 9px 24px 11px;
+    /* `PADDING + MIN_CONTENT + PILL_WIDTH` in layout.ts — 20 + 76 + 30. The
+     * floor has to move with the padding: a short state name is narrower than
+     * the minimum either way, so if the two disagree ELK routes every edge to a
+     * boundary the node never reaches and the arrows stop short of it. */
+    min-width: 126px;
   }
   /* Enough values that the stadium stopped being a pill. Still the roundest
    * thing on the canvas — the shape vocabulary survives — but the corners come
@@ -181,6 +186,8 @@
   .kind-enum.lens {
     border-radius: 20px;
     padding: 9px 15px 11px;
+    /* `PADDING + MIN_CONTENT + ROUNDED_WIDTH` — 20 + 76 + 12. */
+    min-width: 108px;
   }
   .kind-trigger {
     /* A trigger is a moment, not a thing: the clipped corner marks it as the

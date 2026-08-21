@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import type { Edge } from "../api/Edge";
@@ -382,5 +385,78 @@ describe("measure, for a pill", () => {
   it("still fits the name, however long, because that is what names it", () => {
     const named = measure({ ...enumeration(["x"]), name: "AVeryLongEnumerationName" });
     expect(named.width).toBeGreaterThan(measure(enumeration(["x"])).width);
+  });
+});
+
+describe("the measured floor and the drawn floor", () => {
+  // ELK routes every edge to the boundary of the size it was given, so a node
+  // that draws narrower than it measured has its arrows stop short of it in
+  // mid-air. That is what the pill padding did: it went into `measure` and the
+  // CSS `min-width` stayed where it was, and every state machine in the
+  // Lifecycle view came apart.
+  //
+  // The two cannot share a constant across the language boundary, so this reads
+  // the stylesheet and checks they agree.
+  const component = readFileSync(
+    join(import.meta.dirname, "./ConstructBody.svelte"),
+    "utf8",
+  );
+
+  /**
+   * The `min-width` declared for `selector`, in pixels.
+   *
+   * Every block for the selector, not the first: a kind is declared twice —
+   * once for its accent and once for its shape — and only one of the two
+   * carries a floor.
+   */
+  function declaredFloor(selector: string): number {
+    const blocks = component
+      .split(`  ${selector} {`)
+      .slice(1)
+      .map((rest) => rest.slice(0, rest.indexOf("\n  }")));
+    for (const block of blocks) {
+      const found = /min-width:\s*(\d+)px/.exec(block);
+      if (found?.[1]) {
+        return Number(found[1]);
+      }
+    }
+    throw new Error(`${selector} declares no min-width`);
+  }
+
+  /** The narrowest an enum of `values` can be measured at. */
+  const floorOf = (values: string[]) =>
+    measure({
+      id: "m::enum::E",
+      kind: "enum",
+      name: "E",
+      module: "m",
+      qualified: "m/E",
+      span: null,
+      prose: { note: [], guidance: [] },
+      detail: { type: "enum", values },
+    }).width;
+
+  it("measures a pill no wider than the CSS lets it draw", () => {
+    expect(floorOf([])).toBe(declaredFloor(".kind-enum"));
+  });
+
+  it("measures a rounded enum no wider than the CSS lets it draw", () => {
+    expect(floorOf(["a", "b", "c", "d"])).toBe(declaredFloor(".kind-enum.lens"));
+  });
+
+  it("leaves every other kind on the shared floor", () => {
+    // 96px, which is `PADDING + MIN_CONTENT`. Only the enum pays for a shape.
+    expect(declaredFloor(".construct")).toBe(
+      measure({
+        id: "m::value::V",
+        kind: "value",
+        name: "V",
+        module: "m",
+        qualified: "m/V",
+        span: null,
+        prose: { note: [], guidance: [] },
+        detail: { type: "none" },
+      }).width,
+    );
   });
 });
