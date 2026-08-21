@@ -7,6 +7,8 @@ run its rules.
 allium-inspect specs/
 ```
 
+![The five views, the journey report and the source strip](docs/media/demo.gif)
+
 Reads a spec set, binds a free port, and opens a browser onto five views of it
 plus a simulator. It keeps up: the browser asks once a second whether the answer
 has changed, so an edit lands without a reload, and a spec that stops parsing
@@ -320,8 +322,11 @@ never heard of this" and "this tool could not tell" are three different pieces
 of work, and a reader who sees one failure for all three will go and change a
 specification that is not wrong.
 
-The design, and what is deliberately left out of it, is in
-[`docs/journeys/`](docs/journeys/).
+Every form a journey can contain is in
+[`docs/journeys/reference.md`](docs/journeys/reference.md) — one example each,
+all of them runnable against the fixture spec set. The design, and what is
+deliberately left out of it, is in
+[`docs/journeys/README.md`](docs/journeys/README.md).
 
 ## Quality gates
 

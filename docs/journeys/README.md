@@ -1,11 +1,18 @@
 # User journeys over an Allium spec
 
-**Parsing, checking and walking are built.** The browser view is not. Run one:
+> **Looking for the syntax?** [`reference.md`](reference.md) has every form a
+> journey can contain, with a runnable example of each. This document is the
+> reasoning: what a journey is for, and what it deliberately is not.
+
+
+**All of it is built**: the grammar, the static check, the walk, a browser view
+and a command of its own. Run one:
 
 ```sh
-allium-inspect --journeys journeys/ specs/          # report: every step gets a status
-allium-inspect --journeys journeys/ specs/ --strict # fail on what the spec cannot support
-allium-inspect --journeys journeys/ specs/ --json   # for whatever wrote the journey
+allium-journey walk specs/ journeys/                # JSON, one document per file
+allium-journey walk specs/ journeys/ --text         # for a person
+allium-journey check specs/ journeys/               # the static half, no world
+allium-inspect --journeys journeys/ specs/          # in the browser
 ```
 
 The design below is the second draft, after answers on the open questions. What
