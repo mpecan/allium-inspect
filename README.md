@@ -359,6 +359,19 @@ MIT — see [`LICENSE`](LICENSE). The same licence allium itself uses, which is
 what makes a contribution upstream frictionless if any of this ever belongs
 there.
 
-The binaries built here contain `allium-parser`, which is MIT and © JUXT.
-[`NOTICE`](NOTICE) carries that attribution; ship it alongside any binary you
-distribute. `just deny` audits every other dependency's licence.
+The project's own code is MIT throughout. A binary built here is not MIT alone,
+because it carries its dependencies with it:
+
+- `allium-parser`, MIT, from the Allium project. Its own LICENSE names no
+  copyright holder, so [`NOTICE`](NOTICE) reproduces the notice as written.
+- the built browser interface, which is npm code. Most of it is MIT or ISC;
+  **elkjs**, which does the graph layout, is `EPL-2.0 OR GPL-3.0-or-later` and
+  is taken here under the **EPL-2.0** arm.
+
+`ui/public/THIRD-PARTY.txt` lists all 39 of them with their full licence text,
+and the running tool serves it at `/THIRD-PARTY.txt`. Ship it and
+[`NOTICE`](NOTICE) alongside any binary you distribute.
+
+Two gates keep that honest: `just deny` audits the Rust tree, and
+`just third-party-check` fails if the notice no longer matches what the bundle
+ships, or if a frontend dependency arrives under a licence nobody reviewed.

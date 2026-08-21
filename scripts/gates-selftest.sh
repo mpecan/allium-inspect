@@ -365,6 +365,27 @@ expect_fail "mutation scoring with nothing scored" "0 mutants" score
 rm -f "$results/caught.txt" "$results/missed.txt"
 expect_fail "mutation scoring with no results file at all" "no results to score" score
 
+# --- third-party notices --------------------------------------------------
+#
+# The binary embeds the npm bundle, so this gate is the only thing standing
+# between a new frontend dependency and its licence quietly not shipping.
+
+INSPECT_THIRD_PARTY_OUT="$scratch/no-such-notice.txt" \
+    expect_fail "third-party notice missing entirely" "is stale" \
+    node "$here/third-party.mjs" --check
+
+printf 'not the notice\n' > "$scratch/stale-notice.txt"
+INSPECT_THIRD_PARTY_OUT="$scratch/stale-notice.txt" \
+    expect_fail "third-party notice out of date" "is stale" \
+    node "$here/third-party.mjs" --check
+
+INSPECT_THIRD_PARTY_ALLOW="Apache-2.0" \
+    expect_fail "a shipped dependency under an unreviewed licence" "unreviewed licence" \
+    node "$here/third-party.mjs" --check
+
+expect_pass "third-party notice matching the shipped tree" \
+    node "$here/third-party.mjs" --check
+
 # --- verdict --------------------------------------------------------------
 echo
 note=""

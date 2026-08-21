@@ -13,7 +13,7 @@ default:
 # hot path while the drift stays bounded.
 
 # The fast gates: format, lint, doc, tests, budgets, coverage and mutation debt.
-check: fmt-check lint doc test file-size gates-selftest coverage-fresh mutation-debt ui-guard ui-check ui-test
+check: fmt-check lint doc test file-size gates-selftest types-check coverage-fresh mutation-debt ui-guard third-party-check ui-check ui-test
 
 # Everything, nothing skipped for speed: the fast gates plus mutation, the
 # dependency audit and a real coverage measurement.
@@ -162,6 +162,20 @@ types-check: types
          git status --porcelain --untracked-files=all -- ui/src/lib/api/ && \
          echo "       An untracked binding is invisible to the diff above, so a new" && \
          echo "       type could go unreviewed forever. Commit them." && exit 1)
+
+# === third-party notices ===
+#
+# The binary embeds the built bundle, which is npm code `cargo deny` never
+# sees. ISC, BSD and MIT all require their notice to travel with a binary, and
+# Vite strips every legal comment on the way out.
+
+# Regenerate the notice the shipped bundle carries.
+third-party:
+    node scripts/third-party.mjs
+
+# Fail if the notice does not match what the bundle actually ships.
+third-party-check:
+    @node scripts/third-party.mjs --check
 
 # === frontend ===
 #

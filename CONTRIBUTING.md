@@ -158,3 +158,15 @@ If you are reporting something about the interface, say which of the five people
 in [`docs/personas/`](docs/personas/) you were being. "The rail is cluttered" and
 "the rail is thorough" are the same observation from two people with different
 jobs, and only naming the job settles it.
+
+## Licence
+
+This project is MIT — see [`LICENSE`](LICENSE). Contributions are accepted under
+the same terms: open a pull request and you are offering your work under MIT,
+which is what lets any of it graduate upstream into allium without a second
+conversation.
+
+If you add a frontend dependency, `just third-party-check` will tell you whether
+its licence is one the bundle can carry. Adding it to the allowed set in
+`scripts/third-party.mjs` is a deliberate decision rather than a formality: the
+binary embeds that code, and its notice has to travel with it.

@@ -7,3 +7,6 @@ ui/dist/
 crates/inspect-server/assets/
 .DS_Store
 .idea/
+ui/coverage/
+*.tsbuildinfo
+.vscode/
