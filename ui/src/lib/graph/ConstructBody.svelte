@@ -19,7 +19,7 @@
 
   import type { Node as SpecNode } from "../api/Node";
   import type { Severity } from "../api/Severity";
-  import { familyOf } from "./layout";
+  import { PILL_ROWS, familyOf } from "./layout";
   import { summaryRows } from "./rows";
 
   interface Props {
@@ -33,11 +33,15 @@
 
   const family = $derived(familyOf(node.kind));
   const rows = $derived(summaryRows(node));
+  // See `PILL_ROWS`: past a few values a stadium is a lens rather than a pill,
+  // and the rows nearest its top and bottom are clipped by its own outline.
+  const lens = $derived(node.kind === "enum" && rows.length > PILL_ROWS);
 </script>
 
 <div
   class="construct {family} kind-{node.kind}"
   class:selected
+  class:lens
   class:dimmed={dimmed}
 >
   <header>
@@ -161,9 +165,22 @@
   .kind-variant {
     border-radius: var(--radius-round);
   }
+  /* A stadium, not a circle. The ends are semicircles, so the corners a
+   * rectangle would have are inside the curve — text measured as if the box
+   * were square sits on the outline. The extra room is horizontal because that
+   * is where the curve takes it, and `PILL_WIDTH`/`PILL_HEIGHT` in layout.ts
+   * are these numbers: ELK trusts the size it is given. */
   .kind-enum {
     border-radius: 999px;
-    padding-inline: 14px;
+    padding: 9px 24px 11px;
+  }
+  /* Enough values that the stadium stopped being a pill. Still the roundest
+   * thing on the canvas — the shape vocabulary survives — but the corners come
+   * back, so the last row is not sitting on the outline and the box is not
+   * mostly empty. */
+  .kind-enum.lens {
+    border-radius: 20px;
+    padding: 9px 15px 11px;
   }
   .kind-trigger {
     /* A trigger is a moment, not a thing: the clipped corner marks it as the
@@ -235,6 +252,17 @@
     list-style: none;
     border-top: 1px solid color-mix(in srgb, var(--node-edge) 55%, transparent);
     font-size: var(--t-micro);
+    /* `MAX_ROW_WIDTH` in layout.ts, which measures a row as `min(width, 240)`.
+     * The two are one decision: without the cap here a long row widens the box
+     * past the size ELK was told, and ELK spaces nodes by the size it was told.
+     * On the rows rather than on the node, because the *name* is deliberately
+     * uncapped — a construct whose name is clipped cannot be identified, which
+     * is the one thing a box on a graph is for. */
+    max-width: 240px;
+    /* And `min-width: 0`, because a flex item's automatic minimum size is its
+     * *content* — which silently outranks the cap above and was why the box
+     * still grew. */
+    min-width: 0;
   }
 
   .rows li {
@@ -243,6 +271,17 @@
     gap: var(--gap-3);
     color: var(--ink-dim);
     white-space: nowrap;
+    overflow: hidden;
+  }
+
+  /* The label is ellipsised too, not only the value. An enum's rows *are* its
+   * values, and a value is a label with nothing beside it — so without this one
+   * long state name runs straight out of the box, past the size ELK was given.
+   * `min-width: 0` is what lets a flex item shrink below its content at all. */
+  .row-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .rows li.muted {
@@ -252,6 +291,7 @@
 
   .row-value {
     color: var(--ink-faint);
+    flex: none;
     overflow: hidden;
     text-overflow: ellipsis;
     max-width: 11ch;

@@ -322,3 +322,65 @@ describe("edge routing", () => {
     expect(placed.nodes).toHaveLength(1);
   });
 });
+
+describe("measure, for a pill", () => {
+  const enumeration = (values: string[]): Node => ({
+    id: "catalogue::enum::Medium",
+    kind: "enum",
+    name: "Medium",
+    module: "catalogue",
+    qualified: "catalogue/Medium",
+    span: null,
+    prose: { note: [], guidance: [] },
+    detail: { type: "enum", values },
+  });
+
+  const box = (values: string[]): Node => ({
+    ...enumeration(values),
+    kind: "value",
+    detail: { type: "enum", values },
+  });
+
+  it("gives an enum more room than a rectangle holding the same text", () => {
+    // An enum is a stadium, so the corners a rectangle would have are inside
+    // the curve. Measured as if it were square, the first and last row sit on
+    // the outline — which is what a five-value enum looked like.
+    const pill = measure(enumeration(["print", "audio"]));
+    const rectangle = measure(box(["print", "audio"]));
+    expect(pill.width).toBeGreaterThan(rectangle.width);
+    expect(pill.height).toBeGreaterThan(rectangle.height);
+  });
+
+  it("grows with its values, so a long list is not squeezed into a circle", () => {
+    const two = measure(enumeration(["print", "audio"]));
+    const many = measure(enumeration(["a", "b", "c", "d", "e"]));
+    expect(many.height).toBeGreaterThan(two.height);
+  });
+
+  it("stops paying for a stadium once it has stopped being one", () => {
+    // A stadium's ends are semicircles of half its height, so the padding that
+    // keeps the first and last row off the outline grows with the row count
+    // until the box is mostly empty. Past `PILL_ROWS` the shape is a rounded
+    // rectangle and the padding comes back down — the CSS switches at the same
+    // count, and the two have to agree or ELK is told the wrong size.
+    // The same longest value in both, so the width difference is the shape
+    // alone: a pill pays for its curve and a rounded box does not.
+    const pill = measure(enumeration(["same"]));
+    const lens = measure(enumeration(["same", "b", "c", "d"]));
+    expect(pill.width).toBeGreaterThan(lens.width);
+    expect(lens.height).toBeGreaterThan(pill.height);
+  });
+
+  it("does not let one long value set the width of the canvas", () => {
+    // The row is ellipsised in the CSS at the same cap this applies, and the
+    // two have to agree: ELK spaces nodes by the size it is given, so a box
+    // that draws wider than it measured overlaps its neighbour.
+    const long = measure(enumeration(["a".repeat(200)]));
+    expect(long.width).toBeLessThan(320);
+  });
+
+  it("still fits the name, however long, because that is what names it", () => {
+    const named = measure({ ...enumeration(["x"]), name: "AVeryLongEnumerationName" });
+    expect(named.width).toBeGreaterThan(measure(enumeration(["x"])).width);
+  });
+});

@@ -115,6 +115,30 @@ const MIN_CONTENT = 76;
  */
 const MAX_ROW_WIDTH = 240;
 
+/**
+ * How many values an enum may hold and still be drawn as a stadium.
+ *
+ * A stadium's ends are semicircles of half its height, so every row away from
+ * the middle is inset further than the last. Two or three rows is a pill; six
+ * is a lens with the first and last line clipped by the curve, and the amount
+ * of padding that would fix it grows with the height until the shape is mostly
+ * empty. Past this the enum is a generously rounded rectangle instead — the
+ * same family, without the wasted corners.
+ */
+export const PILL_ROWS = 3;
+
+/**
+ * The extra room the two enum shapes need over a plain rectangle.
+ *
+ * These are the paddings the CSS adds for `.kind-enum`, and they have to stay
+ * in step with it: ELK trusts the sizes it is given, so a node that draws
+ * bigger than it measured overlaps its neighbour and its edges attach in the
+ * wrong place.
+ */
+const PILL_WIDTH = 30;
+const PILL_HEIGHT = 8;
+const ROUNDED_WIDTH = 12;
+
 /** How wide one row is drawn, with its value ellipsised as the CSS does. */
 function rowWidth(row: Row): number {
   const value = Math.min(row.value?.length ?? 0, VALUE_CAP);
@@ -140,10 +164,21 @@ export function measure(node: Node): { width: number; height: number } {
     node.kind.length * ROW_CHAR,
     Math.min(widest, MAX_ROW_WIDTH),
   );
+  const extra = enumShape(node, rows.length);
   return {
-    width: Math.ceil(PADDING + content),
-    height: HEADER_HEIGHT + rows.length * ROW_HEIGHT,
+    width: Math.ceil(PADDING + content + extra.width),
+    height: HEADER_HEIGHT + rows.length * ROW_HEIGHT + extra.height,
   };
+}
+
+/** The room an enum's shape costs it, over a rectangle of the same content. */
+function enumShape(node: Node, rows: number): { width: number; height: number } {
+  if (node.kind !== "enum") {
+    return { width: 0, height: 0 };
+  }
+  return rows <= PILL_ROWS
+    ? { width: PILL_WIDTH, height: PILL_HEIGHT }
+    : { width: ROUNDED_WIDTH, height: PILL_HEIGHT };
 }
 
 /**
