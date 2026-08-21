@@ -42,6 +42,7 @@ function walk(name: string, outcomes: Outcome[], stipulated: string[] = []): Wal
     line: 6,
     steps: [{ number: 1, title: "she borrows it", outcomes, world: world() }],
     stipulated,
+    notes: [],
   };
 }
 

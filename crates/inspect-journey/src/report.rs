@@ -68,6 +68,16 @@ pub fn render(walks: &[Walk]) -> String {
             out.push_str(&format!("    stipulated  {stipulation}\n"));
         }
 
+        // What is wrong with the journey outside its steps, before the steps.
+        // A cast the spec cannot supply makes every step below it meaningless,
+        // so a reader who stops at the first line has still been told.
+        for note in &walk.notes {
+            out.push_str(&format!("    {}  {}\n", note.verdict.as_str(), note.about));
+            if let Some(detail) = &note.detail {
+                out.push_str(&format!("          {detail}\n"));
+            }
+        }
+
         for step in &walk.steps {
             out.push_str(&format!(
                 "  {:>2}. {:<48} {}\n",
@@ -109,6 +119,12 @@ pub fn as_json(walks: &[Walk]) -> serde_json::Value {
                     "journey": walk.name,
                     "verdict": walk.verdict().as_str(),
                     "stipulated": walk.stipulated,
+                    "notes": walk.notes.iter().map(|note| serde_json::json!({
+                        "line": note.line,
+                        "verdict": note.verdict.as_str(),
+                        "about": note.about,
+                        "detail": note.detail,
+                    })).collect::<Vec<_>>(),
                     "steps": walk.steps.iter().map(|step| serde_json::json!({
                         "number": step.number,
                         "title": step.title,
@@ -144,6 +160,7 @@ mod tests {
             line: 1,
             steps,
             stipulated,
+            notes: Vec::new(),
         }
     }
 

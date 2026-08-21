@@ -13,7 +13,7 @@
 //! sets like `OutboxEntry.awaiting` naming the devices that do not have it yet.
 
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use ts_rs::TS;
 
 use inspect_model::{NodeKind, Program, SpecGraph};
@@ -121,13 +121,61 @@ pub struct Walk {
     pub steps: Vec<Walked>,
     /// What the journey was told rather than shown, always reported.
     pub stipulated: Vec<String>,
+    /// What was wrong with the journey outside its steps.
+    ///
+    /// Counted in the verdict, because the flagship case of this whole design
+    /// is a requirement nobody has met — and a cast naming a type the spec
+    /// does not have is exactly that, one line before the steps begin.
+    pub notes: Vec<Outcome>,
 }
 
 impl Walk {
     #[must_use]
     pub fn verdict(&self) -> Verdict {
-        worst(self.steps.iter().map(Walked::verdict))
+        worst(
+            self.steps
+                .iter()
+                .map(Walked::verdict)
+                .chain(self.notes.iter().map(|note| note.verdict)),
+        )
     }
+}
+
+/// Check notes that sit on no step clause, as outcomes.
+///
+/// `walk_step` reports the notes on a clause line and nothing else, so a
+/// cast member whose type the spec does not have was computed and then
+/// dropped by every consumer. Shared with `--check`, because a cast the spec
+/// cannot supply is the same fault whether or not anybody ran the journey.
+#[must_use]
+pub fn notes_outside_steps(journey: &Journey, notes: &[check::Note]) -> Vec<Outcome> {
+    let clause_lines: BTreeSet<usize> =
+        journey.steps.iter().flat_map(|step| step.clauses.iter().map(Clause::line)).collect();
+    notes
+        .iter()
+        .filter(|note| note.verdict != Verdict::Specified && !clause_lines.contains(&note.line))
+        .map(|note| Outcome {
+            line: note.line,
+            verdict: note.verdict,
+            about: describes(journey, note.line),
+            detail: Some(note.message.clone()),
+        })
+        .collect()
+}
+
+/// What a journey line outside the steps is about, for reporting.
+///
+/// The check reports a line and a message; a reader needs to know which part
+/// of the journey the line *was*. Cast and `given` are the only two places a
+/// note can land outside a step, so those are the two it names.
+fn describes(journey: &Journey, line: usize) -> String {
+    if let Some(member) = journey.cast.iter().find(|member| member.line == line) {
+        return format!("cast {}: {}", member.name, member.type_expr);
+    }
+    if journey.given.iter().any(|given| given.line() == line) {
+        return format!("given, line {line}");
+    }
+    format!("line {line}")
 }
 
 /// The worst of several, in the order a reader cares about them.
@@ -148,7 +196,7 @@ fn worst(verdicts: impl Iterator<Item = Verdict>) -> Verdict {
 /// Walk `journey` against `spec`.
 #[must_use]
 pub fn walk(journey: &Journey, spec: &SpecGraph, program: &Program, sources: &Sources) -> Walk {
-    let notes = check::check(journey, spec);
+    let checked = check::check(journey, spec);
     let mut walker = Walker {
         spec,
         program,
@@ -159,10 +207,16 @@ pub fn walk(journey: &Journey, spec: &SpecGraph, program: &Program, sources: &So
         cast: Vec::new(),
         fired: Vec::new(),
         undecided: Vec::new(),
+        notes: Vec::new(),
     };
     walker.lay_out(journey);
 
-    let steps = journey.steps.iter().map(|step| walker.walk_step(step, &notes)).collect();
+    let steps: Vec<Walked> =
+        journey.steps.iter().map(|step| walker.walk_step(step, &checked)).collect();
+
+    let mut notes = walker.notes;
+    notes.extend(notes_outside_steps(journey, &checked));
+    notes.sort_by_key(|note| note.line);
 
     Walk {
         name: journey.name.clone(),
@@ -172,6 +226,7 @@ pub fn walk(journey: &Journey, spec: &SpecGraph, program: &Program, sources: &So
         line: journey.line,
         steps,
         stipulated: walker.stipulated,
+        notes,
     }
 }
 
@@ -189,6 +244,13 @@ pub(crate) struct Walker<'a> {
     pub(crate) fired: Vec<String>,
     /// Rules that could not be decided since it, for the same.
     pub(crate) undecided: Vec<String>,
+    /// Faults that belong to no step clause.
+    ///
+    /// A cast member whose type the spec does not have, or a `given` that
+    /// wrote nothing. Both were computed and then dropped, because every
+    /// consumer filtered notes by *clause* line and neither of these sits on
+    /// one — so a journey whose cast is nobody reported as satisfied.
+    pub(crate) notes: Vec<Outcome>,
 }
 
 impl Walker<'_> {
@@ -251,9 +313,22 @@ impl Walker<'_> {
             Clause::Sees { path, negated, line, .. } => self.observe(path, *negated, *line, about),
             Clause::Stipulate { path, value, line } => {
                 let value = self.value_of(value);
-                self.stipulated.push(format!("{} = {}", path.as_written(), value.render()));
-                self.assign(path, value);
-                Outcome { line: *line, verdict: Verdict::Specified, about, detail: None }
+                let written = format!("{} = {}", path.as_written(), value.render());
+                // Listed only once it landed. The ledger exists so a reader can
+                // see everything the journey was told rather than shown, and a
+                // line in it that never reached the world is a false receipt.
+                match self.assign(path, value) {
+                    Ok(()) => {
+                        self.stipulated.push(written);
+                        Outcome { line: *line, verdict: Verdict::Specified, about, detail: None }
+                    }
+                    Err(reason) => Outcome {
+                        line: *line,
+                        verdict: Verdict::Undecided,
+                        about,
+                        detail: Some(reason),
+                    },
+                }
             }
         }
     }

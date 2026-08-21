@@ -131,6 +131,10 @@ fn statically(journey: &inspect_journey::Journey, graph: &SpecGraph) -> Walk {
         line: journey.line,
         steps,
         stipulated: Vec::new(),
+        // The same notes the walk carries. Without them `check` reported a
+        // cast the spec cannot supply as specified, with no diagnostics and
+        // exit 0 — the one answer this tool must never give.
+        notes: inspect_journey::notes_outside_steps(journey, &notes),
     }
 }
 

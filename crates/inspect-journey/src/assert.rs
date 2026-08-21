@@ -62,9 +62,24 @@ impl Walker<'_> {
                 }
             }
             Assertion::Exists { path, negated } => {
-                let found =
-                    matches!(self.read(path), Value::Ref(id) if self.world.instance(&id).is_some());
-                (Truth::from_bool(found != *negated), None)
+                let value = self.read(path);
+                // An unknown is not an absence, and this is the one arm where
+                // reading it as one goes wrong in *both* directions at once: a
+                // path that ran out would make `does not exist` hold on a world
+                // nothing described, and `exists` refuse — the spec saying no to
+                // a question nobody put to it. Stipulation 1 names those two
+                // failure modes; here they are the same line.
+                //
+                // An unbound bare name is a different thing and stays decidable:
+                // `read` answers it as a state name rather than as unknown, so a
+                // journey that never caught a reservation can still say so.
+                if value.is_unknown() {
+                    (Truth::Unknown, Some(format!("{} is unknown", path.as_written())))
+                } else {
+                    let found =
+                        matches!(&value, Value::Ref(id) if self.world.instance(id).is_some());
+                    (Truth::from_bool(found != *negated), None)
+                }
             }
         };
 

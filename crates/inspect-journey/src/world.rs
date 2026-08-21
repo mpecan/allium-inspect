@@ -16,6 +16,8 @@ use inspect_model::{NodeKind, SpecGraph};
 use inspect_sim::{Value, value::EntityId};
 
 use crate::{
+    Outcome,
+    check::Verdict,
     journey::{Cast, Given, Journey, Path, Term},
     run::{CastMember, Origin, Walker},
 };
@@ -43,9 +45,20 @@ impl Walker<'_> {
                         Cast { name: name.clone(), type_expr: type_expr.clone(), line: *line };
                     self.bind(&who, Some(id), Origin::Given);
                 }
-                Given::Assign { path, value, .. } => {
+                Given::Assign { path, value, line } => {
                     let value = self.value_of(value);
-                    self.assign(path, value);
+                    // A `given` that wrote nothing is the same fault as a
+                    // stipulation that wrote nothing, one step earlier: the
+                    // journey believes it set the world up and every assertion
+                    // after it is answered against a world nobody arranged.
+                    if let Err(reason) = self.assign(path, value) {
+                        self.notes.push(Outcome {
+                            line: *line,
+                            verdict: Verdict::Undecided,
+                            about: format!("given {}", path.as_written()),
+                            detail: Some(reason),
+                        });
+                    }
                 }
             }
         }
@@ -77,10 +90,40 @@ impl Walker<'_> {
         });
     }
 
-    pub(crate) fn assign(&mut self, path: &Path, value: Value) {
-        let Some(id) = self.bound.get(&path.root).cloned() else { return };
-        let Some(field) = path.segments.first() else { return };
-        self.world.set_field(&id, field, value);
+    /// Write a value the journey asserted, or say why nothing was written.
+    ///
+    /// Every way of failing is a reason rather than a silent return, because
+    /// the stipulation ledger this feeds is the guardrail the whole design
+    /// leans on: an agent can make any journey pass, but it cannot make one
+    /// pass *invisibly*. A write that quietly did nothing and then listed
+    /// itself anyway shows the reader a change to the world that never
+    /// happened, which is worse than showing them nothing.
+    pub(crate) fn assign(&mut self, path: &Path, value: Value) -> Result<(), String> {
+        let Some(id) = self.bound.get(&path.root).cloned() else {
+            return Err(format!("`{}` is not a name this journey bound", path.root));
+        };
+        let Some((field, through)) = path.segments.split_last() else {
+            return Err(format!("`{}` names no field to set", path.as_written()));
+        };
+        // Follow everything before the last segment, so `loan.window.due_at`
+        // writes `due_at` on the window. Taking the *first* segment instead
+        // wrote `window` on the loan — a field the journey never named, with
+        // the ledger printing the path in full underneath it.
+        let mut current = id;
+        for segment in through {
+            let next = self.world.instance(&current).map(|instance| instance.field(segment));
+            match next {
+                Some(Value::Ref(id)) if self.world.instance(&id).is_some() => current = id,
+                _ => {
+                    return Err(format!(
+                        "`{}` cannot be followed: `{segment}` is not set to something with fields",
+                        path.as_written()
+                    ));
+                }
+            }
+        }
+        self.world.set_field(&current, field, value);
+        Ok(())
     }
 
     /// A term as a value in this world.

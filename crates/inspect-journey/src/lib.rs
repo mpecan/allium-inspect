@@ -27,4 +27,4 @@ pub use check::{Note, Verdict, check};
 pub use journey::{Assertion, Cast, Clause, Comparison, Given, Journey, Path, Step, Term};
 pub use parse::{ParseError, parse};
 pub use report::{Strictness, as_json, passes, render};
-pub use run::{CastMember, Origin, Outcome, Walk, Walked, walk};
+pub use run::{CastMember, Origin, Outcome, Walk, Walked, notes_outside_steps, walk};

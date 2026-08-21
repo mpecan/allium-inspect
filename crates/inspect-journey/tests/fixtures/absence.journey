@@ -1,0 +1,29 @@
+-- An unknown is not an absence.
+--
+-- `Member.joined_at` is declared and nothing here sets it, so reading it runs
+-- out of world. Asked either way round, the honest answer is the same one: not
+-- that she has no joining date, and not that she has one, but that nothing
+-- said. The two steps are separate because an undecided assertion stops the
+-- ones after it in its own step, and the point of this fixture is that both
+-- directions are undecided rather than one of them.
+
+journey AnUnknownIsNotAnAbsence {
+    goal: A declared field nobody set is undecided whichever way it is asked,
+          because answering either way states a conclusion nothing reached.
+
+    cast:
+        ada: Member
+
+    given:
+        ada.name = "Ada"
+
+    1. nobody has said when she joined
+        after 1.day
+        then ada.joined_at does not exist
+
+    2. and asking the other way round does not settle it either
+        after 1.day
+        then ada.joined_at exists
+
+    ends: Neither question was answered, and both said so.
+}

@@ -167,6 +167,26 @@
         </div>
       {/if}
 
+      {#if walk.notes.length > 0}
+        <!-- Faults that belong to no step: a cast member the spec cannot
+             supply, a `given` that wrote nothing. They sit above the steps
+             because they make every step below them meaningless, and a reader
+             who stops at the first thing they see has still been told. -->
+        <ul class="notes">
+          {#each walk.notes as note (note.line + note.about)}
+            <li>
+              <Verdict kind={MARK[note.verdict]} label={MEANING[note.verdict]} />
+              <div class="line-body">
+                <code>{note.about}</code>
+                {#if note.detail}
+                  <p class="detail">{note.detail}</p>
+                {/if}
+              </div>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+
       <ol class="steps">
         {#each walk.steps as step, index (step.number)}
           {@const stepMark = stepVerdict(step)}
@@ -378,6 +398,23 @@
     margin: 0;
     font-family: var(--font-mono);
     color: var(--ink);
+  }
+
+  .notes {
+    list-style: none;
+    margin: 0 0 var(--gap-4);
+    padding: var(--gap-3);
+    display: grid;
+    gap: var(--gap-2);
+    border: 1px solid var(--verdict-false);
+    background: var(--ground-panel);
+  }
+
+  .notes li {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: var(--gap-2);
+    align-items: start;
   }
 
   .stipulated {

@@ -157,6 +157,7 @@ mod tests {
             ends: vec!["it is done".to_owned()],
             line: 4,
             stipulated: Vec::new(),
+            notes: Vec::new(),
             steps: vec![inspect_journey::Walked {
                 number: 1,
                 title: "she does it".to_owned(),

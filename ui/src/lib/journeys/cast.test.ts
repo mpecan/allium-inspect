@@ -39,6 +39,7 @@ function walk(worlds: World[]): Walk {
     ends: [],
     line: 1,
     stipulated: [],
+    notes: [],
     steps: worlds.map((each, at) => ({
       number: at + 1,
       title: `step ${at + 1}`,

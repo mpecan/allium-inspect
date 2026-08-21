@@ -564,6 +564,175 @@ fn a_walk_reports_its_worst_step() {
 
 const RESERVATIONS: &str = include_str!("fixtures/reservations.journey");
 const UNDECIDED: &str = include_str!("fixtures/undecided.journey");
+const ABSENCE: &str = include_str!("fixtures/absence.journey");
+
+#[test]
+fn a_cast_naming_a_type_the_spec_does_not_have_is_not_satisfied() {
+    // The flagship case of the whole design — a requirement nobody has met —
+    // and it reported "1 of 1 steps hold", exit 0, no diagnostics. `check`
+    // settled it correctly at the cast line; both consumers then filtered
+    // notes by *clause* line, and a cast line is never one, so the answer was
+    // computed and thrown away. The unit test that guarded it asserted at the
+    // `check()` level, which is exactly why it never noticed.
+    let walk = walked(
+        "journey SheIsNobody {
+    cast:
+        ada: Archivist
+    1. she waits
+        after 1.day
+}",
+    );
+
+    assert_ne!(
+        walk.verdict(),
+        Verdict::Specified,
+        "a journey whose cast the spec cannot supply is not satisfied: {walk:#?}"
+    );
+    let note = walk.notes.first().expect("the cast is reported");
+    assert_eq!(note.verdict, Verdict::Unspecified);
+    assert!(note.about.contains("ada"), "the note names the member: {note:?}");
+    assert!(
+        note.detail.as_deref().is_some_and(|detail| detail.contains("Archivist")),
+        "the reason names the type nobody declared: {:?}",
+        note.detail
+    );
+}
+
+#[test]
+fn a_given_that_wrote_nothing_is_reported_too() {
+    // The same fault one line earlier. A `given` naming a root the journey
+    // never bound used to return silently, so every assertion afterwards was
+    // answered against a world nobody arranged — and nothing said so.
+    let walk = walked(
+        "journey J {
+    cast:
+        ada: Member
+    given:
+        nobody.name = \"Ada\"
+    1. she waits
+        after 1.day
+}",
+    );
+
+    let note =
+        walk.notes.iter().find(|note| note.about.contains("given")).expect("the given is reported");
+    assert_eq!(note.verdict, Verdict::Undecided);
+    assert!(
+        note.detail.as_deref().is_some_and(|detail| detail.contains("nobody")),
+        "the reason names the root: {:?}",
+        note.detail
+    );
+    assert_ne!(walk.verdict(), Verdict::Specified);
+}
+
+#[test]
+fn a_stipulation_that_wrote_nothing_says_so_instead_of_printing_itself() {
+    // The ledger is the guardrail this design leans on: an agent can make any
+    // journey pass, but it cannot make one pass *invisibly*. A stipulation
+    // that quietly wrote nothing and then listed itself anyway breaks exactly
+    // that — the reader is shown a change to the world that never happened,
+    // which is worse than being shown nothing.
+    let walk = walked(
+        "journey J {
+    cast:
+        ada: Member
+    1. she waits
+        after 1.day
+        stipulate nobody.status = open
+}",
+    );
+
+    let outcome = walk.steps[0]
+        .outcomes
+        .iter()
+        .find(|outcome| outcome.about.contains("stipulate"))
+        .expect("the stipulation is reported");
+    assert_eq!(outcome.verdict, Verdict::Undecided, "{outcome:?}");
+    assert!(
+        outcome.detail.as_deref().is_some_and(|detail| detail.contains("nobody")),
+        "the reason names the root that bound nothing: {:?}",
+        outcome.detail
+    );
+    assert!(
+        walk.stipulated.is_empty(),
+        "nothing was written, so the ledger lists nothing: {:?}",
+        walk.stipulated
+    );
+}
+
+#[test]
+fn a_stipulation_writes_the_field_it_names_and_not_the_first_one() {
+    // `loan.window.due_at` used to set `loan.window`, because the write took
+    // `segments.first()` and stopped. The ledger printed the path in full, so
+    // the report said one thing and the world held another — and a later
+    // assertion about `loan.window` would then agree with a value nobody wrote.
+    let walk = walked(
+        "journey J {
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+    given:
+        ada.is_at_limit = false
+        copy.status = available
+    1. she borrows it
+        ada does MemberBorrows(ada, copy) on MemberShelf
+            creating loan: Loan
+    2. somebody asserts a due date
+        stipulate loan.window.due_at = 1.day
+        then loan.window != 1.day
+}",
+    );
+
+    let stipulation = walk.steps[1]
+        .outcomes
+        .iter()
+        .find(|outcome| outcome.about.contains("stipulate"))
+        .expect("the stipulation is reported");
+    assert_ne!(
+        stipulation.verdict,
+        Verdict::Specified,
+        "the window is unset, so there is nothing to write `due_at` on: {stipulation:?}"
+    );
+    assert!(
+        walk.stipulated.is_empty(),
+        "a write that could not be followed lists nothing: {:?}",
+        walk.stipulated
+    );
+}
+
+#[test]
+fn an_unknown_is_not_an_absence_in_either_direction() {
+    // Both failure modes stipulation 1 names, from one assertion. Reading a
+    // path that ran out as *absent* makes `does not exist` hold on a world
+    // nothing described; reading it as *present* makes `exists` refuse, which
+    // is the spec saying no to a question nobody asked it. The comparison
+    // arm three lines away already gets this right, which is what made it
+    // survive: every test written for `exists` used a name the journey had
+    // either bound or never mentioned, and both of those are decidable.
+    let walk = walked(ABSENCE);
+    let steps = walk.steps.iter().map(|step| step.verdict()).collect::<Vec<_>>();
+    assert_eq!(
+        steps,
+        vec![Verdict::Undecided, Verdict::Undecided],
+        "an unread path is undecided whichever way it is asked, not absent one way and \
+         present the other"
+    );
+
+    for step in &walk.steps {
+        let outcome = step
+            .outcomes
+            .iter()
+            .find(|outcome| outcome.about.contains("joined_at"))
+            .expect("the assertion is reported");
+        assert_eq!(outcome.verdict, Verdict::Undecided);
+        // An unknown with no reason is indistinguishable from a bug.
+        assert!(
+            outcome.detail.as_deref().is_some_and(|detail| detail.contains("joined_at")),
+            "the reason names the path that could not be read: {:?}",
+            outcome.detail
+        );
+    }
+}
 
 #[test]
 fn a_rule_that_holds_for_two_instances_runs_for_both() {
