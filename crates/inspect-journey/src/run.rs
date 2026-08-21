@@ -42,6 +42,42 @@ pub struct Outcome {
     pub detail: Option<String>,
 }
 
+/// Where a name in a journey came from.
+///
+/// Worth distinguishing because the three are read differently. A cast member
+/// is somebody the journey declared up front; a given is an instance it
+/// described in detail; and a catch is a thing that did not exist until a step
+/// created it — which is the only one whose absence is a fault rather than a
+/// choice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../../ui/src/lib/api/")]
+pub enum Origin {
+    /// Named in the `cast` block.
+    Cast,
+    /// Described in the `given` block.
+    Given,
+    /// Caught by a step: `creating loan: Loan`.
+    Caught,
+}
+
+/// Somebody or something the journey named, and what it resolved to.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../ui/src/lib/api/")]
+pub struct CastMember {
+    /// What the journey calls them: `ada`, `loan`.
+    pub name: String,
+    /// As written, so `catalogue/Copy` keeps its module.
+    pub type_expr: String,
+    /// The instance in the world, once there was one.
+    ///
+    /// `None` when a step that was supposed to create it did not — which is
+    /// the whole reason this is an option rather than a string.
+    pub entity: Option<String>,
+    pub origin: Origin,
+    pub line: usize,
+}
+
 /// What became of one step.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../ui/src/lib/api/")]
@@ -49,6 +85,13 @@ pub struct Walked {
     pub number: u32,
     pub title: String,
     pub outcomes: Vec<Outcome>,
+    /// The world as it stood when this step finished.
+    ///
+    /// Kept per step rather than only at the end, because the question a
+    /// journey raises about a value is *when* it became that — and a single
+    /// final state answers "what is Ada's loan now" while hiding the step that
+    /// made it so.
+    pub world: World,
 }
 
 impl Walked {
@@ -64,6 +107,8 @@ impl Walked {
 #[ts(export, export_to = "../../../ui/src/lib/api/")]
 pub struct Walk {
     pub name: String,
+    /// Everybody the journey named, in the order the names were bound.
+    pub cast: Vec<CastMember>,
     /// What the journey said it was for, and how it said it ends.
     ///
     /// Carried on the report rather than left in the source, because the whole
@@ -111,6 +156,7 @@ pub fn walk(journey: &Journey, spec: &SpecGraph, program: &Program, sources: &So
         world: inspect_sim::seed::seed(spec),
         bound: BTreeMap::new(),
         stipulated: Vec::new(),
+        cast: Vec::new(),
         fired: Vec::new(),
         undecided: Vec::new(),
     };
@@ -120,6 +166,7 @@ pub fn walk(journey: &Journey, spec: &SpecGraph, program: &Program, sources: &So
 
     Walk {
         name: journey.name.clone(),
+        cast: walker.cast,
         goal: journey.goal.clone(),
         ends: journey.ends.clone(),
         line: journey.line,
@@ -136,6 +183,8 @@ pub(crate) struct Walker<'a> {
     /// Every name the journey has bound to something in the world.
     pub(crate) bound: BTreeMap<String, EntityId>,
     pub(crate) stipulated: Vec<String>,
+    /// Everybody the journey has named, in the order they were bound.
+    pub(crate) cast: Vec<CastMember>,
     /// Rules that ran since the last clause, for `then … fires`.
     pub(crate) fired: Vec<String>,
     /// Rules that could not be decided since it, for the same.
@@ -183,7 +232,12 @@ impl Walker<'_> {
             }
             outcomes.push(outcome);
         }
-        Walked { number: step.number, title: step.title.clone(), outcomes }
+        Walked {
+            number: step.number,
+            title: step.title.clone(),
+            outcomes,
+            world: self.world.clone(),
+        }
     }
 
     fn walk_clause(&mut self, clause: &Clause) -> Outcome {
@@ -234,9 +288,14 @@ impl Walker<'_> {
                 .cloned();
             match fresh {
                 Some(id) => {
-                    self.bound.insert(caught.name.clone(), id);
+                    self.bind(caught, Some(id), Origin::Caught);
                 }
                 None => {
+                    // Listed anyway, with nothing behind it. A name the journey
+                    // uses from here on that resolves to no instance is exactly
+                    // what the reader is trying to understand, and leaving it
+                    // out of the cast hides the cause of every later line.
+                    self.bind(caught, None, Origin::Caught);
                     return Outcome {
                         line,
                         verdict: verdict_of(&outcome),

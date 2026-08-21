@@ -631,3 +631,93 @@ fn a_rule_nobody_could_decide_is_not_a_rule_that_did_not_run() {
         "{detail:?}"
     );
 }
+
+#[test]
+fn the_cast_lists_everybody_the_journey_named() {
+    // Three ways a name gets bound — declared, described, and caught by a step
+    // — and a panel that listed only the first would drop the loan, which is
+    // the thing half the assertions are about.
+    let walk = walked(BORROWING);
+    let named: Vec<(&str, &str)> =
+        walk.cast.iter().map(|member| (member.name.as_str(), member.type_expr.as_str())).collect();
+    assert_eq!(named, vec![("ada", "Member"), ("copy", "catalogue/Copy"), ("loan", "Loan")]);
+}
+
+#[test]
+fn the_cast_says_where_each_name_came_from() {
+    use inspect_journey::Origin;
+    let walk = walked(BORROWING);
+    let origins: Vec<Origin> = walk.cast.iter().map(|member| member.origin).collect();
+    assert_eq!(origins, vec![Origin::Cast, Origin::Cast, Origin::Caught]);
+}
+
+#[test]
+fn a_cast_type_keeps_the_module_the_journey_wrote() {
+    // `catalogue/Copy` read back as `Copy` would send a reader looking for the
+    // type in the wrong file.
+    let walk = walked(BORROWING);
+    let copy = walk.cast.iter().find(|member| member.name == "copy").expect("the copy");
+    assert_eq!(copy.type_expr, "catalogue/Copy");
+    assert_eq!(copy.entity.as_deref(), Some("Copy#1"));
+}
+
+#[test]
+fn two_of_a_kind_are_two_separate_instances() {
+    // The reason a cast is instances rather than roles. Ada and Bob are both
+    // members, and the journey is about them being different ones.
+    let walk = walked(RESERVATIONS);
+    let ada = walk.cast.iter().find(|member| member.name == "ada").expect("ada");
+    let bob = walk.cast.iter().find(|member| member.name == "bob").expect("bob");
+    assert_eq!(ada.type_expr, bob.type_expr);
+    assert_ne!(ada.entity, bob.entity);
+    assert!(ada.entity.is_some() && bob.entity.is_some());
+}
+
+#[test]
+fn a_name_a_step_failed_to_catch_is_listed_with_nothing_behind_it() {
+    // The name is used by every line after it, so leaving it out of the cast
+    // hides the cause of all of them. Listing it empty says which name went
+    // nowhere.
+    let walk = walked(
+        r#"
+journey NothingIsCaught {
+    cast:
+        ada: Member
+
+    1. she does something that creates nothing
+        ada does MemberReturns(ada) on MemberShelf
+            creating ghost: Reservation
+}
+"#,
+    );
+    let ghost = walk.cast.iter().find(|member| member.name == "ghost").expect("the ghost");
+    assert_eq!(ghost.entity, None);
+}
+
+#[test]
+fn each_step_keeps_the_world_it_left_behind() {
+    // A single final state answers "what is the loan now" while hiding the step
+    // that made it so — and *when* a value changed is most of what a journey is
+    // written to show.
+    let walk = walked(BORROWING);
+    let copy = "Copy#1".to_owned();
+    let status = |step: &inspect_journey::Walked| {
+        step.world
+            .entities
+            .get(&inspect_sim::value::EntityId(copy.clone()))
+            .map(|instance| instance.field("status"))
+    };
+    assert_eq!(status(&walk.steps[0]), Some(inspect_sim::Value::Enum("on_loan".to_owned())));
+    assert_eq!(status(&walk.steps[2]), Some(inspect_sim::Value::Enum("available".to_owned())));
+}
+
+#[test]
+fn every_step_carries_the_configuration_in_force() {
+    // Seeded from the spec's own defaults, and the reason half the refusals in
+    // a real journey happen. A panel that showed instances but not the config
+    // would leave `loan_limit` invisible while it decided the outcome.
+    let walk = walked(BORROWING);
+    for step in &walk.steps {
+        assert_eq!(step.world.config("lending", "loan_limit"), inspect_sim::Value::Int(5));
+    }
+}

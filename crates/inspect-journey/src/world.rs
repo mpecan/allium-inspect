@@ -16,8 +16,8 @@ use inspect_model::{NodeKind, SpecGraph};
 use inspect_sim::{Value, value::EntityId};
 
 use crate::{
-    journey::{Given, Journey, Path, Term},
-    run::Walker,
+    journey::{Cast, Given, Journey, Path, Term},
+    run::{CastMember, Origin, Walker},
 };
 
 impl Walker<'_> {
@@ -27,17 +27,21 @@ impl Walker<'_> {
         // instance of its type: two people of one kind is the ordinary case.
         for member in &journey.cast {
             let created = self.create(&member.type_expr);
-            self.bound.insert(member.name.clone(), created);
+            self.bind(member, Some(created), Origin::Cast);
         }
         for given in &journey.given {
             match given {
-                Given::Instance { name, type_expr, fields, .. } => {
+                Given::Instance { name, type_expr, fields, line } => {
                     let id = self.create(type_expr);
                     for (field, value) in fields {
                         let value = self.value_of(value);
                         self.world.set_field(&id, field, value);
                     }
-                    self.bound.insert(name.clone(), id);
+                    // A given instance is a cast member declared inline, so it
+                    // goes through the same door under the same shape.
+                    let who =
+                        Cast { name: name.clone(), type_expr: type_expr.clone(), line: *line };
+                    self.bind(&who, Some(id), Origin::Given);
                 }
                 Given::Assign { path, value, .. } => {
                     let value = self.value_of(value);
@@ -52,6 +56,25 @@ impl Walker<'_> {
         let bare = type_expr.rsplit('/').next().unwrap_or(type_expr);
         let module = declaring_module(self.spec, bare);
         self.world.create(bare, &module)
+    }
+
+    /// Record a name the journey bound, and what it bound it to.
+    ///
+    /// One place, because the report is only useful if it lists *everybody* —
+    /// a cast member, a given instance and a thing a step caught are all people
+    /// as far as a reader is concerned, and one of the three going unlisted is
+    /// the kind of gap nobody notices until they are looking for it.
+    pub(crate) fn bind(&mut self, who: &Cast, id: Option<EntityId>, origin: Origin) {
+        if let Some(id) = &id {
+            self.bound.insert(who.name.clone(), id.clone());
+        }
+        self.cast.push(CastMember {
+            name: who.name.clone(),
+            type_expr: who.type_expr.clone(),
+            entity: id.map(|id| id.as_str().to_owned()),
+            origin,
+            line: who.line,
+        });
     }
 
     pub(crate) fn assign(&mut self, path: &Path, value: Value) {

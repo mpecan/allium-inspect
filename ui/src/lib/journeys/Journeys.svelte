@@ -15,6 +15,7 @@
   import type { Walk } from "../api/Walk";
   import type { Verdict as VerdictKind } from "../api/Verdict";
   import Verdict from "../panels/Verdict.svelte";
+  import Cast from "./Cast.svelte";
   import { MARK, MEANING, needsAttention, tally, worst } from "./verdicts";
 
   interface Props {
@@ -37,6 +38,29 @@
   const current = $derived(
     walks.find((entry) => entry.walk.name === chosen) ?? walks[0] ?? null,
   );
+
+  /**
+   * Which step the cast panel is reading, by number rather than index.
+   *
+   * Null means the end, which is the right default: a reader arrives asking
+   * whether the journey worked, and only then asks where it stopped working.
+   * Held by number so that switching journeys does not silently point at a
+   * different step of a different walk.
+   */
+  let at = $state<{ journey: string; step: number } | null>(null);
+  const stepIndex = $derived.by(() => {
+    const steps = current?.walk.steps ?? [];
+    const reading = at;
+    if (!current || reading === null || reading.journey !== current.walk.name) {
+      return steps.length - 1;
+    }
+    const found = steps.findIndex((step) => step.number === reading.step);
+    return found === -1 ? steps.length - 1 : found;
+  });
+
+  function scrub(journey: string, step: number) {
+    at = at?.journey === journey && at.step === step ? null : { journey, step };
+  }
 
   function verdictOf(walk: Walk): VerdictKind {
     return worst(walk.steps.map((step) => worst(step.outcomes.map((o) => o.verdict))));
@@ -144,14 +168,24 @@
       {/if}
 
       <ol class="steps">
-        {#each walk.steps as step (step.number)}
+        {#each walk.steps as step, index (step.number)}
           {@const stepMark = stepVerdict(step)}
           <li class:attention={needsAttention(stepMark)}>
-            <div class="step-head">
+            <!-- Selecting a step points the cast panel at the world that step
+                 left behind. It is a scrub rather than a navigation: nothing
+                 else on the page moves. -->
+            <button
+              type="button"
+              class="step-head"
+              class:reading={index === stepIndex}
+              aria-pressed={index === stepIndex}
+              title="Read the cast as it stood after this step"
+              onclick={() => scrub(walk.name, step.number)}
+            >
               <Verdict kind={MARK[stepMark]} label={MEANING[stepMark]} />
               <span class="number">{step.number}</span>
               <span class="title-text">{step.title}</span>
-            </div>
+            </button>
             <ul class="lines">
               {#each step.outcomes as outcome (outcome.line + outcome.about)}
                 <li class:quiet={!needsAttention(outcome.verdict)}>
@@ -177,6 +211,10 @@
       {/if}
     {/if}
   </section>
+
+  {#if current}
+    <Cast walk={current.walk} at={stepIndex} />
+  {/if}
 </div>
 
 <style>
@@ -184,7 +222,7 @@
     display: grid;
     /* Wider than the standard sidebar. These are CamelCase identifiers with no
        break in them, so a narrow column snaps every one mid-word. */
-    grid-template-columns: 16rem minmax(0, 1fr);
+    grid-template-columns: 16rem minmax(0, 1fr) var(--inspector);
     height: 100%;
     min-height: 0;
     overflow: hidden;
@@ -377,6 +415,26 @@
     display: flex;
     align-items: baseline;
     gap: var(--gap-2);
+    width: 100%;
+    padding: var(--gap-1) var(--gap-2);
+    margin-left: calc(var(--gap-2) * -1);
+    border: 0;
+    border-radius: var(--radius);
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .step-head:hover {
+    background: var(--ground-raised);
+  }
+
+  /* The step the cast panel is reading. A left mark rather than a fill, so it
+     reads as a playhead rather than as another verdict. */
+  .step-head.reading {
+    box-shadow: inset 2px 0 0 var(--behaviour);
   }
 
   .step-head .number {

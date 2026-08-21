@@ -1,13 +1,31 @@
 // @vitest-environment happy-dom
 
-import { render, screen } from "@testing-library/svelte";
+import { fireEvent, render, screen } from "@testing-library/svelte";
 import { describe, expect, it } from "vitest";
 
 import type { JourneyReport } from "../api/JourneyReport";
 import type { Outcome } from "../api/Outcome";
 import type { Verdict } from "../api/Verdict";
 import type { Walk } from "../api/Walk";
+import type { World } from "../api/World";
 import Journeys from "./Journeys.svelte";
+
+/** A world with one member in it, which is all any of these need. */
+function world(): World {
+  return {
+    entities: {
+      "Member#1": {
+        id: "Member#1",
+        entity: "Member",
+        module: "lending",
+        fields: { name: { kind: "str", value: "Ada" } },
+      },
+    },
+    config: { "lending.loan_limit": { kind: "int", value: 5 } },
+    now: 0,
+    next_ordinal: { Member: 2 },
+  };
+}
 
 function line(verdict: Verdict, about: string, detail: string | null = null): Outcome {
   return { line: 4, verdict, about, detail };
@@ -16,10 +34,13 @@ function line(verdict: Verdict, about: string, detail: string | null = null): Ou
 function walk(name: string, outcomes: Outcome[], stipulated: string[] = []): Walk {
   return {
     name,
+    cast: [
+      { name: "ada", type_expr: "Member", entity: "Member#1", origin: "cast", line: 4 },
+    ],
     goal: ["she borrows a copy and brings it back"],
     ends: ["the copy is back on the shelf"],
     line: 6,
-    steps: [{ number: 1, title: "she borrows it", outcomes }],
+    steps: [{ number: 1, title: "she borrows it", outcomes, world: world() }],
     stipulated,
   };
 }
@@ -128,5 +149,44 @@ describe("Journeys", () => {
     render(Journeys, { report: null, failure: "Could not load the journeys." });
     expect(screen.getByText("Could not load the journeys.")).toBeTruthy();
     expect(screen.queryByText(/--journeys/)).toBeNull();
+  });
+});
+
+describe("Journeys cast panel", () => {
+  it("names everybody the journey named, with their type", () => {
+    // A journey names instances rather than roles, so this is a list of people
+    // and things — and the type is what tells a reader where to look them up.
+    render(Journeys, { report: report([walk("A", [line("specified", "then x = 1")])]), failure: null });
+    expect(screen.getByText("ada")).toBeTruthy();
+    expect(screen.getByText("Member")).toBeTruthy();
+  });
+
+  it("says where each name came from", () => {
+    render(Journeys, { report: report([walk("A", [line("specified", "then x = 1")])]), failure: null });
+    expect(screen.getByText("cast")).toBeTruthy();
+  });
+
+  it("shows the configuration the journey ran against", () => {
+    // The other half of why a step came out the way it did. A panel showing
+    // Ada's fields but not the limit leaves the deciding value invisible.
+    render(Journeys, { report: report([walk("A", [line("specified", "then x = 1")])]), failure: null });
+    expect(screen.getByText("loan_limit")).toBeTruthy();
+    expect(screen.getByText("5")).toBeTruthy();
+  });
+
+  it("opens a cast member to show what the world held", async () => {
+    render(Journeys, { report: report([walk("A", [line("specified", "then x = 1")])]), failure: null });
+    await fireEvent.click(screen.getByRole("button", { name: /ada/ }));
+    expect(screen.getByText("name")).toBeTruthy();
+    // Quoted, because the simulator's renderer quotes strings — `"5"` and `5`
+    // are different values and a field panel is where that matters.
+    expect(screen.getByText('"Ada"')).toBeTruthy();
+  });
+
+  it("keeps a member closed until it is asked for", () => {
+    // Eight fields under every one of six members buries the journey the panel
+    // sits beside.
+    render(Journeys, { report: report([walk("A", [line("specified", "then x = 1")])]), failure: null });
+    expect(screen.queryByText('"Ada"')).toBeNull();
   });
 });

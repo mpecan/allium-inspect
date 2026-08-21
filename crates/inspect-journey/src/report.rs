@@ -138,6 +138,7 @@ mod tests {
     fn walk(name: &str, steps: Vec<Walked>, stipulated: Vec<String>) -> Walk {
         Walk {
             name: name.to_owned(),
+            cast: Vec::new(),
             goal: vec!["she does the thing".to_owned()],
             ends: vec!["the thing is done".to_owned()],
             line: 1,
@@ -147,7 +148,7 @@ mod tests {
     }
 
     fn step(number: u32, title: &str, outcomes: Vec<Outcome>) -> Walked {
-        Walked { number, title: title.to_owned(), outcomes }
+        Walked { number, title: title.to_owned(), outcomes, world: inspect_sim::World::new() }
     }
 
     fn borrowing(verdict: Verdict) -> Walk {
