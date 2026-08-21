@@ -71,27 +71,51 @@ in a comment — which is every real spec.
 Any test touching spans must build them from byte offsets
 (`TextEncoder().encode(text.slice(0, at)).length`), not from `indexOf`.
 
-### 5. The CLI is reached only through a trait
+### 5. Allium is a library where it can be, and a process where it must be
 
-`AlliumRunner` is the single impure seam in `inspect-model`. Ingestion and
-simulation are tested against recorded real output with no `allium` installed.
+`parse` and `analyse` are `allium_parser` calls — allium's own crate, MIT,
+pinned in `Cargo.toml` to the tag the recordings were made from. `model` and
+`plan` are still process launches, and not by choice: allium builds those in
+`crates/allium`, which declares only a `[[bin]]` target, so they cannot be
+imported at any price.
 
-Recordings live in `crates/inspect-model/tests/fixtures/cli/` and are stamped
-with the CLI version that produced them; a test fails loudly when the installed
-version differs. Refresh with `just refresh-fixtures` and **read the diff** — a
-shape change upstream is exactly what those recordings exist to surface.
+That split is the whole of `Command`. Prefer the library end of it: against a
+library, an upstream shape change is a **compile error**, which is what the rest
+of this stipulation exists to compensate for at the other end.
+
+`AlliumRunner` is still the impure seam for the two commands that need one, and
+ingestion and simulation still run with no `allium` installed. Recordings live
+in `crates/inspect-model/tests/fixtures/cli/` and are stamped with the CLI
+version that produced them; a test fails loudly when the installed version
+differs. Refresh with `just refresh-fixtures` and **read the diff**.
+
+All four documents are still recorded, for two different reasons. `model` and
+`plan` are *replayed* by the tests. `parse` and `analyse` are *compared against*
+by `tests/agreement.rs`, which asserts the library we call still says what the
+binary a reader runs says — the two must not drift, or `allium check` and this
+tool would describe the same file differently.
 
 Hand-built fixtures prove the code does what you believed the CLI emits. Only
 recorded output proves the belief was right. Four wrong beliefs have been caught
-this way so far, including `external entity` being its own AST block kind and a
-when-guard naming its target `action`.
+this way, including `external entity` being its own AST block kind and a
+when-guard naming its target `action`. A fifth was caught by the library swap
+itself: a diagnostic whose location carried no `file` is discarded whole, and
+silently stops badging the construct it is about.
 
-### 6. Ingest all four commands
+### 6. Ingest all four documents
 
 `model` describes entities and carries no spans. `parse` is the only source of
 rules, surfaces, actors, invariants and positions. `plan` supplies the trigger →
 rule → entity chain already computed. `analyse` contributes findings. The passes
 run in that order per file, and linking runs once over the whole set.
+
+The AST reaches those passes as JSON even though `allium_parser` hands it over
+typed. That is deliberate, not leftover: the simulator evaluates expressions
+straight off `serde_json::Value`, so a pass rewritten against the typed tree
+would have to serialise every clause back on its way out — the round trip would
+move rather than go. Rewriting `inspect-sim`'s evaluator against
+`allium_parser::ast::Expr` is what makes a typed ingestion pay, and it is a
+separate decision worth taking on its own merits.
 
 The expression trees go in `Program`, not in `SpecGraph`. The graph is what the
 browser draws and is under half a megabyte for a five-module spec set; the ASTs

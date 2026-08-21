@@ -1,18 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Re-record the `allium` CLI outputs that the model tests replay.
+# Re-record the `allium` CLI outputs the model tests read.
 #
-# The ingestion and projection tests must not shell out. They would then need
-# the CLI installed to run at all, they would take a process launch per case,
-# and — worst — a CLI upgrade would change their input underneath them without
-# anything saying so. Recording the four documents once and replaying them makes
-# those tests pure, fast and pinned.
+# Four documents, recorded for two different reasons now.
 #
-# The pinning is the point, so the CLI version is stamped alongside the
-# recordings and a test asserts the installed CLI still matches. An upgrade then
-# surfaces as one loud, specific failure telling you to re-run this script,
-# rather than as a misparse three layers down.
+# `model` and `plan` are *replayed*: allium builds them in a crate with only a
+# `[[bin]]` target, so nothing can import them, and the ingestion tests must not
+# shell out — they would need the CLI installed to run at all, they would take a
+# process launch per case, and a CLI upgrade would change their input underneath
+# them without anything saying so.
+#
+# `parse` and `analyse` are *compared against*. Those are `allium_parser`
+# function calls, pinned in Cargo.toml to the tag recorded here, so no test
+# replays them. They are kept because a reader who runs `allium check` and then
+# opens this tool has to be shown the same spec: tests/agreement.rs asserts the
+# library we call still says what the binary they run says.
+#
+# The pinning is the point either way, so the CLI version is stamped alongside
+# the recordings and a test asserts the installed CLI still matches. An upgrade
+# then surfaces as one loud, specific failure telling you to re-run this script
+# — and to move the tag in Cargo.toml with it — rather than as a misparse three
+# layers down.
 #
 # The fixture specs are ours, not a sibling repo's: between catalogue.allium and
 # lending.allium every construct allium-inspect draws has an instance, they

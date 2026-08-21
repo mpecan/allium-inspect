@@ -17,35 +17,34 @@ use std::{
 
 use serde_json::Value;
 
-/// The `allium` subcommands this tool reads.
+/// The `allium` subcommands this tool still has to launch a process for.
 ///
-/// `check` is deliberately absent: its diagnostics are a subset of what the
-/// other four already carry, so running it would be a fifth process launch for
-/// information we would then have to de-duplicate.
+/// Two, not four. `parse` and `analyse` are `allium_parser` function calls —
+/// see [`mod@crate::ingest`] — which leaves the ones allium builds in its binary
+/// crate: `crates/allium` declares only a `[[bin]]` target, so `model` and
+/// `plan` are not importable at any price.
+///
+/// `check` is deliberately absent for a different reason: its diagnostics are a
+/// subset of what the others already carry, so running it would be a process
+/// launch for information we would then have to de-duplicate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Command {
     /// Entities, fields, relationships, transition graphs, enums, config.
     Model,
-    /// The full byte-spanned AST — the only source of rule clauses.
-    Parse,
     /// Test obligations, including each rule's trigger and entity dependencies.
     Plan,
-    /// Reachability, deadlock and conflict findings.
-    Analyse,
 }
 
 impl Command {
     /// Every command, in the order ingestion runs them.
-    pub const ALL: [Command; 4] = [Command::Model, Command::Parse, Command::Plan, Command::Analyse];
+    pub const ALL: [Command; 2] = [Command::Model, Command::Plan];
 
     /// The subcommand name as the CLI spells it.
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Command::Model => "model",
-            Command::Parse => "parse",
             Command::Plan => "plan",
-            Command::Analyse => "analyse",
         }
     }
 }
@@ -250,13 +249,15 @@ mod tests {
 
     #[test]
     fn every_command_names_its_subcommand() {
+        // Two, not four. `parse` and `analyse` are library calls; these are
+        // the ones allium builds in a crate with no library target.
         let names: Vec<&str> = Command::ALL.iter().map(|c| c.as_str()).collect();
-        assert_eq!(names, ["model", "parse", "plan", "analyse"]);
+        assert_eq!(names, ["model", "plan"]);
     }
 
     #[test]
     fn command_displays_as_its_subcommand_name() {
-        assert_eq!(Command::Analyse.to_string(), "analyse");
+        assert_eq!(Command::Plan.to_string(), "plan");
     }
 
     #[test]
@@ -285,10 +286,10 @@ mod tests {
     fn map_runner_distinguishes_commands_for_the_same_path() {
         let runner = MapRunner::new("v")
             .with(Command::Model, "a.allium", json!({"which": "model"}))
-            .with(Command::Parse, "a.allium", json!({"which": "parse"}));
+            .with(Command::Plan, "a.allium", json!({"which": "plan"}));
         assert_eq!(
-            runner.run(Command::Parse, Path::new("a.allium")).expect("recorded"),
-            json!({"which": "parse"})
+            runner.run(Command::Plan, Path::new("a.allium")).expect("recorded"),
+            json!({"which": "plan"})
         );
     }
 
@@ -302,7 +303,7 @@ mod tests {
         let runner = MapRunner::new("v")
             .with(Command::Model, "b.allium", json!({}))
             .with(Command::Model, "a.allium", json!({}))
-            .with(Command::Parse, "a.allium", json!({}));
+            .with(Command::Model, "a.allium", json!({}));
         assert_eq!(runner.paths(), [PathBuf::from("a.allium"), PathBuf::from("b.allium")]);
     }
 
@@ -338,8 +339,8 @@ mod tests {
     #[test]
     fn a_failing_run_with_no_json_is_reported_with_its_status() {
         let runner = ProcessRunner::new("false");
-        let error = runner.run(Command::Parse, Path::new("a.allium")).unwrap_err();
-        assert!(matches!(error, RunError::Failed { command: Command::Parse, .. }), "{error}");
+        let error = runner.run(Command::Model, Path::new("a.allium")).unwrap_err();
+        assert!(matches!(error, RunError::Failed { command: Command::Model, .. }), "{error}");
     }
 
     /// Write an executable stand-in for the CLI that prints `stdout` and exits
@@ -370,7 +371,7 @@ mod tests {
         // blanking the UI on exactly the specs worth inspecting.
         let (runner, dir) = stub_cli("fails-with-json", r#"{"diagnostics":[1]}"#, 1);
         let value = runner
-            .run(Command::Analyse, Path::new("a.allium"))
+            .run(Command::Plan, Path::new("a.allium"))
             .expect("JSON on stdout is usable regardless of the exit status");
         assert_eq!(value["diagnostics"], json!([1]));
         let _ = std::fs::remove_dir_all(dir);

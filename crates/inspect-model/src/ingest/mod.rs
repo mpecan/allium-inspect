@@ -1,4 +1,10 @@
-//! Turning four CLI documents per spec file into one linked graph.
+//! Turning four documents per spec file into one linked graph.
+//!
+//! Two of the four are function calls and two are process launches, and which
+//! is which is not a choice: `parse` and `analyse` live in `allium-parser`,
+//! allium's own library crate, so this crate calls them. `model` and `plan` are
+//! built in `crates/allium`, which declares only a `[[bin]]` target, so those
+//! are still run.
 //!
 //! The order of the passes is load-bearing and worth stating once:
 //!
@@ -13,8 +19,16 @@
 //!
 //! Steps 1 to 4 run per file and see one file each. Linking then runs once over
 //! the whole set, which is where a collection of files becomes a graph.
+//!
+//! The AST still reaches the passes below as JSON. Not an oversight: the
+//! simulator evaluates expressions straight off `serde_json::Value`, so a pass
+//! rewritten against the typed tree would have to serialise every clause back
+//! again on its way out — the round trip would move rather than go. Rewriting
+//! the evaluator against `allium_parser::ast::Expr` is what makes that pay, and
+//! it is a separate decision from this one.
 
 mod analyse;
+mod ast;
 mod json;
 mod link;
 mod model;
@@ -49,6 +63,14 @@ pub enum IngestError {
         path: PathBuf,
         #[source]
         source: std::io::Error,
+    },
+
+    /// Allium's own AST could not be serialised.
+    #[error("could not read the parse tree of {}: {source}", path.display())]
+    Ast {
+        path: PathBuf,
+        #[source]
+        source: serde_json::Error,
     },
 
     /// No spec files were given, or none were found.
@@ -160,17 +182,27 @@ pub fn ingest<R: AlliumRunner, S: SourceReader>(
         model::ingest(&model, &module, &mut into.graph);
         analyse::ingest_diagnostics(&model, &module, &mut into.graph);
 
-        let parsed = runner.run(Command::Parse, path)?;
-        parse::ingest(&parsed, &module, &path.to_string_lossy(), &source, &mut into);
-        analyse::ingest_diagnostics(&parsed, &module, &mut into.graph);
+        let parsed = allium_parser::parse(&source);
+        let file = path.to_string_lossy();
+        let ast = ast::document(&parsed, &source, &file)
+            .map_err(|source| IngestError::Ast { path: path.clone(), source })?;
+        parse::ingest(&ast, &module, &file, &source, &mut into);
+        analyse::ingest_diagnostics(&ast, &module, &mut into.graph);
 
         let planned = runner.run(Command::Plan, path)?;
         plan::ingest(&planned, &module, &mut into.graph);
         analyse::ingest_diagnostics(&planned, &module, &mut into.graph);
 
-        let analysed = runner.run(Command::Analyse, path)?;
-        analyse::ingest_diagnostics(&analysed, &module, &mut into.graph);
-        analyse::ingest_findings(&analysed, &module, &mut into.graph);
+        // Single-file, which is what a per-file pass can honestly ask for.
+        // `analyse_with_cross_module` wants the resolved imports, triggers,
+        // fields and statuses of the whole set; until it is given them, an
+        // import that resolves to nothing is reported by the linking pass
+        // below, which is the pass that can actually see the whole set.
+        let analysed = allium_parser::analyse(&parsed.module, &source);
+        let findings = ast::document(&analysed, &source, &file)
+            .map_err(|source| IngestError::Ast { path: path.clone(), source })?;
+        analyse::ingest_diagnostics(&findings, &module, &mut into.graph);
+        analyse::ingest_findings(&findings, &module, &mut into.graph);
 
         // Last for this module, because it needs every node of it to have the
         // span the parse pass gave it.
@@ -236,22 +268,16 @@ mod tests {
         }
     }
 
-    /// A runner holding the four documents a one-entity module produces.
+    /// A runner holding the two documents the CLI is still asked for.
+    ///
+    /// The other two are not recorded any more: `parse` and `analyse` are
+    /// library calls, so the fixture for them is the spec text the reader
+    /// supplies — which is a better fixture, because it is the thing a person
+    /// would actually have on disk.
     fn minimal_runner(path: &str) -> MapRunner {
         MapRunner::new("allium 3.5.3")
             .with(Command::Model, path, json!({"entities": [{"name": "Book", "kind": "internal"}]}))
-            .with(
-                Command::Parse,
-                path,
-                json!({"module": {"version": 3, "declarations": [{"Block": {
-                    "span": {"start": 0, "end": 20},
-                    "kind": "Entity",
-                    "name": {"span": {"start": 7, "end": 11}, "name": "Book"},
-                    "items": [],
-                }}]}}),
-            )
             .with(Command::Plan, path, json!({"obligations": []}))
-            .with(Command::Analyse, path, json!({"diagnostics": [], "findings": []}))
     }
 
     #[test]
@@ -273,7 +299,10 @@ mod tests {
             ingest(&minimal_runner(path), &reader, &[PathBuf::from(path)]).expect("ingests").graph;
         let node =
             graph.node(&NodeId::new("catalogue", NodeKind::Entity, "Book")).expect("the entity");
-        assert_eq!(node.span, Some(crate::span::Span::new(0, 20)));
+        // The real span of `entity Book {}` in the text above, because the
+        // parse pass now parses that text rather than replaying a number
+        // somebody typed into a fixture.
+        assert_eq!(node.span, Some(crate::span::Span::new(0, 14)));
         assert_eq!(graph.nodes.len(), 1, "and does not duplicate it");
     }
 
