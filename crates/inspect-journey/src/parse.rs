@@ -205,8 +205,14 @@ fn flush(pending: &mut Option<Pending>, journey: &mut Journey) -> Result<(), Par
 }
 
 /// How far a line is indented, in characters.
+///
+/// Characters rather than bytes, because this is compared against the
+/// indentation of another line and a tab or a non-ASCII space would otherwise
+/// count for more than it looks. Stipulation 4 in miniature: the two agree for
+/// ASCII, which is why counting bytes survived every test written against an
+/// ASCII fixture.
 fn indent_of(text: &str) -> usize {
-    text.len() - text.trim_start().len()
+    text.chars().count() - text.trim_start().chars().count()
 }
 
 enum Block {
@@ -491,9 +497,24 @@ fn term(text: &str, line: usize) -> Result<Term, ParseError> {
 }
 
 /// Everything before a `--` comment, trimmed.
+///
+/// A `--` inside a string literal is text, not a comment. Cutting at the first
+/// one regardless turned `{ title: "Ada -- a life" }` into an unterminated
+/// field list and reported it as a missing `}` — an error about the line's
+/// shape when the problem was a dash inside a quote.
 fn strip_comment(text: &str) -> &str {
-    match text.find("--") {
-        Some(at) => text[..at].trim(),
-        None => text.trim(),
+    let bytes = text.as_bytes();
+    let mut quoted = false;
+    let mut at = 0;
+    while at < bytes.len() {
+        match bytes[at] {
+            b'"' => quoted = !quoted,
+            // No escape handling, because the grammar has none: a literal has
+            // no way to contain a quote, so the next one always closes it.
+            b'-' if !quoted && bytes.get(at + 1) == Some(&b'-') => return text[..at].trim(),
+            _ => {}
+        }
+        at += 1;
     }
+    text.trim()
 }

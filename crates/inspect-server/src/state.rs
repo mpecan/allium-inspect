@@ -179,7 +179,16 @@ impl AppState {
 
     /// Replace the current inspection.
     pub fn replace(&self, inspection: Inspection) {
-        if let Ok(mut guard) = self.current.write() {
+        {
+            // Recovered rather than skipped, the same way `get` does. Skipping
+            // the write and then bumping the revision anyway was the worst of
+            // both answers: the browser was told the graph had changed, handed
+            // the one from before the edit, and shown no error beside it —
+            // which is precisely the failure `revision` exists to prevent.
+            let mut guard = match self.current.write() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             *guard = Arc::new(inspection);
         }
         self.set_error(None);
@@ -193,7 +202,11 @@ impl AppState {
     /// noticing the number move.
     pub fn set_error(&self, message: Option<String>) {
         let changed = self.error() != message;
-        if let Ok(mut guard) = self.error.write() {
+        {
+            let mut guard = match self.error.write() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             *guard = message;
         }
         if changed {
@@ -204,12 +217,87 @@ impl AppState {
     /// Why the last reload failed, if it did.
     #[must_use]
     pub fn error(&self) -> Option<String> {
-        self.error.read().ok().and_then(|guard| guard.clone())
+        // Recovered, not swallowed. `.ok()` turned a poisoned lock into "no
+        // error", which is the same lie as reporting a broken spec as fine.
+        match self.error.read() {
+            Ok(guard) => guard.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
     }
 
     /// How many times the answer has changed since the server started.
     #[must_use]
     pub fn revision(&self) -> u64 {
         self.revision.load(Ordering::Relaxed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::panic, clippy::expect_used)]
+
+    use super::*;
+    use inspect_model::SpecGraph;
+
+    /// An inspection tellable from another one.
+    fn inspection(version: &str) -> Inspection {
+        Inspection::from_parts(SpecGraph::new(version), Vec::new())
+    }
+
+    /// Poison `current` for real, by panicking while its write guard is held.
+    ///
+    /// Only possible from inside this module, which is why the test lives here
+    /// rather than beside the route tests: the locks are private, so nothing
+    /// outside can hold one long enough to poison it.
+    fn poison(state: &AppState) {
+        let current = Arc::clone(&state.current);
+        let _ = std::thread::spawn(move || {
+            let _guard = current.write().expect("not poisoned yet");
+            panic!("a holder panicked mid-swap");
+        })
+        .join();
+        assert!(state.current.write().is_err(), "the lock really is poisoned");
+    }
+
+    #[test]
+    fn a_reload_through_a_poisoned_lock_still_lands() {
+        // The writers used to skip the swap on a poisoned lock and bump the
+        // revision anyway. So the browser was told the answer had changed,
+        // handed the graph from before the edit, and shown no error beside it
+        // — the exact failure `revision` exists to prevent, arriving by the one
+        // route nobody was watching. `get` already recovered; the writers did
+        // not, and a panic anywhere in the process poisons these for good.
+        let state = AppState::new(inspection("before the edit"));
+        let before = state.revision();
+        poison(&state);
+
+        state.replace(inspection("after the edit"));
+
+        assert_eq!(state.revision(), before + 1, "the revision moved");
+        assert_eq!(
+            state.get().graph.allium_version,
+            "after the edit",
+            "and it moved because the graph did — not over the top of the old one"
+        );
+    }
+
+    #[test]
+    fn an_error_recorded_through_a_poisoned_lock_is_still_readable() {
+        // The same fault on the other lock, and worse in one way: `error()`
+        // used `.ok()`, so a poisoned lock reported *no error* — which reads
+        // as "the spec is fine" rather than as "something went wrong".
+        let state = AppState::new(inspection("a spec"));
+        let error = Arc::clone(&state.error);
+        let _ = std::thread::spawn(move || {
+            let _guard = error.write().expect("not poisoned yet");
+            panic!("a holder panicked mid-write");
+        })
+        .join();
+
+        state.set_error(Some("expected '{'".to_owned()));
+        assert_eq!(state.error().as_deref(), Some("expected '{'"));
+
+        state.set_error(None);
+        assert_eq!(state.error(), None, "and it clears again");
     }
 }

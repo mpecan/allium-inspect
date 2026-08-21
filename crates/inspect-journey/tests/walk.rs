@@ -608,6 +608,38 @@ const UNDECIDED: &str = include_str!("fixtures/undecided.journey");
 const ABSENCE: &str = include_str!("fixtures/absence.journey");
 
 #[test]
+fn every_fault_on_one_line_is_reported_at_once() {
+    // A line can be wrong in more than one way. Showing the first and stopping
+    // meant fixing it, re-running, finding the second, and walking the same
+    // journey three times to learn what one report could have said.
+    let walk = walked(
+        "journey J {
+    cast:
+        ada: Member
+    1. she reaches past a desk that is not there
+        nobody does NoSuchTrigger(ada) on NoSuchSurface
+}",
+    );
+
+    let faults: Vec<_> = walk.steps[0]
+        .outcomes
+        .iter()
+        .filter(|outcome| outcome.verdict != Verdict::Specified)
+        .collect();
+    assert!(faults.len() >= 2, "one line, every fault on it: {faults:#?}");
+
+    let said = faults.iter().filter_map(|outcome| outcome.detail.as_deref()).collect::<Vec<_>>();
+    assert!(
+        said.iter().any(|detail| detail.contains("NoSuchSurface")),
+        "the surface is named: {said:?}"
+    );
+    assert!(
+        said.iter().any(|detail| detail.contains("NoSuchTrigger") || detail.contains("nobody")),
+        "and so is the other fault: {said:?}"
+    );
+}
+
+#[test]
 fn a_cast_naming_a_type_the_spec_does_not_have_is_not_satisfied() {
     // The flagship case of the whole design — a requirement nobody has met —
     // and it reported "1 of 1 steps hold", exit 0, no diagnostics. `check`

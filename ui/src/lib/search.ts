@@ -69,6 +69,9 @@ export function search(nodes: Node[], query: string): Match[] {
   // Ties break on the qualified name, which is unique — so the same query over
   // the same spec always lists the same order, and a link to a result keeps
   // meaning what it meant.
-  matches.sort((a, b) => a.rank - b.rank || a.node.id.localeCompare(b.node.id));
+  // `localeCompare` with no locale reads the host's, so the "same order"
+  // promised above would be the same order *on this machine*. A shared link is
+  // the case that breaks: two people, two locales, two different lists.
+  matches.sort((a, b) => a.rank - b.rank || (a.node.id < b.node.id ? -1 : a.node.id > b.node.id ? 1 : 0));
   return matches;
 }

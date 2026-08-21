@@ -377,6 +377,40 @@ fn a_line_at_the_same_indent_is_the_next_clause_and_not_a_continuation() {
 }
 
 #[test]
+fn two_dashes_inside_a_string_are_text_rather_than_a_comment() {
+    // The comment cut ran before anything knew about quotes, so a title with a
+    // dash in it lost its closing brace and was reported as a malformed field
+    // list — an error about the shape of the line, when the fault was a dash
+    // inside a literal. An em-dash in a title is not exotic; it is how people
+    // write.
+    let journeys = parse(
+        "journey J {\n    given:\n        book: catalogue/Book { title: \"Ada -- a life\" }\n}",
+    )
+    .expect("a dash inside a string does not end the line");
+
+    let Given::Instance { fields, .. } = &journeys[0].given[0] else {
+        panic!("an instance: {:?}", journeys[0].given[0]);
+    };
+    assert_eq!(fields.len(), 1);
+    assert_eq!(fields[0].0, "title");
+    assert_eq!(fields[0].1, Term::Literal(Value::Str("Ada -- a life".to_owned())));
+}
+
+#[test]
+fn a_real_comment_after_a_string_still_ends_the_line() {
+    // The other direction, so the fix above cannot be "never cut at all".
+    let journeys = parse(
+        "journey J {\n    given:\n        book: catalogue/Book { title: \"Ada\" }  -- her life\n}",
+    )
+    .expect("parses");
+
+    let Given::Instance { fields, .. } = &journeys[0].given[0] else {
+        panic!("an instance");
+    };
+    assert_eq!(fields[0].1, Term::Literal(Value::Str("Ada".to_owned())));
+}
+
+#[test]
 fn a_cast_member_needs_both_halves() {
     // Half a cast line binds a name to nothing or nothing to a type, and every
     // clause that mentions it afterwards then reads against a hole. Refusing

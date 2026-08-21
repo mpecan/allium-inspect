@@ -278,13 +278,17 @@ impl Walker<'_> {
                 .iter()
                 .filter(|note| note.line == clause.line() && note.verdict != Verdict::Specified)
                 .collect();
-            if let Some(note) = blocking.first() {
-                outcomes.push(Outcome {
+            if !blocking.is_empty() {
+                // All of them, not the first. One line can name a surface the
+                // spec does not have *and* an actor it does not have, and
+                // showing one at a time means fixing one, re-running, and
+                // discovering the next — which is the same walk three times.
+                outcomes.extend(blocking.iter().map(|note| Outcome {
                     line: note.line,
                     verdict: note.verdict,
                     about: about(clause),
                     detail: Some(note.message.clone()),
-                });
+                }));
                 continue;
             }
             let mut outcome = self.walk_clause(clause);

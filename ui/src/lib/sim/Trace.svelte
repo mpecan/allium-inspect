@@ -145,9 +145,12 @@
             <li>
               <Verdict kind="unknown" />
               {invariant.name}
-              {#if invariant.unresolved[0]}
-                <span class="prose">{invariant.unresolved[0].reason}</span>
-              {/if}
+              {#each invariant.unresolved as note, at (note.reason + at)}
+                <!-- Every reason, not the first. An invariant can be undecided
+                     for two independent reasons, and fixing the one shown only
+                     to be told about the next is the same round trip twice. -->
+                <span class="prose">{note.reason}</span>
+              {/each}
             </li>
           {/each}
         </ul>

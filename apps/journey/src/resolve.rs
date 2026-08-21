@@ -12,7 +12,10 @@
 //! command run against named paths is being told where to look, and allium's
 //! own commands recurse.
 
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+};
 
 /// The spec files and journey files among `paths`.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -48,8 +51,9 @@ impl Found {
 #[must_use]
 pub fn resolve(paths: &[PathBuf]) -> Found {
     let mut found = Found::default();
+    let mut seen = BTreeSet::new();
     for path in paths {
-        collect(path, &mut found);
+        collect(path, &mut found, &mut seen, 0);
     }
     found.specs.sort();
     found.specs.dedup();
@@ -58,11 +62,29 @@ pub fn resolve(paths: &[PathBuf]) -> Found {
     found
 }
 
-fn collect(path: &Path, into: &mut Found) {
+/// How deep a spec tree is allowed to be.
+///
+/// Not a real limit for a directory of specs; a backstop for a link that points
+/// at one of its own parents. `is_dir` follows symlinks, so `specs/all -> ..`
+/// used to recurse until the stack ran out — a crash rather than a message,
+/// from a tree somebody may not have made on purpose.
+const DEEPEST: usize = 64;
+
+fn collect(path: &Path, into: &mut Found, seen: &mut BTreeSet<PathBuf>, depth: usize) {
     if path.is_dir() {
+        if depth >= DEEPEST {
+            return;
+        }
+        // Canonicalised, so a directory reached twice by different routes is
+        // walked once. A path that will not canonicalise is one we cannot read
+        // anyway, and the `read_dir` below says so by returning nothing.
+        let Ok(real) = path.canonicalize() else { return };
+        if !seen.insert(real) {
+            return;
+        }
         let Ok(entries) = std::fs::read_dir(path) else { return };
         for entry in entries.flatten() {
-            collect(&entry.path(), into);
+            collect(&entry.path(), into, seen, depth + 1);
         }
         return;
     }
@@ -78,6 +100,26 @@ fn collect(path: &Path, into: &mut Found) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_directory_that_links_to_its_own_parent_does_not_recurse_forever() {
+        // `is_dir` follows symlinks, so a link pointing up used to recurse
+        // until the stack ran out. A crash, from a tree somebody may not have
+        // built deliberately — a `latest -> .` in a specs directory is enough.
+        let root =
+            std::env::temp_dir().join(format!("allium-journey-cycle-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("specs")).expect("a temp tree");
+        std::fs::write(root.join("specs/one.allium"), "entity A {}").expect("a spec");
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("..", root.join("specs/up")).expect("a symlink");
+
+        let found = resolve(std::slice::from_ref(&root));
+        assert_eq!(found.specs.len(), 1, "the spec is found exactly once: {:?}", found.specs);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     /// A tree under a directory that removes itself.
     struct Tree(PathBuf);

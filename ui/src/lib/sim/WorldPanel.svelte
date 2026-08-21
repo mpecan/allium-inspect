@@ -27,7 +27,12 @@
   let creating = $state<string>("");
 
   const instances = $derived(Object.values(world.entities) as Instance[]);
-  const configured = $derived(Object.entries(world.config).sort(([a], [b]) => a.localeCompare(b)));
+  // Codepoint order, not the host's locale: the Rust side orders every map
+  // this way, and a panel that sorted differently per machine would make two
+  // readers of one shared world disagree about a list neither of them chose.
+  const configured = $derived(
+    Object.entries(world.config).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+  );
 
   function create(entity: string) {
     const choice = entities.find((candidate) => candidate.entity === entity);

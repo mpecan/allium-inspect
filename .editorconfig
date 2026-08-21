@@ -1,0 +1,21 @@
+# Shared editor settings, because the repo is Rust and TypeScript and Svelte and
+# shell and Markdown, and rustfmt.toml only speaks for one of those.
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{ts,js,mjs,svelte,json,css,html,yml,yaml}]
+indent_size = 2
+
+[*.md]
+indent_size = 2
+# A line ending in two spaces is a hard break in Markdown, and trimming it
+# silently changes the rendered text.
+trim_trailing_whitespace = false
