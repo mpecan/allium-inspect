@@ -19,9 +19,9 @@ review and defend.
    deadlock, conflict and data-flow problems. This spec set has five conflicts —
    pairs of rules that can both fire on one entity. That is the single highest
    value thing in the tool for him, and it is the first thing he looks for.
-2. **The shape of the whole.** Five modules, 353 constructs, 526 edges, 55 of
-   them crossing a module boundary. He wants the coupling, and he wants to be
-   able to switch a module off and see what is left standing.
+2. **The shape of the whole.** Five modules, several hundred constructs, and a
+   good fraction of the edges crossing a module boundary. He wants the coupling,
+   and he wants to be able to switch a module off and see what is left standing.
 3. **What did not resolve.** A reference the linker could not place is either a
    typo or a missing dependency, and both belong in the review.
 4. **Numbers he can quote.** "Seventeen rules have no `requires` at all" is a

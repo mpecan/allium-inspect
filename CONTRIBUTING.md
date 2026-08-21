@@ -37,8 +37,8 @@ just check      # about a minute — run this before every commit
 ```
 
 `just check` is format, clippy, docs, the whole test suite, file-size budgets,
-the gate self-test, generated-type freshness, the frontend, and two receipt
-checks. If it exits 0 you are in good shape.
+the gate self-test, generated-type freshness, the third-party licence notice,
+the frontend, and two receipt checks. If it exits 0 you are in good shape.
 
 ```sh
 just check-all  # adds measured coverage, a mutation pass and a licence audit

@@ -42,8 +42,13 @@ questions only they are placed to ask.
 Two rules keep this honest:
 
 - **Drive the real tool over a real spec set.** `just run ../friend-mesh/specs/`
-  is five modules and 6,700 lines. A tool that works on the two-file fixture and
-  falls over at that size has not been reviewed.
+  is five modules and thousands of lines. A tool that works on the two-file
+  fixture and falls over at that size has not been reviewed.
+
+  That set is a private sibling project, so it is not something a reader of this
+  repository has. `just run crates/inspect-model/tests/fixtures/specs/` is the
+  public stand-in: two modules that between them use every construct, which is
+  enough for everything except the size question above.
 - **Record the evidence, not the verdict.** "Findings are hard to reach" is an
   opinion. "The rail says `5 analysis findings` and the text is not a control"
   is a fact, and it survives someone disagreeing with the opinion.

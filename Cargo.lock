@@ -633,7 +633,6 @@ dependencies = [
  "tokio",
  "tower",
  "tower-http",
- "tracing",
  "ts-rs",
 ]
 
@@ -647,7 +646,6 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
- "thiserror",
  "ts-rs",
 ]
 

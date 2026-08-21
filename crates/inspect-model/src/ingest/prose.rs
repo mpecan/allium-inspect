@@ -1,9 +1,9 @@
 //! The writing around a declaration, which is most of a specification.
 //!
-//! `friend-mesh` is 6,700 lines of Allium and more than half of them are
-//! comment. Twenty-two of its forty entities open with a paragraph saying why
-//! they exist; sixty-nine of its fields carry one; a hundred rules have a
-//! `@guidance` block. Everything the tool showed until now was the *what* — the
+//! `friend-mesh` is thousands of lines of Allium and more than half of them are
+//! comment. Most of its entities open with a paragraph saying why they exist;
+//! many of its fields carry one; a hundred-odd rules have a `@guidance` block.
+//! Everything the tool showed until now was the *what* — the
 //! fields, the clauses, the states — and the *why* sat four lines above it in
 //! the file, unread.
 //!

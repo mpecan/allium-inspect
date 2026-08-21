@@ -36,23 +36,26 @@ serde = { version = "1", features = ["derive"] }
 # depend on hash iteration order — the one thing snapshot tests cannot tolerate.
 serde_json = { version = "1", features = ["preserve_order"] }
 # Generates ui/src/lib/api/types.ts from the Rust structs, so the wire contract
-# cannot drift. Rent: crates/inspect-model/src/graph.rs, inspect-sim/src/lib.rs.
+# cannot drift. Rent: crates/inspect-model/src/graph/mod.rs and
+# crates/inspect-sim/src/lib.rs.
 ts-rs = "12"
 
 # --- errors ---
-# Typed errors on library boundaries. Rent: inspect-model/src/runner.rs.
+# Typed errors on library boundaries. Rent: crates/inspect-model/src/runner.rs.
 thiserror = "2"
 
 # --- HTTP ---
-# The embedded server. Rent: crates/inspect-server/src/router.rs.
+# The embedded server. Rent: crates/inspect-server/src/routes.rs.
 axum = "0.8"
 # Compression and tracing layers for the asset route. Rent: inspect-server.
 tower-http = { version = "0.7", features = ["compression-gzip", "trace"] }
 # Handler tests without a socket (`ServiceExt::oneshot`). Rent: server tests.
 tower = { version = "0.5", features = ["util"] }
+# The async runtime axum runs on. Rent: apps/inspect/src/main.rs, and the
+# handler tests in crates/inspect-server/src/routes.rs.
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
 # Bakes the built UI into the binary, so `allium-inspect` is one file with no
-# asset path to resolve. Rent: crates/inspect-server/src/assets.rs.
+# asset path to resolve. Rent: crates/inspect-server/src/routes.rs.
 rust-embed = { version = "8", features = ["mime-guess"] }
 
 # --- binary ---
@@ -60,9 +63,14 @@ rust-embed = { version = "8", features = ["mime-guess"] }
 clap = { version = "4", features = ["derive"] }
 # Opens the browser at the bound port. Rent: apps/inspect/src/main.rs.
 open = "5"
-# Watches the spec files and pushes a reload over SSE. Rent: apps/inspect.
+# Watches the spec files and bumps the revision the browser polls for. There is
+# no SSE — `ui/src/lib/reload.ts` asks `/api/health` once a second, which is one
+# fewer moving part for a tool that only ever serves one localhost tab.
+# Rent: apps/inspect/src/watch.rs.
 notify = "8"
+# Startup and reload logging, on stderr. Rent: apps/inspect/src/main.rs.
 tracing = "0.1"
+# Reads RUST_LOG and formats the above. Rent: apps/inspect/src/main.rs.
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # --- test-only ---

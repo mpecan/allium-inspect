@@ -26,13 +26,24 @@ allium-journey walk specs/ journeys/
 
 ## Install
 
-There are no binary releases yet — build it from source:
+There are no binary releases yet — build it from source. You will need
+[Rust 1.96](https://rustup.rs) (the pinned toolchain installs itself),
+[Node 20+](https://nodejs.org) for the browser interface, and
+[`just`](https://github.com/casey/just):
 
 ```sh
 git clone https://github.com/mpecan/allium-inspect
 cd allium-inspect
 just ui-install && just build-release
 ```
+
+That leaves two binaries in `target/release/` — `allium-inspect` and
+`allium-journey`. Copy them onto your `PATH`, or run them from there.
+
+Build the interface before the binaries, which is what `just build-release`
+does: the browser bundle is baked into the executable at compile time, so a bare
+`cargo build` produces a binary that serves a page telling you to run
+`just build`.
 
 You also need the **`allium` CLI** on `PATH`:
 
@@ -58,10 +69,11 @@ a diagram preview and a rule simulator; both are thin, and both stop at one file
 
 Two things follow from reading the set as a set:
 
-- **Cross-module references become edges.** Over friend-mesh: 354 constructs,
-  526 edges, 55 of them crossing a module boundary. `allium model` reports the
-  target of one of those relationships as the literal string `unknown`, because
-  from inside one file it *is*.
+- **Cross-module references become edges.** Over a five-module set like
+  `friend-mesh`, that is several hundred constructs and around a tenth of the
+  edges crossing a module boundary. `allium model` reports the target of one of
+  those relationships as the literal string `unknown`, because from inside one
+  file it *is*.
 - **The simulator can follow a chain out of the module it started in.** A rule
   emitting `MessageSent` in `messaging` is consumed by `QueueOnSend` in
   `delivery`, and walking that is the closest an Allium spec gets to describing a
@@ -76,7 +88,12 @@ Two things follow from reading the set as a set:
 | **Lifecycle** | how each entity changes state — one state machine per entity |
 | **Chain** | what *follows* from an action, traced forward or backward |
 | **Journeys** | what somebody *set out to do*, walked against the spec |
-| **Simulate** | fire a trigger against a world and watch |
+
+And one mode that is not a view:
+
+| Mode | Does |
+|---|---|
+| **Simulate** | fire a trigger against a world and watch what the spec does |
 
 Chain and Journeys answer next to each other on purpose. A chain is derived —
 which triggers a surface offers, which each rule emits — so it is what follows.
@@ -111,10 +128,10 @@ between two handles: ELK reserves channels between the layers as it places the
 nodes, and drawing along those is the difference between a diagram and a bowl of
 spaghetti on any view with more than a dozen constructs.
 
-**The prose comes with it.** More than half of a real spec set is comment —
-twenty-two of `friend-mesh`'s forty entities open with a paragraph saying why
-they exist, forty-five of its fields carry one, and a hundred rules have a
-`@guidance` block. That writing is where the reasoning lives, and the panel used
+**The prose comes with it.** More than half of a real spec set is comment: most
+of `friend-mesh`'s entities open with a paragraph saying why they exist, many of
+its fields carry one, and a hundred-odd rules have a `@guidance` block. That
+writing is where the reasoning lives, and the panel used
 to show the fields and leave the paragraph explaining them four lines up in a
 file nobody had open. A construct's note sits above its detail, a field's note
 under the field, and `@guidance` under a heading that says nothing checks it.
@@ -166,8 +183,8 @@ allium-inspect [PATHS]...
   --no-watch             do not reload when a spec changes
   --journeys <PATH>      journeys to walk, shown in the Journeys view
   --check                print the journey report and exit, without serving
-  --strict               with --check: fail on what the spec cannot support
-  --json                 with --check: print the report as JSON
+  --strict               implies --check: fail on what the spec cannot support
+  --json                 implies --check: print the report as JSON
   --print-graph          print the whole graph as JSON and exit
   --allium <PATH>        the allium binary to run
 ```

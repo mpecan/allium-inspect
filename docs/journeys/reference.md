@@ -170,6 +170,13 @@ then loan in Loans
 
 `==` is not this grammar and is refused rather than read as `=`.
 
+Two things to expect. A **derived** field — `open_loan_count` is
+`open_loans.count` — comes back `undecided` rather than computed, because the
+simulator does not evaluate derived values; `stipulate` is how a journey gets
+past that deliberately. And an assertion about a path nothing has set is
+`undecided` **both ways round**: `exists` does not refuse it and `does not
+exist` does not hold, because neither is something the world said.
+
 ### `sees` — what a boundary shows
 
 ```
@@ -180,6 +187,16 @@ ada cannot see copy.shelfmark on MemberShelf
 Being able to *do* something and being able to *see* the result are different
 claims, and a system that does the right thing and tells nobody is a real
 failure. `cannot see` is how a privacy claim gets written down.
+
+**Half of this is built, and the half that is missing is why a positive `sees`
+never holds yet.** Whether the surface carries the field at all is read, and it
+settles a `cannot see` outright — the second line above holds because
+`MemberShelf` exposes nothing like `copy.shelfmark`. Whether the surface's
+filter admits *this particular actor* needs the `exposes` clause as an
+expression, and it is stored as text today. So once the field *is* exposed, both
+directions come back `undecided` with a reason saying so. That is the right way
+round: a privacy claim that passed because nothing checked it would be the worst
+answer this tool could give.
 
 ### `stipulate` — say it rather than show it
 

@@ -32,13 +32,13 @@ useful thing the tool can do.
 Allium says what each rule does when its trigger happens. It says nothing about
 what a person does next, and has no construct for saying it.
 
-This tool draws a **Journey** view, and the rail is careful about what it is:
+This tool draws a **Chain** view, and the rail is careful about what it is:
 
-> A trace is derived from which triggers a surface offers and which each rule
-> emits. Allium has no journey construct, so this is what follows — not what a
-> person does.
+> A chain is derived from which triggers a surface offers and which each rule
+> emits — so it is what *follows*, not what anyone set out to do. For that,
+> somebody has to write it down: see Journeys.
 
-A derived trace follows causation: this trigger fires that rule, which emits
+A derived chain follows causation: this trigger fires that rule, which emits
 that trigger. A journey follows a *person*: they act, they wait a day, somebody
 else acts, they come back and look at a screen, and what they see decides what
 they do next. Between two triggers on a causal chain there can be a decision, a
@@ -207,19 +207,32 @@ journeys in one file, since the cost is per file rather than per journey.
 > If it is a behaviour, we need to be able to model it. Seeing a message or
 > content is important.
 
-So `sees` is not a static lookup against the `exposes` list. It is evaluated:
-the surface's projection is walked, its filter applied, and the question asked is
-whether *this* actor observes *this* value in *this* world.
+So `sees` is a question about a boundary, and it has two halves. **Half of it is
+built.**
 
-`OpenDeletions` exposes `for intent in DeleteIntents where owner = owner and
-status = applied: intent.targets.count`. Asking whether Ada sees
-`DeleteIntent#1.targets.count` means evaluating that filter with `owner` bound to
-Ada — which is the same evaluator the simulator already runs, and it will
-sometimes come back undecided.
+The half that works is whether the surface carries the field at all. That is a
+fact about the `exposes` block, and it settles a `cannot see` outright — not "no
+instance matched" but "this boundary does not carry it", which is the strongest
+form the claim has.
+
+The half that is not built is the filter. `OpenDeletions` exposes `for intent in
+DeleteIntents where owner = owner and status = applied: intent.targets.count`.
+Asking whether Ada sees `DeleteIntent#1.targets.count` means evaluating that
+filter with `owner` bound to Ada, which needs the `exposes` clause as an
+expression rather than as text. It is stored as text today. So once the surface
+*does* carry the field, neither direction can be settled, and both come back
+**undecided** with a reason saying which half is unread.
+
+That means a positive `sees` never holds yet. It is the honest answer rather than
+a satisfying one, and it is the right way round:
 
 **A `cannot see` that could not be evaluated is undecided, never safe.** A
 privacy claim that passes because the tool could not check it is the worst output
 available here, and refusing it is the single most important rule in this design.
+Reading the *value* instead of the surface was how that rule got broken once: a
+field nothing had set made the claim come back satisfied, so `ada cannot see
+ada.open_loan_count on MemberShelf` held against a surface that exposes it on the
+line above.
 
 ## Status, not pass/fail
 
@@ -233,6 +246,7 @@ right vocabulary already, one level down; these are its spec-level counterparts:
 | **refused** | the spec forbids it — a precondition is definitely false |
 | **unspecified** | the step names a surface, operation or exposure the spec does not have |
 | **unexposed** | the act exists but nothing lets this actor see the result |
+| **remark** | worth a person's attention, and not a reason to stop |
 
 The last two are the point of writing journeys first. **unspecified** is a
 requirement nobody has met. **unexposed** is a system that does the right thing
@@ -260,8 +274,11 @@ how many steps hold, and which spec constructs the rest are waiting on.
 > either, default to report.
 
 ```
---journeys report   (default)  every step gets a status; exit 0
---journeys strict              unspecified or refused is a failure; exit non-zero
+allium-journey walk  --report   every step gets a status; exit 0
+allium-journey walk             unspecified or refused is a failure; exit non-zero
+
+allium-inspect --journeys PATH --check            the same, without a browser
+allium-inspect --journeys PATH --check --strict   ... and --json for a pipe
 ```
 
 Report is the default because that is the mode you write a journey in: you write
@@ -308,7 +325,7 @@ pass. It cannot make one pass *invisibly*.
 2. It writes the walk: cast, `given`, numbered steps, what each person sees. It
    may name constructs the spec does not have; in report mode that is the output,
    not an error.
-3. `--check-journeys --json` returns a status per step.
+3. `allium-journey check --json` returns a status per step.
 4. **unspecified** steps are the agent's brief: these are the surfaces,
    operations and exposures the spec still owes. It writes them — or hands the
    list to whoever owns the spec.
@@ -323,13 +340,20 @@ obligations a *spec* owes.
 
 ## What the tool does with them
 
-1. **`--check-journeys`** — the run above, human-readable or `--json`.
+1. **`allium-journey check` and `walk`** — the run above, `--text` for a
+   person or JSON for a pipe. `allium-inspect --journeys PATH --check` is the
+   same check from the other binary.
 2. **A Journeys view** — the written journey drawn against the derived trace,
    with the divergences marked. Steps that are `unspecified` draw as gaps rather
    than as constructs, which makes a half-specified journey legible at a glance.
+### Not built
+
+Both of these are still ideas, listed here because the shape of the tool makes
+them cheap and because a reader should be told which parts they cannot use yet.
+
 3. **Coverage, both ways** — which surface operations no journey exercises, and
    which journey steps no spec construct answers. The second is the backlog.
-4. **`--propose-journeys`** — skeletons from surfaces and traces, for filling in.
+4. **Proposed journeys** — skeletons from surfaces and traces, for filling in.
    Useful for covering a spec that already exists; it is *not* the main path, and
    a tool that only proposed journeys derived from the spec could never find a
    step nobody had specified.

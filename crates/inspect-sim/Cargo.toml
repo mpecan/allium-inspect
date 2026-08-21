@@ -13,7 +13,6 @@ rust-version.workspace = true
 allium-parser = { workspace = true }
 inspect-model = { workspace = true }
 serde = { workspace = true }
-thiserror = { workspace = true }
 ts-rs = { workspace = true }
 
 [dev-dependencies]

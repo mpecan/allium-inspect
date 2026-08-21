@@ -1,16 +1,19 @@
 # allium-inspect
 
-A local tool that runs the `allium` CLI over a spec set and serves an explorable
-graph and a rule simulator in a browser. See `README.md` for what it does and
+A local tool that reads a spec set — two commands from the `allium` CLI, two
+calls into its parser library — and serves an explorable graph, a rule simulator
+and a journey runner in a browser. See `README.md` for what it does and
 why; this file is about working on it.
 
 ## Layout
 
 ```
-crates/inspect-model   CLI JSON → one linked SpecGraph, plus view projections
+crates/inspect-model   allium output → one linked SpecGraph, plus view projections
 crates/inspect-sim     three-valued evaluator, world, step engine
+crates/inspect-journey journeys: grammar, static check, and the walk
 crates/inspect-server  axum routes; the built UI embedded via rust-embed
 apps/inspect           args, a free port, a browser, a file watcher
+apps/journey           `allium-journey`: the same walk without a browser
 ui                     Svelte 5; wire types generated from the Rust by ts-rs
 ```
 
@@ -109,13 +112,16 @@ rules, surfaces, actors, invariants and positions. `plan` supplies the trigger �
 rule → entity chain already computed. `analyse` contributes findings. The passes
 run in that order per file, and linking runs once over the whole set.
 
-The AST reaches those passes as JSON even though `allium_parser` hands it over
-typed. That is deliberate, not leftover: the simulator evaluates expressions
-straight off `serde_json::Value`, so a pass rewritten against the typed tree
-would have to serialise every clause back on its way out — the round trip would
-move rather than go. Rewriting `inspect-sim`'s evaluator against
-`allium_parser::ast::Expr` is what makes a typed ingestion pay, and it is a
-separate decision worth taking on its own merits.
+The two halves are typed differently, on purpose. The **evaluator** walks
+`allium_parser::ast::Expr` directly — `inspect-sim` has `serde_json` under
+dev-dependencies only, and a shape it does not handle is a compile error rather
+than a run-time `unknown`. The **ingestion passes** still read the AST as JSON,
+because what they want from it is spans and names rather than structure, and a
+walker over ~35 typed variants to reach a field name would be more code saying
+less. `ingest/clauses.rs` and `ingest/writes.rs` are the two that went typed,
+because both actually care about the shape.
+
+Converting the rest is a separate decision and not an obviously good one.
 
 The expression trees go in `Program`, not in `SpecGraph`. The graph is what the
 browser draws and is under half a megabyte for a five-module spec set; the ASTs
@@ -155,12 +161,18 @@ then died in its own scoring step on `cope: command not found`.
 | File size — 500 warn, 700 fail; tests exempt | `just file-size` | yes |
 | Gate self-test | `just gates-selftest` | yes |
 | Generated types in sync | `just types-check` | yes |
+| Third-party notice matches the bundle | `just third-party-check` | yes |
 | Frontend typecheck and tests | `just ui-check`, `just ui-test` | yes |
 | Coverage freshness | `just coverage-fresh` | yes |
 | **Mutation debt** | `just mutation-debt` | yes, sub-second |
 | Coverage measurement | `just coverage-check` | `check-all` |
 | **Mutation run** | `just mutants` | `check-all` |
 | Dependency audit | `just deny` | `check-all` |
+
+Every row was checked against `justfile:16` rather than against memory. The
+`types-check` row said *yes* for a while and was in neither `check` nor
+`check-all` — a gate documented as running and not running, which is the exact
+failure stipulation 7 is about, sitting in the table that describes the gates.
 
 **Coverage** has a floor in `scripts/coverage-floor.txt` that `just
 coverage-ratchet` raises toward 95% and never lowers. It is enforced by proxy in
@@ -201,6 +213,6 @@ the tests would notice the code changing. Only `just mutants` says that.
 
 - Conventional Commits: `type(scope): description`
 - Types: `feat`, `fix`, `docs`, `test`, `refactor`, `chore`, `ci`, `perf`
-- Scopes: `model`, `sim`, `server`, `app`, `ui`
+- Scopes: `model`, `sim`, `journey`, `server`, `app`, `ui`
 - Stage explicit paths. Never `git add -A` — it sweeps in whatever else is in
   the tree.

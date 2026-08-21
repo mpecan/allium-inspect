@@ -21,7 +21,6 @@ tower-http = { workspace = true }
 # ts-rs: generates the TypeScript for /api/health, so the browser's idea of
 # the reload signal cannot drift from the server's.
 ts-rs.workspace = true
-tracing = { workspace = true }
 
 [dev-dependencies]
 http = "1"
