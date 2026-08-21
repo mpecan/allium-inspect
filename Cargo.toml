@@ -20,6 +20,10 @@ rust-version = "1.96"
 inspect-model = { path = "crates/inspect-model" }
 inspect-sim = { path = "crates/inspect-sim" }
 inspect-journey = { path = "crates/inspect-journey" }
+# allium-parser: allium's own parser and analyser, as a library. Pinned to the
+# tag whose CLI the fixtures were recorded from — the two have to agree, and a
+# git dependency is the only option because it is not published to crates.io.
+allium-parser = { git = "https://github.com/juxt/allium-tools", tag = "v3.5.3" }
 inspect-server = { path = "crates/inspect-server" }
 
 # --- serialisation ---

@@ -8,6 +8,10 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+# allium-parser: allium's own parser, so parse and analyse are function calls
+# rather than a subprocess and a JSON round trip. An upstream shape change is
+# then a compile error instead of a fixture that silently misparses.
+allium-parser = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

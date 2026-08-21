@@ -23,7 +23,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use inspect_model::ProcessRunner;
+use inspect_model::library::LibraryRunner;
 use inspect_server::{AppState, Inspection};
 use notify::{Event, RecursiveMode, Watcher};
 
@@ -84,7 +84,7 @@ pub fn watch(
         // stops delivery, and a watcher that has quietly stopped is worse than
         // one that was never started.
         let _watcher = watcher;
-        let runner = ProcessRunner::new(&allium);
+        let runner = LibraryRunner::new(&allium);
 
         while receiver.recv().is_ok() {
             // Drain the rest of the burst. One save is several events, and

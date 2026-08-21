@@ -16,7 +16,7 @@ use std::{net::SocketAddr, path::PathBuf, process::ExitCode};
 
 use args::Args;
 use clap::Parser;
-use inspect_model::ProcessRunner;
+use inspect_model::library::LibraryRunner;
 use inspect_server::{AppState, Inspection, serve};
 use tokio::net::TcpListener;
 
@@ -63,7 +63,10 @@ async fn run(args: Args) -> Result<(), String> {
         None => Vec::new(),
     };
 
-    let runner = ProcessRunner::new(&args.allium);
+    // `parse` and `analyse` are answered in process; `model` and `plan` still
+    // reach the CLI, because allium builds those in a crate with no library
+    // target.
+    let runner = LibraryRunner::new(&args.allium);
     let inspection =
         Inspection::build(&runner, &paths, &journeys).map_err(|error| error.to_string())?;
 
