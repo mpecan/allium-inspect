@@ -30,8 +30,20 @@ export interface PlacedNode {
   height: number;
 }
 
+/** A file's container, when the layout was asked to group by module. */
+export interface PlacedGroup {
+  module: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  held: number;
+}
+
 /** The result of laying a view out. */
 export interface Layout {
+  /** The containers ELK placed, empty unless grouping was asked for. */
+  groups?: PlacedGroup[];
   nodes: PlacedNode[];
   /**
    * The polyline ELK routed each edge along, keyed by its position in the edge
@@ -77,6 +89,8 @@ export interface ElkNode {
   height?: number;
   x?: number;
   y?: number;
+  children?: ElkNode[];
+  layoutOptions?: Record<string, string>;
 }
 
 /** A node this module sized itself, so its dimensions are known. */
@@ -235,6 +249,20 @@ export async function layout(
   view: ViewKind,
   nodes: Node[],
   edges: Edge[],
+  /**
+   * Lay each file out inside a container of its own.
+   *
+   * Not an overlay. Drawing a box around wherever ELK happened to put a
+   * module's constructs produced boxes that were nearly co-extensive, because
+   * the layered algorithm places by topology and the topology crosses files
+   * freely. Containment is the only thing that actually groups them: ELK lays
+   * each file out as a graph in its own right, then places those as nodes.
+   *
+   * It costs what constraints always cost. Every cross-file edge now has to
+   * leave one box and enter another, so those edges get longer and the whole
+   * drawing gets larger — which is the trade being tested here, not a defect.
+   */
+  grouped = false,
 ): Promise<Layout> {
   if (nodes.length === 0) {
     return { nodes: [], routes: new Map(), width: 0, height: 0 };
@@ -252,21 +280,130 @@ export async function layout(
     .map((edge, index) => ({ edge, index }))
     .filter(({ edge }) => present.has(edge.from) && present.has(edge.to));
 
+  const home = new Map(nodes.map((node) => [node.id, node.module]));
+  const containers = grouped ? group(sized, home) : null;
+
   try {
     const result = await elk.layout({
       id: "root",
-      layoutOptions: optionsFor(view),
-      children: sized,
+      layoutOptions: {
+        ...optionsFor(view),
+        // Lay the whole thing out across levels rather than each box in
+        // isolation. Without it ELK places every container's contents first
+        // and then the containers, and a cross-file edge is routed as if the
+        // two ends had nothing to do with each other.
+        ...(grouped ? { "elk.hierarchyHandling": "INCLUDE_CHILDREN" } : {}),
+      },
+      children: containers ?? sized,
       edges: usable.map(({ edge, index }) => ({
         id: `e${index}`,
         sources: [edge.from],
         targets: [edge.to],
       })),
     });
-    return collect(result.children ?? [], sized, result.edges ?? []);
+    return grouped
+      ? collectGrouped(result.children ?? [], sized)
+      : collect(result.children ?? [], sized, result.edges ?? []);
   } catch {
     return grid(sized);
   }
+}
+
+/** Room inside a container: more at the top, where its name goes. */
+const CONTAINER_PADDING = "[top=34.0,left=20.0,bottom=20.0,right=20.0]";
+
+/** One ELK container per module, holding that module's constructs. */
+function group(sized: SizedNode[], home: Map<string, string>): ElkNode[] {
+  const boxes = new Map<string, ElkNode>();
+  const loose: ElkNode[] = [];
+
+  for (const node of sized) {
+    const module = home.get(node.id);
+    // A synthesised module box is a file already. Putting it inside a
+    // container would nest a file in a file.
+    if (module === undefined || node.id.endsWith("::module")) {
+      loose.push(node);
+      continue;
+    }
+    let box = boxes.get(module);
+    if (!box) {
+      box = {
+        id: groupId(module),
+        layoutOptions: {
+          "elk.padding": CONTAINER_PADDING,
+          // Each file is laid out as its own graph before being placed as a
+          // node, which is the whole point: within a box, the reader gets the
+          // same left-to-right reading they get everywhere else.
+          "elk.algorithm": "layered",
+          "elk.direction": "RIGHT",
+        },
+        children: [],
+      };
+      boxes.set(module, box);
+    }
+    box.children?.push(node);
+  }
+
+  return [...boxes.values(), ...loose];
+}
+
+/** The id ELK knows a module's container by. */
+export function groupId(module: string): string {
+  return `${module}::group`;
+}
+
+/**
+ * Read positions back out of a hierarchical result.
+ *
+ * A child's coordinates are relative to its container, and everything
+ * downstream — edge routes, framing, the canvas itself — works in one flat
+ * space. So the container offset is added back in here rather than left for
+ * four other places to remember.
+ */
+function collectGrouped(placed: ElkNode[], sized: SizedNode[]): Layout {
+  const flat = new Map<string, { x: number; y: number }>();
+  const groups: PlacedGroup[] = [];
+
+  for (const box of placed) {
+    const x = box.x ?? 0;
+    const y = box.y ?? 0;
+    if (!box.children || box.children.length === 0) {
+      flat.set(box.id, { x, y });
+      continue;
+    }
+    groups.push({
+      module: box.id.slice(0, -"::group".length),
+      x,
+      y,
+      width: box.width ?? 0,
+      height: box.height ?? 0,
+      held: box.children.length,
+    });
+    for (const child of box.children) {
+      flat.set(child.id, { x: x + (child.x ?? 0), y: y + (child.y ?? 0) });
+    }
+  }
+
+  const fallback = grid(sized);
+  const fallbackById = new Map(fallback.nodes.map((node) => [node.id, node]));
+  const nodes = sized.map((node) => {
+    const at = flat.get(node.id);
+    return at ? { ...node, x: at.x, y: at.y } : (fallbackById.get(node.id) ?? { ...node, x: 0, y: 0 });
+  });
+
+  // No routes when grouped, deliberately.
+  //
+  // ELK stores a hierarchical edge's route in the coordinate system of the
+  // graph that owns the edge, and with containers in play that is not always
+  // the root — so translating them all by one offset is wrong for some, and
+  // the ones it is wrong for draw as fragments and arrowheads in empty space.
+  // Nothing is worse on a diagram than a line that appears to connect two
+  // things it does not.
+  //
+  // An unrouted edge falls back to a straight line, which is honest about what
+  // it joins and says nothing about the path. That is the price of containment
+  // here, and it is the main thing to weigh against it.
+  return { ...bounds(nodes), groups, routes: new Map() };
 }
 
 /** The polyline ELK routed each edge along, by the number it was given. */

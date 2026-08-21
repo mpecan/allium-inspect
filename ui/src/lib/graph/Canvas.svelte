@@ -27,7 +27,7 @@
   import type { ViewKind } from "../client";
   import ConstructNode from "./ConstructNode.svelte";
   import ModuleHull from "./ModuleHull.svelte";
-  import { hullId, hulls } from "./hulls";
+  import { hullId } from "./hulls";
   import RoutedEdge from "./RoutedEdge.svelte";
   import Settle from "./Settle.svelte";
   import { familyOf, layout } from "./layout";
@@ -127,7 +127,7 @@
     let cancelled = false;
     placing = true;
 
-    void layout(elk, view, nodes, edges).then((result) => {
+    void layout(elk, view, nodes, edges, grouped && view !== "modules").then((result) => {
       if (cancelled) {
         return;
       }
@@ -136,24 +136,23 @@
       // Behind the constructs, and before them in the array so Svelte Flow
       // paints them first. Not selectable: a boundary is a fact about where
       // things are, and clicking one should reach the construct underneath.
-      const boxes: FlowNode[] =
-        grouped && view !== "modules"
-          ? hulls(nodes, result.nodes).map((box, depth) => ({
-              id: hullId(box.module),
-              type: "hull",
-              position: { x: box.x, y: box.y },
-              data: {
-                module: box.module,
-                held: box.held,
-                width: box.width,
-                height: box.height,
-                depth,
-              },
-              selectable: false,
-              draggable: false,
-              zIndex: -1,
-            }))
-          : [];
+      const boxes: FlowNode[] = (result.groups ?? []).map((box) => ({
+        id: hullId(box.module),
+        type: "hull",
+        position: { x: box.x, y: box.y },
+        data: {
+          module: box.module,
+          held: box.held,
+          width: box.width,
+          height: box.height,
+          // Containers do not overlap, so every name can sit in its own
+          // corner. The stagger the overlay needed is gone with the overlap.
+          depth: 0,
+        },
+        selectable: false,
+        draggable: false,
+        zIndex: -1,
+      }));
       placed = nodes.map((node) => {
         const place = byId.get(node.id);
         return {
