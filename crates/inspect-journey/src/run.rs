@@ -25,6 +25,7 @@ use inspect_sim::{
 };
 
 use crate::{
+    assert::Sight,
     check::{self, Verdict},
     journey::{Assertion, Clause, Journey, Step, Term},
     outcome::{refusal, verdict_of},
@@ -178,6 +179,16 @@ fn describes(journey: &Journey, line: usize) -> String {
     format!("line {line}")
 }
 
+/// Whether the world stopped changing on its own.
+///
+/// Reaching the bound used to push a sentence into `undecided`, which is a list
+/// of *rule names* matched by exact equality — so it matched nothing, nothing
+/// read it, and the two tests asserting it never appeared could not fail.
+enum Settled {
+    Yes,
+    No { rounds: usize },
+}
+
 /// The worst of several, in the order a reader cares about them.
 fn worst(verdicts: impl Iterator<Item = Verdict>) -> Verdict {
     fn rank(verdict: Verdict) -> u8 {
@@ -310,7 +321,9 @@ impl Walker<'_> {
             }
             Clause::After { duration, line, .. } => self.advance(duration, *line, about),
             Clause::Then { assertion, line } => self.assert(assertion, *line, about),
-            Clause::Sees { path, negated, line, .. } => self.observe(path, *negated, *line, about),
+            Clause::Sees { path, surface, negated, line, .. } => {
+                self.observe(&Sight { path, surface, negated: *negated, line: *line }, about)
+            }
             Clause::Stipulate { path, value, line } => {
                 let value = self.value_of(value);
                 let written = format!("{} = {}", path.as_written(), value.render());
@@ -414,8 +427,36 @@ impl Walker<'_> {
         self.world.now = self.world.now.saturating_add(*by);
         self.fired.clear();
         self.undecided.clear();
-        self.settle();
-        Outcome { line, verdict: Verdict::Specified, about, detail: None }
+
+        // Time passing is a claim about the world, so it answers like one.
+        // It used to report `Specified` whatever happened underneath it: two
+        // identical `a day passes` steps read differently depending only on
+        // whether a `then … fires` line followed, because that line was the
+        // only reader of what settling had found.
+        if let Settled::No { rounds } = self.settle() {
+            return Outcome {
+                line,
+                verdict: Verdict::Undecided,
+                about,
+                detail: Some(format!(
+                    "the world had not stopped changing after {rounds} rounds, so what is \
+                     true once time has passed is not settled"
+                )),
+            };
+        }
+        if self.undecided.is_empty() {
+            Outcome { line, verdict: Verdict::Specified, about, detail: None }
+        } else {
+            Outcome {
+                line,
+                verdict: Verdict::Undecided,
+                about,
+                detail: Some(format!(
+                    "{} could not be decided while the clock moved",
+                    self.undecided.join(", ")
+                )),
+            }
+        }
     }
 
     /// Fire everything the world now makes true, until nothing else does.
@@ -430,7 +471,7 @@ impl Walker<'_> {
     /// bounded because a spec with two rules that re-enable each other would
     /// otherwise run forever. Reaching the bound is reported rather than
     /// silently truncated.
-    fn settle(&mut self) {
+    fn settle(&mut self) -> Settled {
         const ROUNDS: usize = 32;
         let mut ran: Vec<(String, Value)> = Vec::new();
         for _ in 0..ROUNDS {
@@ -454,7 +495,7 @@ impl Walker<'_> {
                     .filter(|(trigger, _, _, over)| !already_ran(&ran, trigger, over))
                     .collect();
             if waiting.is_empty() {
-                return;
+                return Settled::Yes;
             }
             for (trigger, module, binding, over) in waiting {
                 let mut event = Event::new(&trigger, &module);
@@ -466,7 +507,7 @@ impl Walker<'_> {
                 ran.push((trigger, over));
             }
         }
-        self.undecided.push("the world never settled".to_owned());
+        Settled::No { rounds: ROUNDS }
     }
 
     /// One turn of the engine, remembering what ran.

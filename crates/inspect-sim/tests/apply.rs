@@ -355,10 +355,18 @@ fn a_removal_assertion_is_noted_rather_than_performed() {
 }
 
 #[test]
-fn a_clause_shape_this_module_does_not_model_changes_nothing() {
+fn a_clause_shape_this_module_does_not_model_changes_nothing_and_says_so() {
+    // Two halves, and the second used to be missing. The world must not move —
+    // applying a form nobody has modelled would be a guess with side effects —
+    // but the rule is still reported as Fired, so a reader comparing the spec
+    // against the world needs to be told which promise the world does not
+    // carry. Silence there reads as "the rule did everything it said".
     let (effects, _, world) = apply(&unmodelled(), &[]);
-    assert!(effects.is_empty());
-    assert_eq!(world.entities.len(), 1);
+    assert_eq!(world.entities.len(), 1, "nothing was created or changed");
+    assert!(
+        effects.iter().any(|effect| matches!(effect, Effect::Noted { .. })),
+        "the postcondition it could not apply is recorded: {effects:?}"
+    );
 }
 
 #[test]

@@ -149,43 +149,88 @@ pub fn arithmetic(
     let mut unresolved = left.unresolved;
     unresolved.extend(right.unresolved);
 
-    let value = match (&left.value, operator, &right.value) {
+    // Checked throughout. These are numbers a person typed into a world, so
+    // running off the end of an `i64` is ordinary input rather than a bug in a
+    // spec — and `just run` is a debug build, where the unchecked form aborts
+    // the whole process instead of reporting anything. `literals.rs` and
+    // `seed.rs` already went through `checked_mul`; this was the one cluster
+    // left doing it raw.
+    let computed = match (&left.value, operator, &right.value) {
         // A timestamp plus a duration is a timestamp; the units are the point.
-        (Value::Timestamp(at), BinaryOp::Add, Value::Duration(by)) => Value::Timestamp(at + by),
-        (Value::Timestamp(at), BinaryOp::Sub, Value::Duration(by)) => Value::Timestamp(at - by),
+        (Value::Timestamp(at), BinaryOp::Add, Value::Duration(by)) => {
+            at.checked_add(*by).map(Value::Timestamp).ok_or(Fault::Overflow)
+        }
+        (Value::Timestamp(at), BinaryOp::Sub, Value::Duration(by)) => {
+            at.checked_sub(*by).map(Value::Timestamp).ok_or(Fault::Overflow)
+        }
         (Value::Timestamp(later), BinaryOp::Sub, Value::Timestamp(earlier)) => {
-            Value::Duration(later - earlier)
+            later.checked_sub(*earlier).map(Value::Duration).ok_or(Fault::Overflow)
         }
         (Value::Duration(left), BinaryOp::Add, Value::Duration(right)) => {
-            Value::Duration(left + right)
+            left.checked_add(*right).map(Value::Duration).ok_or(Fault::Overflow)
         }
         (Value::Duration(left), BinaryOp::Sub, Value::Duration(right)) => {
-            Value::Duration(left - right)
+            left.checked_sub(*right).map(Value::Duration).ok_or(Fault::Overflow)
         }
-        (Value::Int(left), _, Value::Int(right)) => match operator {
-            BinaryOp::Add => Value::Int(left + right),
-            BinaryOp::Sub => Value::Int(left - right),
-            BinaryOp::Mul => Value::Int(left * right),
-            BinaryOp::Div if *right != 0 => Value::Int(left / right),
-            BinaryOp::Div => Value::Unknown,
-        },
-        _ => Value::Unknown,
+        (Value::Int(_), BinaryOp::Div, Value::Int(0)) => Err(Fault::DividedByZero),
+        (Value::Int(left), _, Value::Int(right)) => {
+            let checked = match operator {
+                BinaryOp::Add => left.checked_add(*right),
+                BinaryOp::Sub => left.checked_sub(*right),
+                BinaryOp::Mul => left.checked_mul(*right),
+                BinaryOp::Div => left.checked_div(*right),
+            };
+            checked.map(Value::Int).ok_or(Fault::Overflow)
+        }
+        _ => Err(Fault::Undefined),
     };
 
-    if value.is_unknown() && !left.value.is_unknown() && !right.value.is_unknown() {
-        let span = between(left_node, right_node);
-        unresolved.push(Unresolved {
-            reason: format!(
-                "`{}` is not defined between {} and {}",
-                name_of(operator),
-                left.value.described(),
-                right.value.described()
-            ),
-            expression: span.and_then(|span| span.slice(env.source)).map(str::to_owned),
-            span,
-        });
-    }
+    let value = match computed {
+        Ok(value) => value,
+        Err(fault) => {
+            // An operand that was already undecided has said why. Adding a
+            // second reason on top of it would blame the operator for a gap
+            // somewhere underneath it.
+            if !left.value.is_unknown() && !right.value.is_unknown() {
+                let span = between(left_node, right_node);
+                let reason = match fault {
+                    Fault::Undefined => format!(
+                        "`{}` is not defined between {} and {}",
+                        name_of(operator),
+                        left.value.described(),
+                        right.value.described()
+                    ),
+                    Fault::Overflow => format!(
+                        "`{}` between {} and {} runs past what a whole number holds here",
+                        name_of(operator),
+                        left.value.described(),
+                        right.value.described()
+                    ),
+                    Fault::DividedByZero => "divided by zero".to_owned(),
+                };
+                unresolved.push(Unresolved {
+                    reason,
+                    expression: span.and_then(|span| span.slice(env.source)).map(str::to_owned),
+                    span,
+                });
+            }
+            Value::Unknown
+        }
+    };
     Evaluation { value, unresolved }
+}
+
+/// Why an arithmetic operator produced nothing.
+///
+/// Three different answers a reader can act on. Collapsing them into one
+/// unknown would tell somebody whose world overflowed that `+` is not defined
+/// between two whole numbers, which is both wrong and unfixable.
+enum Fault {
+    /// The operator means nothing between these two kinds of value.
+    Undefined,
+    /// It means something, and the answer does not fit.
+    Overflow,
+    DividedByZero,
 }
 
 /// An arithmetic operator as the spec spells it.

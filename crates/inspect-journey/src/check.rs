@@ -237,7 +237,7 @@ fn check_sight(sight: &Sight<'_>, graph: &SpecGraph, notes: &mut Vec<Note>) {
 /// Matched on the tail rather than the whole: a journey says `loan.status`
 /// where a surface writes `Loan.status`, and a projection binds its own name
 /// with `for m in group.messages: m.body`. The tail is the part both agree on.
-fn exposes(detail: &SurfaceDetail, seen: &str) -> bool {
+pub(crate) fn exposes(detail: &SurfaceDetail, seen: &str) -> bool {
     let Some((_, tail)) = seen.rsplit_once('.') else {
         return detail.exposes.iter().any(|clause| mentions(clause, seen));
     };
@@ -249,7 +249,7 @@ fn mentions(clause: &str, needle: &str) -> bool {
     clause.split_whitespace().any(|word| word == needle || word.ends_with(needle))
 }
 
-fn surface_named<'a>(graph: &'a SpecGraph, name: &str) -> Option<&'a SurfaceDetail> {
+pub(crate) fn surface_named<'a>(graph: &'a SpecGraph, name: &str) -> Option<&'a SurfaceDetail> {
     graph
         .nodes_of(NodeKind::Surface)
         .find(|node| node.name == name)

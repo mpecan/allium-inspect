@@ -610,24 +610,109 @@ fn every_form_the_language_has_is_either_evaluated_or_named() {
 }
 
 #[test]
+fn arithmetic_that_runs_off_the_end_is_undecided_rather_than_a_crash() {
+    // A world holds numbers a person typed. `just run` is a debug build, so
+    // the unchecked form aborted the whole process on an overflow — the tool
+    // vanishing mid-step rather than reporting anything. Release was worse: it
+    // wrapped, and the step quietly held on a number nobody could have meant.
+    let world = library();
+    let env = env(&world, "lending");
+
+    let big = number(&i64::MAX.to_string());
+    for (described, node) in [
+        ("addition", arithmetic(big.clone(), "Add", number("1"))),
+        ("multiplication", arithmetic(big.clone(), "Mul", number("2"))),
+        ("subtraction", arithmetic(number(&i64::MIN.to_string()), "Sub", number("1"))),
+    ] {
+        let evaluated = eval(&node, &env);
+        assert!(evaluated.value.is_unknown(), "{described} overflowed into a value: {evaluated:?}");
+        let said = reasons(&node, &env);
+        assert!(
+            said.iter().any(|reason| reason.contains("runs past")),
+            "{described} says which way it failed: {said:?}"
+        );
+    }
+
+    // And the distinction is kept: an operator that means nothing between two
+    // kinds still says *that*, rather than blaming arithmetic that never ran.
+    let undefined = arithmetic(text("a"), "Mul", text("b"));
+    assert!(reasons(&undefined, &env).iter().any(|reason| reason.contains("is not defined")));
+
+    let divided = arithmetic(number("1"), "Div", number("0"));
+    assert!(reasons(&divided, &env).iter().any(|reason| reason.contains("zero")));
+}
+
+#[test]
 fn every_undecided_result_carries_at_least_one_reason() {
     // The crate's whole contract, stated once as a property. An unknown with no
     // explanation is indistinguishable from a bug.
+    //
+    // This used to be five expressions that already passed, which is a
+    // description of the contract rather than a test of it. Three paths were
+    // returning a reasonless unknown the whole time it was green: membership
+    // over a known non-collection, an unbound `this`, and a conditional on a
+    // known non-boolean. Each had a sibling handling the same situation
+    // correctly, which is the shape to look for when adding a case here —
+    // reach for the arm nobody would think to write a test *about*.
     let world = library();
     let env = env(&world, "lending");
-    let cases = [
-        ident("nobody"),
-        field(ident("nobody"), "x"),
-        compare(ident("nobody"), "Lt", number("1")),
-        arithmetic(ident("nobody"), "Add", number("1")),
-        Expr::Pipe { span: NOWHERE, left: Box::new(ident("a")), right: Box::new(ident("b")) },
+    let cases: Vec<(&str, Expr)> = vec![
+        ("an unbound name", ident("nobody")),
+        ("a field of an unbound name", field(ident("nobody"), "x")),
+        ("a comparison against one", compare(ident("nobody"), "Lt", number("1"))),
+        ("arithmetic on one", arithmetic(ident("nobody"), "Add", number("1"))),
+        (
+            "a pipe",
+            Expr::Pipe { span: NOWHERE, left: Box::new(ident("a")), right: Box::new(ident("b")) },
+        ),
+        // Membership needs a collection to test against. A known scalar is not
+        // one, and saying so is what `filtered` already does for the same case.
+        ("membership over a scalar", within(number("1"), number("2"))),
+        ("membership over an unbound name", within(number("1"), ident("nobody"))),
+        // `this` is bound by an entity's own context. `check_invariants` and
+        // `run_rule` both reach the evaluator without binding it.
+        ("an unbound this", Expr::This { span: NOWHERE }),
+        ("a field of an unbound this", field(Expr::This { span: NOWHERE }, "status")),
+        // Which branch runs is not known if the condition is not a boolean.
+        (
+            "a conditional on a non-boolean",
+            Expr::Conditional {
+                span: NOWHERE,
+                branches: vec![allium_parser::ast::CondBranch {
+                    span: NOWHERE,
+                    condition: number("1"),
+                    body: number("2"),
+                }],
+                else_body: None,
+            },
+        ),
+        (
+            "a conditional on an unbound name",
+            Expr::Conditional {
+                span: NOWHERE,
+                branches: vec![allium_parser::ast::CondBranch {
+                    span: NOWHERE,
+                    condition: ident("nobody"),
+                    body: number("2"),
+                }],
+                else_body: None,
+            },
+        ),
+        (
+            "a set holding an unbound name",
+            Expr::SetLiteral { span: NOWHERE, elements: vec![number("1"), ident("nobody")] },
+        ),
+        ("a count of a scalar", field(number("1"), "count")),
+        ("a field of a scalar", field(number("1"), "status")),
+        ("not, over an unbound name", not(ident("nobody"))),
+        ("a filter over a scalar", filtered(number("1"), null())),
     ];
-    for node in cases {
+    for (described, node) in cases {
         let evaluated = eval(&node, &env);
         if evaluated.value.is_unknown() {
             assert!(
                 !evaluated.unresolved.is_empty(),
-                "{node:?} came back undecided with no reason"
+                "{described} came back undecided with no reason: {node:?}"
             );
         }
     }

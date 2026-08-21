@@ -66,6 +66,20 @@ pub struct Evaluation {
     pub unresolved: Vec<Unresolved>,
 }
 
+/// One reason, anchored to the sub-expression it is about.
+///
+/// Split out of [`Evaluation::unknown`] because a few places decide something
+/// is undecided while already holding reasons from their operands, and have to
+/// add to that list rather than replace it.
+pub(crate) fn unresolved_at(reason: impl Into<String>, at: &Expr, source: &str) -> Unresolved {
+    let span = span_of(at);
+    Unresolved {
+        reason: reason.into(),
+        expression: span.and_then(|span| span.slice(source)).map(str::to_owned),
+        span,
+    }
+}
+
 impl Evaluation {
     /// A value nothing was undecided about.
     pub(crate) fn known(value: Value) -> Self {
@@ -74,15 +88,7 @@ impl Evaluation {
 
     /// Undecided, for `reason`.
     pub(crate) fn unknown(reason: impl Into<String>, at: &Expr, source: &str) -> Self {
-        let span = span_of(at);
-        Self {
-            value: Value::Unknown,
-            unresolved: vec![Unresolved {
-                reason: reason.into(),
-                expression: span.and_then(|span| span.slice(source)).map(str::to_owned),
-                span,
-            }],
-        }
+        Self { value: Value::Unknown, unresolved: vec![unresolved_at(reason, at, source)] }
     }
 
     /// This evaluation as a truth.
@@ -159,9 +165,15 @@ pub fn eval(expr: &Expr, env: &Env<'_>) -> Evaluation {
         Expr::DurationLiteral { value, .. } => literals::duration(value, expr, env),
         Expr::Null { .. } => Evaluation::known(Value::Null),
         Expr::Now { .. } => Evaluation::known(Value::Timestamp(env.world.now)),
-        Expr::This { .. } => {
-            Evaluation::known(env.bindings.get("this").cloned().unwrap_or(Value::Unknown))
-        }
+        Expr::This { .. } => match env.bindings.get("this") {
+            Some(value) => Evaluation::known(value.clone()),
+            // `this` is bound by the entity context an invariant or a rule is
+            // read in, and both `check_invariants` and `run_rule` reach here
+            // without binding it. Wrapping the miss in `known` made it an
+            // unknown with no reason — the one shape this crate's contract
+            // names as indistinguishable from a bug.
+            None => Evaluation::unknown("`this` is not bound here", expr, env.source),
+        },
         Expr::SetLiteral { elements, .. } | Expr::ListLiteral { elements, .. } => {
             literals::set_literal(elements, env)
         }
@@ -366,7 +378,21 @@ fn conditional(branches: &[CondBranch], otherwise: Option<&Expr>, env: &Env<'_>)
             // Undecided: which branch runs is not known, so neither is the
             // result. Reading on to the next condition would be answering a
             // question that was never reached.
-            Truth::Unknown => return Evaluation { value: Value::Unknown, unresolved },
+            //
+            // A condition that came back undecided has already said why. One
+            // that came back as a known non-boolean has not, and that is the
+            // gap: `apply.rs` reports exactly this case through `skipped()`,
+            // and this arm used to return the unknown bare.
+            Truth::Unknown => {
+                if unresolved.is_empty() {
+                    unresolved.push(unresolved_at(
+                        format!("{} is not a condition", verdict.value.described()),
+                        &branch.condition,
+                        env.source,
+                    ));
+                }
+                return Evaluation { value: Value::Unknown, unresolved };
+            }
         }
     }
     match otherwise {

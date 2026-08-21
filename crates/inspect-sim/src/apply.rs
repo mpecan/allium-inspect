@@ -134,7 +134,7 @@ impl<'a> Application<'a> {
                     .describe(clause)
                     .unwrap_or_else(|| "an assertion about what exists".to_owned()),
             }),
-            _ => Applied::default(),
+            _ => self.unmodelled(clause, "this postcondition is not a form the simulator applies"),
         }
     }
 
@@ -161,7 +161,7 @@ impl<'a> Application<'a> {
                 trigger: trigger.to_owned(),
                 module: self.module.to_owned(),
             }),
-            None => Applied::default(),
+            None => self.unmodelled(function, "this call is neither a creation nor a trigger"),
         }
     }
 
@@ -216,7 +216,9 @@ impl<'a> Application<'a> {
             });
         }
 
-        let Expr::MemberAccess { object, field, .. } = target else { return Applied::default() };
+        let Expr::MemberAccess { object, field, .. } = target else {
+            return self.unmodelled(target, "this is not a field the simulator can assign to");
+        };
         let field = field.name.clone();
         let located = self.evaluate(object);
         let mut unresolved = located.unresolved;
@@ -287,6 +289,21 @@ impl<'a> Application<'a> {
             }
             None => Applied::note(unresolved),
         }
+    }
+
+    /// A postcondition this simulator does not model.
+    ///
+    /// The rule fired — the spec says so — but the world does not carry this
+    /// part of what it promised, and somebody reading the two against each
+    /// other has to be told which part. Dropping it returned a rule marked
+    /// Fired over a world that had not changed, with nothing anywhere saying
+    /// why. `skipped` says this for a branch nobody could choose; this says it
+    /// for a form nobody has taught the simulator yet.
+    fn unmodelled(&self, whole: &Expr, why: &str) -> Applied {
+        let description = self.describe(whole).unwrap_or_else(|| why.to_owned());
+        Applied::effect(Effect::Noted {
+            description: format!("{why}, so the world does not show it: {description}"),
+        })
     }
 
     /// A branch neither taken nor skipped, because nobody could tell which.

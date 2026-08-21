@@ -432,14 +432,25 @@ fn settling_stops_once_nothing_new_is_true() {
     // already run for which instance it would run to the bound and report a
     // world that never settled, which is a failure invented by this walker
     // rather than found in the spec.
+    //
+    // This used to assert that no detail contained "never settled" — a string
+    // the walker pushed into `undecided`, which is a list of *rule names* read
+    // by exact match. It reached no detail, so the assertion could not fail.
+    // What can fail is the verdict: drop the fixpoint and every `after` in
+    // this journey goes undecided, because the world never stops changing.
     let walk = walked(LOSS);
-    let complaints: Vec<_> = outcomes(&walk)
+    assert_eq!(
+        walk.verdict(),
+        Verdict::Specified,
+        "the fixpoint holds, so the walk settles: {walk:#?}"
+    );
+    let unsettled: Vec<_> = outcomes(&walk)
         .into_iter()
         .filter(|(_, _, detail)| {
-            detail.as_deref().is_some_and(|text| text.contains("never settled"))
+            detail.as_deref().is_some_and(|text| text.contains("had not stopped changing"))
         })
         .collect();
-    assert!(complaints.is_empty(), "{complaints:#?}");
+    assert!(unsettled.is_empty(), "{unsettled:#?}");
 }
 
 /// Every outcome of the one-step `FORMS` journey, by the line it is about.
@@ -509,13 +520,43 @@ fn a_rule_that_ran_and_one_that_did_not_are_both_reported() {
 }
 
 #[test]
-fn a_negated_sight_reports_the_observation_rather_than_the_static_note() {
-    // `cannot see` is checked twice: once against what the surface exposes,
-    // which agrees, and once against the world. The line a reader gets should
-    // be the second one — the first only says the check was allowed to run.
+fn a_negated_sight_holds_because_the_boundary_does_not_carry_it() {
+    // `cannot see` is answered from the surface, not from the value. This used
+    // to report "copy.shelfmark has no value here", which is a fact about the
+    // world and never the reason the claim holds — and reading the value was
+    // what made a privacy claim pass on any field nothing had set, including
+    // fields the surface exposes on the line above.
     let (verdict, _, detail) = form("cannot see copy.shelfmark");
     assert_eq!(verdict, Verdict::Specified);
-    assert_eq!(detail.as_deref(), Some("copy.shelfmark has no value here"));
+    assert_eq!(detail.as_deref(), Some("`MemberShelf` exposes nothing like `copy.shelfmark`"));
+}
+
+#[test]
+fn a_privacy_claim_about_an_exposed_field_is_not_satisfied() {
+    // The other direction, and the one that matters. `MemberShelf` exposes
+    // `Member.open_loan_count`; the value is derived and nothing sets it. The
+    // old rule read the value, found it unset, and called the claim safe — so
+    // `cannot see` held against a boundary that plainly carries the field.
+    let walk = walked(
+        "journey J {
+    cast:
+        ada: Member
+    1. she claims not to see it
+        after 1.day
+        ada cannot see ada.open_loan_count on MemberShelf
+}",
+    );
+    let outcome = walk.steps[0]
+        .outcomes
+        .iter()
+        .find(|outcome| outcome.about.contains("cannot see"))
+        .expect("the claim is reported");
+    assert_eq!(outcome.verdict, Verdict::Undecided, "{outcome:?}");
+    assert!(
+        outcome.detail.as_deref().is_some_and(|detail| detail.contains("not read yet")),
+        "the reason says which half is unread: {:?}",
+        outcome.detail
+    );
 }
 
 const REACHING_PAST: &str = r#"
@@ -761,13 +802,18 @@ fn a_rule_whose_effect_keeps_its_own_condition_true_runs_once_per_instance() {
     // report a world that never settled, which is a failure this walker
     // invented rather than found.
     let walk = walked(RESERVATIONS);
-    let complaints: Vec<_> = outcomes(&walk)
+    let unsettled: Vec<_> = outcomes(&walk)
         .into_iter()
         .filter(|(_, _, detail)| {
-            detail.as_deref().is_some_and(|text| text.contains("never settled"))
+            detail.as_deref().is_some_and(|text| text.contains("had not stopped changing"))
         })
         .collect();
-    assert!(complaints.is_empty(), "{complaints:#?}");
+    assert!(unsettled.is_empty(), "{unsettled:#?}");
+    // Both readers, which is the half a rule-only fixpoint drops.
+    assert!(
+        walk.steps.iter().all(|step| step.verdict() != Verdict::Undecided),
+        "nothing was left undecided: {walk:#?}"
+    );
 }
 
 #[test]

@@ -15,7 +15,7 @@ use std::ops::Not;
 
 use allium_parser::ast::{Expr, ForBinding};
 
-use super::{Env, Evaluation, Unresolved, ast::truth_value, eval, span_of};
+use super::{Env, Evaluation, Unresolved, ast::truth_value, eval, span_of, unresolved_at};
 use crate::{truth::Truth, value::Value};
 
 /// `exists X` and `not exists X`.
@@ -158,8 +158,21 @@ pub(super) fn membership(
     let inside = match &haystack.value {
         Value::Set(items) => Truth::any(items.iter().map(|item| item.equals(&needle.value))),
         // Anything else — a scalar, or a collection nobody could resolve — is a
-        // membership test with no collection to test against.
-        _ => Truth::Unknown,
+        // membership test with no collection to test against. If the haystack
+        // came back undecided it has already said why; if it came back as a
+        // known scalar, nothing has, and an unknown with no reason is
+        // indistinguishable from a bug. `filtered` says exactly this for the
+        // same situation, a hundred lines up.
+        other => {
+            if unresolved.is_empty() {
+                unresolved.push(unresolved_at(
+                    format!("{} is not a collection to test membership of", other.described()),
+                    collection,
+                    env.source,
+                ));
+            }
+            Truth::Unknown
+        }
     };
     let truth = if negated { inside.not() } else { inside };
     Evaluation { value: truth_value(truth), unresolved }

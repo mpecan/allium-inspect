@@ -108,28 +108,31 @@ impl Walker<'_> {
 
     /// Can this actor observe this value here?
     ///
-    /// The checker has already settled whether the surface carries it at all.
-    /// What is left is whether there is a value to see, which needs a world —
-    /// and whether the surface's own filter admits *this* actor, which needs
-    /// the `exposes` clause as an expression rather than as text. That last
-    /// part is not read yet, so an observation of a value that exists comes
-    /// back undecided rather than true, and a `cannot see` of one comes back
-    /// undecided rather than safe. A privacy claim that passes because nothing
-    /// checked it is the worst answer this tool could give.
-    pub(crate) fn observe(
-        &self,
-        path: &Path,
-        negated: bool,
-        line: usize,
-        about: String,
-    ) -> Outcome {
-        let found = self.read(path);
-        if found.is_unknown() {
+    /// Two questions, and only the first is answerable today. Whether the
+    /// boundary carries the field at all is a fact about the surface, and it
+    /// decides a `cannot see` outright: not "no instance matched" but "this
+    /// boundary does not carry it", which is the strongest form of the claim.
+    ///
+    /// Whether the surface's own filter admits *this* actor needs the
+    /// `exposes` clause as an expression rather than as text, and that is not
+    /// read yet. So once the field *is* carried, neither direction can be
+    /// settled — including the negative one. That last part is the whole
+    /// reason this reads the surface itself rather than the value: a field
+    /// nothing has set used to make `cannot see` come back satisfied, so
+    /// `ada cannot see ada.open_loan_count on MemberShelf` held against a
+    /// surface that exposes it on the line above. A privacy claim that passes
+    /// because nothing checked it is the worst answer this tool could give.
+    pub(crate) fn observe(&self, sight: &Sight<'_>, about: String) -> Outcome {
+        let Sight { path, surface, negated, line } = *sight;
+        let written = path.as_written();
+        let carried = crate::check::surface_named(self.spec, surface)
+            .is_some_and(|detail| crate::check::exposes(detail, &written));
+        if !carried {
             return Outcome {
                 line,
-                verdict: if negated { Verdict::Specified } else { Verdict::Undecided },
+                verdict: if negated { Verdict::Specified } else { Verdict::Unexposed },
                 about,
-                detail: Some(format!("{} has no value here", path.as_written())),
+                detail: Some(format!("`{surface}` exposes nothing like `{written}`")),
             };
         }
         Outcome {
@@ -137,12 +140,22 @@ impl Walker<'_> {
             verdict: Verdict::Undecided,
             about,
             detail: Some(format!(
-                "{} is {} — whether this surface shows it to this actor is not read yet",
-                path.as_written(),
-                found.render()
+                "`{surface}` exposes `{written}` — whether its filter admits this actor is not \
+                 read yet"
             )),
         }
     }
+}
+
+/// One `sees` or `cannot see` line, as the walker asks it.
+///
+/// Grouped rather than passed loose because the four travel together and the
+/// checker already asks the same question under the same shape.
+pub(crate) struct Sight<'a> {
+    pub(crate) path: &'a Path,
+    pub(crate) surface: &'a str,
+    pub(crate) negated: bool,
+    pub(crate) line: usize,
 }
 
 /// Compare two values the way the assertion asked.
