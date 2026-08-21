@@ -102,6 +102,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_tree_deeper_than_the_cap_stops_rather_than_running_out_of_stack() {
+        // The other guard. `seen` stops a *cycle*; nothing about a cycle is
+        // involved in a tree that is simply very deep, and a spec set reached
+        // through a long chain of single directories would recurse once per
+        // level. The cap is what makes that stop, and it is only a real guard
+        // if something has been down there to check.
+        let root = std::env::temp_dir().join(format!("allium-journey-deep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+
+        let mut deep = root.clone();
+        for level in 0..(DEEPEST + 5) {
+            deep = deep.join(format!("level{level}"));
+        }
+        std::fs::create_dir_all(&deep).expect("a deep temp tree");
+        std::fs::write(deep.join("buried.allium"), "entity A {}").expect("a spec");
+        std::fs::write(root.join("shallow.allium"), "entity B {}").expect("a spec");
+
+        let found = resolve(std::slice::from_ref(&root));
+        assert_eq!(
+            found.specs.len(),
+            1,
+            "the shallow spec is found and the one past the cap is not: {:?}",
+            found.specs
+        );
+        assert!(found.specs[0].ends_with("shallow.allium"), "{:?}", found.specs);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn a_directory_that_links_to_its_own_parent_does_not_recurse_forever() {
         // `is_dir` follows symlinks, so a link pointing up used to recurse
         // until the stack ran out. A crash, from a tree somebody may not have

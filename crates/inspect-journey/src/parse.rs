@@ -503,18 +503,22 @@ fn term(text: &str, line: usize) -> Result<Term, ParseError> {
 /// field list and reported it as a missing `}` — an error about the line's
 /// shape when the problem was a dash inside a quote.
 fn strip_comment(text: &str) -> &str {
-    let bytes = text.as_bytes();
+    // Over pairs rather than over indices with arithmetic: `windows(2)` is what
+    // "a dash followed by a dash" means, and doing it by hand needed an `at + 1`
+    // and an `at += 1` that no assertion could distinguish from `* 1`.
+    //
+    // The final byte is never `pair[0]`, which costs nothing: a `-` at the very
+    // end cannot begin a `--`, and a quote there closes a literal that is about
+    // to end anyway.
     let mut quoted = false;
-    let mut at = 0;
-    while at < bytes.len() {
-        match bytes[at] {
+    for (at, pair) in text.as_bytes().windows(2).enumerate() {
+        match pair[0] {
             b'"' => quoted = !quoted,
             // No escape handling, because the grammar has none: a literal has
             // no way to contain a quote, so the next one always closes it.
-            b'-' if !quoted && bytes.get(at + 1) == Some(&b'-') => return text[..at].trim(),
+            b'-' if !quoted && pair[1] == b'-' => return text[..at].trim(),
             _ => {}
         }
-        at += 1;
     }
     text.trim()
 }

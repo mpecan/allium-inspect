@@ -397,6 +397,16 @@ fn two_dashes_inside_a_string_are_text_rather_than_a_comment() {
 }
 
 #[test]
+fn one_dash_is_not_a_comment() {
+    // It takes two. A hyphen in a step title is ordinary English, and reading
+    // it as the start of a comment silently truncates the title at the word —
+    // the step still walks, and its heading has quietly lost half of itself.
+    let journeys =
+        parse("journey J {\n    1. she re-shelves it\n        after 1.day\n}").expect("parses");
+    assert_eq!(journeys[0].steps[0].title, "she re-shelves it");
+}
+
+#[test]
 fn a_real_comment_after_a_string_still_ends_the_line() {
     // The other direction, so the fix above cannot be "never cut at all".
     let journeys = parse(
