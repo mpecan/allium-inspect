@@ -64,15 +64,66 @@ fn a_journey_the_spec_supports_has_nothing_to_report() {
 }
 
 #[test]
+fn an_act_given_the_wrong_number_of_arguments_says_so() {
+    // The extra one used to be bound to an invented name — `arg2` — that no
+    // clause reads, so the rule fired on the two arguments it understood and
+    // the journey reported every step holding. A step that hands an act one
+    // argument too many is saying something about the spec that is not true,
+    // and the whole point of this tool is to notice that.
+    let too_many = notes(
+        "journey J {
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+    1. she borrows it with a flourish
+        ada does MemberBorrows(ada, copy, ada) on MemberShelf
+}",
+    );
+    assert_eq!(too_many.len(), 1, "{too_many:?}");
+    assert_eq!(too_many[0].0, Verdict::Unspecified);
+    assert!(too_many[0].1.contains("takes 2 arguments"), "{too_many:?}");
+    assert!(too_many[0].1.contains("member, copy"), "it names them: {too_many:?}");
+
+    // Too few reads differently downstream — a parameter nobody bound makes
+    // every clause naming it undecided — but the cause is the same fact, and
+    // saying it once here beats three undecided lines that do not explain
+    // themselves.
+    let too_few = notes(
+        "journey J {
+    cast:
+        ada: Member
+    1. she borrows nothing in particular
+        ada does MemberBorrows(ada) on MemberShelf
+}",
+    );
+    assert_eq!(too_few.len(), 1, "{too_few:?}");
+    assert!(too_few[0].1.contains("this gives 1"), "{too_few:?}");
+
+    // And the right number is silent, so this cannot become "every act is
+    // wrong".
+    let right = notes(
+        "journey J {
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+    1. she borrows it
+        ada does MemberBorrows(ada, copy) on MemberShelf
+}",
+    );
+    assert!(right.is_empty(), "{right:?}");
+}
+
+#[test]
 fn a_surface_the_spec_does_not_have_is_a_requirement() {
     // Not an error. A journey is the demand written first, and a surface it
     // names is one somebody still has to specify.
     let found = notes(
         "journey J {
     cast:
-        ada: Member
+        ada:  Member
+        copy: catalogue/Copy
     1. she looks at a screen nobody built
-        ada does MemberBorrows(ada) on ReadingRoom
+        ada does MemberBorrows(ada, copy) on ReadingRoom
 }",
     );
     assert_eq!(found.len(), 1);
@@ -265,9 +316,10 @@ fn a_cast_type_that_disagrees_with_the_surface_is_not_rejected() {
     let found = notes(
         "journey J {
     cast:
-        ada: Loan
+        ada:  Loan
+        copy: catalogue/Copy
     1. an entity acts at a surface facing an actor
-        ada does MemberBorrows(ada) on MemberShelf
+        ada does MemberBorrows(ada, copy) on MemberShelf
 }",
     );
     assert!(found.is_empty(), "{found:?}");

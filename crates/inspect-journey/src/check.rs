@@ -123,9 +123,10 @@ impl Names {
 fn check_step(step: &Step, graph: &SpecGraph, known: &mut Names, notes: &mut Vec<Note>) {
     for clause in &step.clauses {
         match clause {
-            Clause::Does { actor, trigger, surface, creating, line, .. } => {
+            Clause::Does { actor, trigger, arguments, surface, creating, line } => {
                 check_actor(actor, *line, known, notes);
                 check_act(trigger, surface, *line, graph, notes);
+                check_arity(trigger, arguments.len(), *line, graph, notes);
                 if let Some(caught) = creating {
                     if let Some(note) = missing_type(caught, graph) {
                         notes.push(note);
@@ -165,6 +166,45 @@ fn check_actor(actor: &str, line: usize, known: &Names, notes: &mut Vec<Note>) {
             message: format!("`{actor}` is nobody in this journey — add them to the cast"),
         });
     }
+}
+
+/// Does the act pass the number of arguments the trigger declares?
+///
+/// Extra arguments used to be bound to invented names — `arg2`, `arg3` — that
+/// no clause reads, so a journey handing an act one argument too many walked
+/// away reporting every step held. The rule fired on the two it understood and
+/// nothing anywhere mentioned the third.
+///
+/// Too few is reported for the same reason and reads differently downstream: a
+/// parameter nobody bound makes every clause that names it undecided, which is
+/// honest but says nothing about *why* it is unbound.
+fn check_arity(trigger: &str, given: usize, line: usize, graph: &SpecGraph, notes: &mut Vec<Note>) {
+    let Some(detail) = graph
+        .nodes_of(NodeKind::Trigger)
+        .find(|node| node.name == trigger)
+        .and_then(|node| node.detail.as_trigger())
+    else {
+        // No such trigger is `check_act`'s to report, and saying it twice would
+        // send the reader looking for two faults.
+        return;
+    };
+    let declared = detail.parameters.len();
+    if declared == given {
+        return;
+    }
+    notes.push(Note {
+        line,
+        verdict: Verdict::Unspecified,
+        message: format!(
+            "`{trigger}` takes {declared} argument{}, and this gives {given}: {}",
+            if declared == 1 { "" } else { "s" },
+            if detail.parameters.is_empty() {
+                "it declares none".to_owned()
+            } else {
+                detail.parameters.join(", ")
+            }
+        ),
+    });
 }
 
 /// Does some surface offer this act, and does *this* one?
