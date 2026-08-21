@@ -139,15 +139,25 @@ async fn source(
     match inspection.source(&module) {
         Some(source) => Ok(Json(source.clone())),
         None => {
-            let known: Vec<&str> = inspection.modules().collect();
-            Err((
-                StatusCode::NOT_FOUND,
+            // Two different answers. A module the graph does not have is a
+            // wrong name, and the list of right ones is the correction. A
+            // module the graph *does* have, whose file could not be re-read,
+            // is a missing file — and telling that reader "no module named
+            // `lending` is loaded" denies something they can see on the canvas
+            // in front of them.
+            let in_graph = inspection.graph.modules.iter().any(|declared| declared.name == module);
+            let body = if in_graph {
+                format!(
+                    "`{module}` is in the graph, but its file could not be read back. It was                      readable when the spec was ingested, so it has most likely been moved,                      renamed or deleted since."
+                )
+            } else {
+                let known: Vec<&str> = inspection.modules().collect();
                 format!(
                     "no module named `{module}` is loaded. Loaded modules: {}",
                     if known.is_empty() { "none".to_owned() } else { known.join(", ") }
-                ),
-            )
-                .into_response())
+                )
+            };
+            Err((StatusCode::NOT_FOUND, body).into_response())
         }
     }
 }
@@ -377,6 +387,33 @@ mod tests {
         assert_eq!(status, StatusCode::NOT_FOUND);
         assert!(body.contains("nonesuch"), "{body}");
         assert!(body.contains("catalogue"), "the loaded modules are named: {body}");
+    }
+
+    #[tokio::test]
+    async fn a_module_whose_file_vanished_is_not_denied_by_the_source_route() {
+        // The graph is built once and the files are read back per request, so a
+        // module can be on the canvas with no readable file behind it. Telling
+        // that reader "no module named `lending` is loaded" denies something
+        // they can see in front of them, and sends them looking for a typo in a
+        // name that is correct.
+        let mut graph = inspect_model::SpecGraph::new("allium 3.5.3");
+        graph.modules.push(inspect_model::graph::Module {
+            name: "lending".to_owned(),
+            path: "specs/lending.allium".to_owned(),
+            imports: Vec::new(),
+            language_version: None,
+        });
+        // ... and no `ModuleSource` for it, which is what an unreadable file
+        // leaves behind.
+        let state = AppState::new(Inspection::from_parts(graph, Vec::new()));
+
+        let (status, body) = get(router(state), "/api/spec/source/lending").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(body.contains("in the graph"), "the answer is about the file: {body}");
+        assert!(
+            !body.contains("no module named"),
+            "and not about the name, which is right: {body}"
+        );
     }
 
     #[tokio::test]

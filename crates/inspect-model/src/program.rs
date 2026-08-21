@@ -47,6 +47,16 @@ pub struct RuleAst {
     /// earlier one having run.
     pub ensures: Vec<Expr>,
     /// The `for x in collection` clause, when the rule iterates.
+    ///
+    /// Recorded and **not yet applied**. The clauses inside the loop are
+    /// hoisted into `requires` and `ensures` above, where they mention a
+    /// binding nothing has bound — so a `for`-wrapped rule comes back
+    /// undecided naming that binding rather than running once per element.
+    /// That is the honest answer and not a useful one; keeping the iteration
+    /// here is what makes the useful one a later change rather than a re-parse.
+    ///
+    /// The fixture specs use `for` only inside invariants, which is why this
+    /// costs nothing today and would be easy to keep believing works.
     pub iterate: Option<Expr>,
 }
 

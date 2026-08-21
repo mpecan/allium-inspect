@@ -70,8 +70,14 @@ fn rule(block: &allium_parser::ast::BlockDecl) -> RuleAst {
             },
             // `for x in collection:` wrapping the rule's body. The clauses
             // inside it are the rule's own, so they are collected as if they
-            // had been written at the top — the iteration is recorded
-            // separately and the simulator applies it to all of them.
+            // had been written at the top, and the iteration is recorded
+            // beside them.
+            //
+            // Nothing applies it yet. A hoisted clause mentions the loop's
+            // binding, which is unbound outside the loop, so the rule comes
+            // back undecided naming that binding — which is the honest answer
+            // and not a useful one. Recording the iteration is what a future
+            // implementation needs; see `RuleAst::iterate`.
             BlockItemKind::ForBlock { binding, collection, filter, items } => {
                 ast.iterate = Some(Expr::For {
                     span: item.span,

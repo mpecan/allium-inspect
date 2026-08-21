@@ -12,11 +12,21 @@ use crate::check::Verdict;
 
 /// How a step outcome reads as a verdict.
 pub(crate) fn verdict_of(outcome: &StepOutcome) -> Verdict {
-    if outcome.rules.iter().any(|rule| rule.disposition == Disposition::Fired) {
-        return Verdict::Specified;
-    }
+    // Undecided first, and the order is the whole judgement here. Several
+    // rules watch one trigger. One of them *refusing* means its own
+    // precondition was not met, which is ordinary and does not undo an act
+    // that happened — so `Fired` beats `Refused`. One of them being
+    // undecided is different: the simulator could not tell whether it ran, so
+    // the world may be missing changes and every assertion after this line is
+    // answered against a world that might be wrong.
+    //
+    // `Fired` used to win outright, which made that case read as satisfied and
+    // left `refusal` with nothing to report, because the step had not failed.
     if outcome.rules.iter().any(|rule| rule.disposition == Disposition::Undecided) {
         return Verdict::Undecided;
+    }
+    if outcome.rules.iter().any(|rule| rule.disposition == Disposition::Fired) {
+        return Verdict::Specified;
     }
     if outcome.rules.iter().any(|rule| rule.disposition == Disposition::Refused) {
         return Verdict::Refused;
@@ -66,4 +76,91 @@ pub(crate) fn refusal(outcome: &StepOutcome) -> Option<String> {
         return Some("no rule waits for this".to_owned());
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use inspect_sim::{
+        step::RuleOutcome,
+        world::{Event, World},
+    };
+
+    fn rule(name: &str, disposition: Disposition) -> RuleOutcome {
+        RuleOutcome {
+            rule: format!("lending::rule::{name}"),
+            name: name.to_owned(),
+            module: "lending".to_owned(),
+            disposition,
+            requires: Vec::new(),
+            effects: Vec::new(),
+            unresolved: Vec::new(),
+        }
+    }
+
+    fn outcome(rules: Vec<RuleOutcome>) -> StepOutcome {
+        StepOutcome {
+            world: World::new(),
+            event: Event::new("MemberBorrows", "lending"),
+            rules,
+            invariants: Vec::new(),
+            newly_enabled: Vec::new(),
+            emitted: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn one_rule_firing_does_not_settle_a_trigger_another_rule_left_undecided() {
+        // Several rules can wait on one trigger. `Fired` used to win outright,
+        // so a step where one rule ran and another could not be evaluated read
+        // as *specified* — and `refusal` then had nothing to report, because
+        // the step had not failed. The act did happen; part of what should
+        // have happened alongside it is unknown, and a world that is partly
+        // unknown is exactly what `undecided` is for.
+        let both = outcome(vec![
+            rule("BorrowCopy", Disposition::Fired),
+            rule("NotifyReserver", Disposition::Undecided),
+        ]);
+        assert_eq!(verdict_of(&both), Verdict::Undecided);
+
+        // Order must not matter: the same two rules the other way round.
+        let reversed = outcome(vec![
+            rule("NotifyReserver", Disposition::Undecided),
+            rule("BorrowCopy", Disposition::Fired),
+        ]);
+        assert_eq!(verdict_of(&reversed), Verdict::Undecided);
+    }
+
+    #[test]
+    fn a_trigger_whose_rules_all_fired_is_still_satisfied() {
+        // The ordinary case, so the rule above cannot quietly become
+        // "everything is undecided".
+        let fired = outcome(vec![
+            rule("BorrowCopy", Disposition::Fired),
+            rule("MarkOnLoan", Disposition::Fired),
+        ]);
+        assert_eq!(verdict_of(&fired), Verdict::Specified);
+    }
+
+    #[test]
+    fn another_rule_refusing_does_not_undo_an_act_that_happened() {
+        // The asymmetry, which is the point of the order. Several rules watch
+        // one trigger. One of them refusing means *its* precondition was not
+        // met, which is ordinary and not a failure of the act the journey
+        // named — the act happened, because something fired.
+        //
+        // Undecided is different, and that is why it outranks both: the
+        // simulator could not tell whether that rule ran, so the world may be
+        // missing changes, and every assertion after it is being answered
+        // against a world that might be wrong.
+        let mixed = outcome(vec![
+            rule("BorrowCopy", Disposition::Fired),
+            rule("AtLimit", Disposition::Refused),
+        ]);
+        assert_eq!(verdict_of(&mixed), Verdict::Specified);
+
+        // With nothing fired, the refusal is the answer.
+        let refused = outcome(vec![rule("AtLimit", Disposition::Refused)]);
+        assert_eq!(verdict_of(&refused), Verdict::Refused);
+    }
 }
