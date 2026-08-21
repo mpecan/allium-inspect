@@ -49,6 +49,8 @@
   // The last graph view chosen, so leaving the simulator returns you to it.
   let view = $state<ViewKind>("domain");
   let selectedId = $state<string | null>(null);
+  /** Whether the canvas rings each file. Experimental; off by default. */
+  let grouped = $state(false);
   let hidden = $state.raw<Set<string>>(new Set());
   let traceMode = $state<"off" | "forward" | "backward" | "near">("off");
   let sourceOpen = $state(false);
@@ -389,6 +391,8 @@
       }
     }}
     onmodule={toggleModule}
+    {grouped}
+    ongrouping={() => (grouped = !grouped)}
     ontrace={(mode) => (traceMode = mode)}
     {traceIsEmpty}
     {nodes}
@@ -431,6 +435,7 @@
     {:else}
       <Canvas
         {view}
+        {grouped}
         nodes={visibleNodes}
         edges={visibleEdges}
         {severities}

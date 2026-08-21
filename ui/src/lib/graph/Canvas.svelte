@@ -26,6 +26,8 @@
   import type { Severity } from "../api/Severity";
   import type { ViewKind } from "../client";
   import ConstructNode from "./ConstructNode.svelte";
+  import ModuleHull from "./ModuleHull.svelte";
+  import { hullId, hulls } from "./hulls";
   import RoutedEdge from "./RoutedEdge.svelte";
   import Settle from "./Settle.svelte";
   import { familyOf, layout } from "./layout";
@@ -35,6 +37,12 @@
 
   interface Props {
     view: ViewKind;
+    /**
+     * Draw a boundary around each file's constructs.
+     *
+     * An overlay rather than a layout constraint — see `hulls.ts` for why.
+     */
+    grouped?: boolean;
     nodes: Node[];
     edges: Edge[];
     severities: Map<string, Severity>;
@@ -55,6 +63,7 @@
 
   const {
     view,
+    grouped = false,
     nodes,
     edges,
     severities,
@@ -79,7 +88,7 @@
   }
 
   const elk = new ELK();
-  const nodeTypes = { construct: ConstructNode };
+  const nodeTypes = { construct: ConstructNode, hull: ModuleHull };
   /**
    * Low enough that "fit" means fit.
    *
@@ -103,7 +112,13 @@
 
   // Re-laying out on every render would fight the user's pan and zoom, so the
   // key is what actually changes the picture: which view, and which nodes.
-  const shape = $derived(`${view}:${nodes.map((node) => node.id).join(",")}`);
+  // `grouped` is part of the key because the boundaries are built inside the
+  // layout promise, and a value only read in an async callback is not a
+  // dependency Svelte can see — toggling it changed the checkbox and nothing
+  // else.
+  const shape = $derived(
+    `${view}:${grouped}:${nodes.map((node) => node.id).join(",")}`,
+  );
 
   $effect(() => {
     // Read the key so the effect re-runs when the shape changes, not when a
@@ -118,6 +133,27 @@
       }
       routes = result.routes;
       const byId = new Map(result.nodes.map((node) => [node.id, node]));
+      // Behind the constructs, and before them in the array so Svelte Flow
+      // paints them first. Not selectable: a boundary is a fact about where
+      // things are, and clicking one should reach the construct underneath.
+      const boxes: FlowNode[] =
+        grouped && view !== "modules"
+          ? hulls(nodes, result.nodes).map((box, depth) => ({
+              id: hullId(box.module),
+              type: "hull",
+              position: { x: box.x, y: box.y },
+              data: {
+                module: box.module,
+                held: box.held,
+                width: box.width,
+                height: box.height,
+                depth,
+              },
+              selectable: false,
+              draggable: false,
+              zIndex: -1,
+            }))
+          : [];
       placed = nodes.map((node) => {
         const place = byId.get(node.id);
         return {
@@ -129,6 +165,7 @@
           draggable: false,
         } satisfies FlowNode;
       });
+      placed = [...boxes, ...placed];
       placing = false;
     });
 

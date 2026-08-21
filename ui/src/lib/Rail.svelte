@@ -27,8 +27,11 @@
     version: string;
     /** Every construct in the spec set, for search — not only the drawn ones. */
     nodes: Node[];
+    /** Whether each file is ringed on the canvas. */
+    grouped: boolean;
     onmode: (mode: Mode) => void;
     onmodule: (name: string) => void;
+    ongrouping: () => void;
     ontrace: (mode: TraceMode) => void;
     onfind: (id: string) => void;
     onreports: () => void;
@@ -44,8 +47,10 @@
     reports,
     version,
     nodes,
+    grouped,
     onmode,
     onmodule,
+    ongrouping,
     ontrace,
     onfind,
     onreports,
@@ -182,6 +187,18 @@
         <li class="address">none loaded</li>
       {/each}
     </ul>
+
+    {#if mode !== "simulate" && mode !== "journeys" && mode !== "modules" && modules.length > 1}
+      <label class="grouping">
+        <input type="checkbox" checked={grouped} onchange={ongrouping} />
+        <span>Ring each file</span>
+      </label>
+      <p class="prose caveat">
+        Drawn around wherever a module's constructs already landed, rather than
+        pushing them together. Boxes that overlap are files the layout did not
+        group on its own.
+      </p>
+    {/if}
   </section>
 
   <footer>
@@ -342,6 +359,16 @@
 
   .modules-hint {
     margin: 0 0 var(--gap-2);
+  }
+
+  .grouping {
+    display: flex;
+    align-items: center;
+    gap: var(--gap-2);
+    margin-top: var(--gap-3);
+    font-size: var(--t-small);
+    color: var(--ink-dim);
+    cursor: pointer;
   }
 
   .caveat {
