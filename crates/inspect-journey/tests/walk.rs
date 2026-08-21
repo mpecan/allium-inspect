@@ -640,6 +640,53 @@ fn a_cast_naming_a_type_the_spec_does_not_have_is_not_satisfied() {
 }
 
 #[test]
+fn a_note_already_shown_on_its_step_is_not_repeated_outside_it() {
+    // The two halves of the filter, both directions. A journey with a bad cast
+    // *and* a bad clause: the cast note has no step to sit on and belongs in
+    // `notes`; the clause note is already reported against its own line by
+    // `walk_step`, and listing it twice would have the reader chasing one
+    // fault through two places.
+    let walk = walked(
+        "journey J {
+    cast:
+        ada: Archivist
+    1. she reaches past the desk
+        ada does MemberBorrows(ada, ada) on NoSuchSurface
+}",
+    );
+
+    assert_eq!(walk.notes.len(), 1, "only the cast line: {:#?}", walk.notes);
+    assert!(walk.notes[0].about.contains("Archivist"), "{:?}", walk.notes[0]);
+
+    let clause_faults = walk.steps[0]
+        .outcomes
+        .iter()
+        .filter(|outcome| outcome.verdict != Verdict::Specified)
+        .count();
+    assert!(clause_faults > 0, "the clause is still reported on its own step: {walk:#?}");
+}
+
+#[test]
+fn a_cast_note_names_the_member_it_is_about() {
+    // Two people, one of them fictional. The note is matched to a cast member
+    // by line, and matching the wrong one would put a real name against a
+    // complaint about a type it does not have.
+    let walk = walked(
+        "journey J {
+    cast:
+        ada:      Member
+        archivist: Archivist
+    1. she waits
+        after 1.day
+}",
+    );
+
+    let note = walk.notes.first().expect("the cast is reported");
+    assert!(note.about.contains("archivist"), "names the member with the bad type: {note:?}");
+    assert!(!note.about.contains("ada:"), "and not the one whose type is fine: {note:?}");
+}
+
+#[test]
 fn a_given_that_wrote_nothing_is_reported_too() {
     // The same fault one line earlier. A `given` naming a root the journey
     // never bound used to return silently, so every assertion afterwards was

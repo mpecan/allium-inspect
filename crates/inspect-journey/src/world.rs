@@ -111,9 +111,8 @@ impl Walker<'_> {
         // the ledger printing the path in full underneath it.
         let mut current = id;
         for segment in through {
-            let next = self.world.instance(&current).map(|instance| instance.field(segment));
-            match next {
-                Some(Value::Ref(id)) if self.world.instance(&id).is_some() => current = id,
+            match self.world.instance(&current).map(|instance| instance.field(segment)) {
+                Some(Value::Ref(id)) => current = id,
                 _ => {
                     return Err(format!(
                         "`{}` cannot be followed: `{segment}` is not set to something with fields",
@@ -122,7 +121,17 @@ impl Walker<'_> {
                 }
             }
         }
-        self.world.set_field(&current, field, value);
+        // `set_field` answers `None` only when there is no such instance — a
+        // field that was simply unset still answers `Some(Unknown)`. So this is
+        // the one place a write can fail after the path itself resolved, and it
+        // covers a reference left pointing at something gone without needing a
+        // second existence check inside the loop above.
+        if self.world.set_field(&current, field, value).is_none() {
+            return Err(format!(
+                "`{}` points at something that is no longer in the world",
+                path.as_written()
+            ));
+        }
         Ok(())
     }
 
