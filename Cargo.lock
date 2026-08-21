@@ -18,6 +18,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "allium-journey"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "inspect-journey",
+ "inspect-model",
+ "inspect-sim",
+ "serde_json",
+]
+
+[[package]]
 name = "allium-parser"
 version = "3.5.3"
 source = "git+https://github.com/juxt/allium-tools?tag=v3.5.3#bc38e5499ba9870ba145bef050c8e2790ea71345"

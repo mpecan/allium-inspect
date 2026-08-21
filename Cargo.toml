@@ -6,6 +6,7 @@ members = [
   "crates/inspect-journey",
   "crates/inspect-server",
   "apps/inspect",
+  "apps/journey",
 ]
 
 [workspace.package]
