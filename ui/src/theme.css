@@ -73,7 +73,9 @@
   --kind-entity: #7fa88a; /* sage: the spine of a spec, and the anchor */
   --kind-value: #5fa6ac; /* teal: no identity of its own, so cooler */
   --kind-variant: #a5ad68; /* olive: a fork in a type, so warmer */
-  --kind-enum: #8ecb9c; /* mint: a closed set of names, and lighter */
+  --kind-enum: #a8dcb6; /* pale mint: a closed set of names, and the subject of the
+                             * lifecycle view, where it is the only kind beside
+                             * entity and the two were both reading as "green" */
   --thing: var(--kind-entity);
 
   /* What a spec does — violet through blue, the action band. */
@@ -184,7 +186,7 @@
     --kind-entity: #3f6b4e;
     --kind-value: #175f80;
     --kind-variant: #5d6a24;
-    --kind-enum: #188f52;
+    --kind-enum: #00874a;
     --thing: var(--kind-entity);
 
     --kind-rule: #5b45a8;
@@ -234,7 +236,7 @@
   --kind-entity: #3f6b4e;
   --kind-value: #175f80;
   --kind-variant: #5d6a24;
-  --kind-enum: #188f52;
+  --kind-enum: #00874a;
   --thing: var(--kind-entity);
 
   --kind-rule: #5b45a8;
