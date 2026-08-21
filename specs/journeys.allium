@@ -1,0 +1,290 @@
+-- allium: 3
+-- journeys.allium
+--
+-- What somebody set out to do, written down, and walked against a spec.
+--
+-- The half `inspect-journey` owns, plus the command that walks one without a
+-- browser. **`allium-journey` is a surface here rather than a spec set of its
+-- own**, and that is the interesting claim of this file: it is a second
+-- boundary onto exactly this domain, not a second domain. Giving it its own
+-- set would mean two declarations of `Journey`, two of `Walk`, and a standing
+-- job keeping them in step — which is the coupling a module boundary is
+-- supposed to prevent rather than create.
+--
+-- Allium has no journey construct. That absence is the reason this exists: a
+-- causal chain is what *follows* from an act, and a person's intent is not
+-- recoverable from it. Somebody has to say it.
+
+use "./reading.allium" as reading
+use "./simulating.allium" as simulating
+
+------------------------------------------------------------
+-- Six answers
+------------------------------------------------------------
+
+-- The three a simulator gives, and three a journey needs and a simulation does
+-- not. Telling them apart is the whole point: three of the six are ways of not
+-- passing, and a reader who reads them all as "failed" will go and change a
+-- specification that is not wrong.
+enum Verdict {
+    specified      -- the spec declares everything this line names, and it held
+    | refused      -- the spec does something else
+    | undecided    -- this tool could not tell
+    | unspecified  -- a requirement nobody has met yet
+    | unexposed    -- it happens, and nobody is shown it
+    | remark       -- worth a look, and not a reason to stop
+}
+
+enum Origin { cast | given | caught }
+
+------------------------------------------------------------
+-- What a journey is made of
+------------------------------------------------------------
+
+entity Journey {
+    name: String
+    goal: String
+    ends: String
+    line: Integer
+
+    cast: CastMember with journey = this
+    steps: JourneyStep with journey = this
+    step_count: steps.count
+
+    -- Faults that belong to no step: a cast member whose type the spec does
+    -- not have, a `given` that wrote nothing. Counted in the verdict, because
+    -- the flagship case of this design is a requirement nobody has met, and a
+    -- cast of nobody is exactly that one line before the steps begin.
+    notes: Note with journey = this
+    note_count: notes.count
+}
+
+entity CastMember {
+    journey: Journey
+    called: String
+    type_written: String
+    origin: Origin
+
+    -- An instance, not a role. Two people of one kind with different
+    -- preconditions is the ordinary case rather than the interesting one.
+    bound_to: simulating/Instance
+
+    declared_by_spec: Boolean
+}
+
+entity JourneyStep {
+    journey: Journey
+    number: Integer
+    title: String
+    line: Integer
+
+    clauses: Clause with step = this
+    outcomes: Outcome with step = this
+}
+
+entity Clause {
+    step: JourneyStep
+    written: String
+    line: Integer
+}
+
+entity Note {
+    journey: Journey
+    says: String
+    verdict: Verdict
+}
+
+------------------------------------------------------------
+-- What a walk is made of
+------------------------------------------------------------
+
+entity Walk {
+    journey: Journey
+    against: reading/SpecSet
+    walked_at: Timestamp
+
+    outcomes: Outcome with walk = this
+    holding: outcomes where verdict = specified
+    held_count: holding.count
+
+    -- What the journey was *told* rather than shown, always reported. An agent
+    -- can make any journey pass; it cannot make one pass invisibly.
+    stipulations: Stipulation with walk = this
+}
+
+entity Outcome {
+    walk: Walk
+    step: JourneyStep
+    about: String
+    verdict: Verdict
+
+    -- Why, when the answer was not a plain yes. An undecided outcome with no
+    -- detail is the same defect as an undecided rule with no reason, one level
+    -- up.
+    detail: String
+    has_detail: Boolean
+}
+
+entity Stipulation {
+    walk: Walk
+    path_written: String
+
+    -- Whether the write actually reached the world. A stipulation that landed
+    -- nowhere and then listed itself anyway shows a reader a change that never
+    -- happened, which is worse than showing them nothing.
+    landed: Boolean
+}
+
+------------------------------------------------------------
+-- Configuration
+------------------------------------------------------------
+
+config {
+    -- Whether a step the spec cannot support fails the run. Report is the mode
+    -- a journey is *written* in — the steps a spec does not support yet are the
+    -- backlog rather than a failure. Strict is the mode it is defended in.
+    strict_by_default: Boolean = false
+}
+
+------------------------------------------------------------
+-- Checking, before anything is walked
+------------------------------------------------------------
+
+-- Everything a journey names that the specification has to declare. This runs
+-- without a world, because it is a question about the spec rather than about
+-- any state it might be in.
+rule CheckWhatTheJourneyNames {
+    when: SomebodyChecksAJourney(author, journey, against)
+
+    requires: against.status = read
+
+    ensures: JourneyChecked(journey: journey)
+}
+
+-- A cast member of a type nothing declares.
+--
+-- The flagship case of the whole design — a requirement nobody has met — and
+-- the one that is easiest to report as satisfied by accident, because it sits
+-- one line above the steps and every consumer looks at steps.
+rule ReportACastNobodyDeclared {
+    when: JourneyChecked(journey)
+
+    requires: journey.note_count > 0
+
+    ensures: JourneyNamesSomethingMissing(journey: journey)
+}
+
+------------------------------------------------------------
+-- Walking one
+------------------------------------------------------------
+
+rule WalkAJourney {
+    when: SomebodyWalksAJourney(author, journey, against)
+
+    requires: against.status = read
+    requires: journey.step_count > 0
+
+    ensures: Walk.created(
+        journey: journey,
+        against: against,
+        walked_at: now
+    )
+
+    ensures: JourneyWalked(walk: walk)
+}
+
+rule ReportAJourneyThatHolds {
+    when: JourneyWalked(walk)
+
+    requires: walk.held_count = walk.journey.step_count
+    requires: walk.journey.note_count = 0
+
+    ensures: TheSpecSupportsThis(walk: walk)
+}
+
+-- The ordinary state of a journey written before the thing it demands. Not an
+-- error: it is the backlog, and the list of what the spec still owes is the
+-- most useful thing this tool produces.
+rule ReportWhatTheSpecStillOwes {
+    when: JourneyWalked(walk)
+
+    requires: walk.held_count < walk.journey.step_count
+
+    ensures: TheSpecOwesThis(walk: walk)
+}
+
+rule ListWhatWasStipulated {
+    when: JourneyWalked(walk)
+
+    ensures: StipulationsShown(walk: walk)
+}
+
+------------------------------------------------------------
+-- What has to hold
+------------------------------------------------------------
+
+-- The bug this invariant is written from: a cast naming a type the spec has
+-- never had reported "1 of 1 steps hold", exit 0. The check settled it
+-- correctly and both consumers filtered notes by *clause* line, which a cast
+-- line never is. The answer was computed and thrown away.
+invariant AJourneyNamingWhatIsMissingIsNeverSatisfied {
+    for w in Walks:
+        w.journey.note_count > 0 implies w.held_count < w.journey.step_count
+}
+
+-- Every cast member is somebody the specification could supply.
+invariant EveryCastMemberHasAType {
+    for c in CastMembers:
+        c.declared_by_spec = false implies c.bound_to = null
+}
+
+-- The guardrail this design leans on, as a property rather than a promise.
+invariant OnlyAStipulationThatLandedIsListed {
+    for s in Stipulations:
+        s.landed = false implies s.walk = null
+}
+
+-- The same rule as the simulator's, one level up: an answer that is not a
+-- plain yes arrives with the reason it is not.
+invariant AnythingButSpecifiedSaysWhy {
+    for o in Outcomes:
+        o.verdict = undecided implies o.has_detail = true
+}
+
+invariant AnUnexposedResultIsNotARefusal {
+    for o in Outcomes:
+        o.verdict = unexposed implies o.has_detail = true
+}
+
+------------------------------------------------------------
+-- Two boundaries onto the same thing
+------------------------------------------------------------
+
+-- The command. A build gate has no browser, and a journey that can only be
+-- walked by a person watching a canvas cannot be part of one.
+surface JourneyCommand {
+    facing author: reading/Author
+
+    exposes:
+        Walk.held_count
+        Outcome.verdict
+        Outcome.about
+        Outcome.detail
+        Stipulation.path_written
+        Note.says
+        Note.verdict
+
+    provides:
+        SomebodyChecksAJourney(author, journey, against)
+        SomebodyWalksAJourney(author, journey, against)
+
+    @guarantee AnExitCodeMeansTheSameThingInBothCommands
+        -- `undecided` is not a failure here and is not one in the browser
+        -- either. A real spec cannot decide a derived value, so a gate that
+        -- failed on those would fail on every journey that touches one.
+
+    @guarantee TheStipulationLedgerIsComplete
+        -- Everything the journey was told rather than shown is printed, first
+        -- and always. An agent can make any journey pass; the ledger is what
+        -- stops it passing invisibly.
+}

@@ -1,0 +1,148 @@
+-- What somebody actually does with allium-inspect, written as demands on it.
+--
+-- These are journeys against the tool's own specification, which makes them
+-- doubly useful and slightly vertiginous: walking them exercises the journey
+-- engine, and what they report is a statement about the spec of the thing
+-- doing the reporting.
+
+-- The whole premise, in five steps.
+--
+-- Somebody has been handed a specification they did not write. Everything this
+-- tool does is in service of the next twenty minutes of that person's life.
+journey SomebodyMeetsASpecTheyDidNotWrite {
+    goal: Ines has been asked to review a spec set she has never opened. She
+          points the tool at it, sees what it holds, picks a construct that
+          looks load-bearing, and reads the line the author actually wrote —
+          without opening an editor or knowing which file to open.
+
+    cast:
+        ines:      Reader
+        person:    Person
+        construct: Construct
+
+    given:
+        person.role = reader
+
+    1. she points at the directory
+        ines does SomebodyPointsAtASpecSet(ines, "./specs") on SetOfFiles
+            creating set: SpecSet
+        then ReadTheSet fires
+        then set.status = reading
+
+    2. it finishes reading, and says how much there is
+        -- `module_count` is derived from the modules themselves, and this
+        -- simulator does not compute derived values — so the rule waiting on it
+        -- can never be woken without saying what it is. Said here, once, and
+        -- printed in the ledger above the walk.
+        stipulate set.module_count = 4
+        stipulate set.parsed = true
+        -- A state-condition rule is not fired by anybody; it becomes true or it
+        -- does not. Letting a moment pass is how a journey says "and then
+        -- whatever had become true, happened".
+        after 1.second
+        then FinishReading fires
+        then set.status = read
+        ines sees set.module_count on SetOfFiles
+
+    3. she opens it in a browser
+        ines does SomebodyOpensTheBrowser(ines, set) on Canvas
+            creating session: Session
+        then OpenTheBrowser fires
+        then session.looking_at = domain
+
+    4. she picks something that looks load-bearing
+        ines does SomebodyPicksAConstruct(ines, session, construct) on Canvas
+            creating selection: Selection
+        then SelectAConstruct fires
+        then selection.showing_source = true
+
+    5. and reads what the author wrote, not a tidied version of it
+        ines sees selection.construct on Canvas
+
+    ends: She has read a declaration in its own words, having started from a
+          directory name and nothing else.
+}
+
+-- The loop the tool is built around: save the file, watch the picture move.
+--
+-- Nobody presses reload. If they have to, the tool has failed at the one thing
+-- that makes it worth leaving open beside an editor.
+journey AnEditReachesTheReaderWithoutBeingAskedAbout {
+    goal: Priya has the tool open on a spec while she edits it. She saves, and
+          the picture in front of her catches up on its own — and until it has,
+          it says so rather than showing her a file that no longer says that.
+
+    cast:
+        priya:   Author
+        ines:    Reader
+        person:  Person
+        set:     SpecSet
+        module:  Module
+
+    given:
+        person.role = author
+        module.source_readable = true
+        module.owner = set
+        set.status = read
+        set.revision = 1
+        set.dirty = false
+
+    1. somebody is already reading it
+        ines does SomebodyOpensTheBrowser(ines, set) on Canvas
+            creating session: Session
+        then session.stale = false
+
+    2. she saves a file
+        priya does AuthorSavesAFile(priya, module) on TheFilesOnDisk
+        then NoticeAChange fires
+
+    3. the set reads itself again, and the revision moves
+        after 1.second
+        then BeginReread fires
+        then module.owner.status = reading
+
+    4. the picture admits it is behind
+        after 1.second
+        then NoticeTheSetChanged fires
+        then session.stale = true
+
+    5. and then catches up
+        after 1.second
+        then CatchUp fires
+        then session.stale = false
+
+    ends: The reader never asked for any of that, which is the point.
+}
+
+-- Narrowing to one file, which is the question the Modules view exists for.
+journey NarrowingToOneFileStillShowsWhatItNeeds {
+    goal: Tomas wants to know what one module actually depends on. He switches
+          the others off — and the references that leave the file end on the
+          files they went to, so the one he is looking at never looks
+          self-contained when it is not.
+
+    cast:
+        tomas:  Reader
+        person: Person
+        set:    SpecSet
+        other:  Module
+
+    given:
+        person.role = reader
+        set.status = read
+
+    1. he opens the set
+        tomas does SomebodyOpensTheBrowser(tomas, set) on Canvas
+            creating session: Session
+        then OpenTheBrowser fires
+
+    2. he switches another file off
+        tomas does SomebodySwitchesAModuleOff(tomas, session, other) on Canvas
+            creating hidden: HiddenModule
+        then HideAModule fires
+
+    3. and can still see how much that file was carrying
+        tomas sees other.exported on Canvas
+
+    ends: What was hidden is still accounted for, rather than silently absent.
+}

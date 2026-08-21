@@ -1,0 +1,286 @@
+-- allium: 3
+-- simulating.allium
+--
+-- A world you can put a specification to, and what it is allowed to answer.
+--
+-- The half `inspect-sim` owns. Everything here rests on one decision that is
+-- easier to state than to keep: an expression is true, false, or **undecidable
+-- by this simulator**, and the third is an answer rather than a failure to give
+-- one. Most of the invariants at the foot of this file exist to stop the third
+-- collapsing quietly into one of the first two, which is the failure this whole
+-- design is arranged against.
+
+use "./reading.allium" as reading
+
+------------------------------------------------------------
+-- Three answers, not two
+------------------------------------------------------------
+
+-- `holds` and `refused` are what the specification said. `undecided` is what
+-- this tool said about itself, and keeping it a separate word is the point: a
+-- reader who cannot tell "the spec forbids this" from "I could not work it out"
+-- will go and change a specification that is not wrong.
+enum Answer { holds | refused | undecided }
+
+enum Disposition { fired | blocked | unsettled | waiting }
+
+------------------------------------------------------------
+-- What a world is made of
+------------------------------------------------------------
+
+entity World {
+    -- The clock is a field somebody advances, never a reading of the machine's
+    -- own. A simulation that consulted the wall clock could not be replayed,
+    -- and everything downstream — a shared link, a snapshot test, a diff
+    -- between two versions of a spec — assumes it can.
+    now: Timestamp
+
+    -- Monotonic, so the same world and the same event produce the same names.
+    next_id: Integer
+
+    instances: Instance with world = this
+    instance_count: instances.count
+
+    settings: Setting with world = this
+}
+
+entity Instance {
+    world: World
+    of: reading/Construct
+    label: String
+
+    values: Value with holder = this
+    known_values: values where certainty = holds
+}
+
+entity Value {
+    holder: Instance
+    field: String
+
+    -- Whether this tool knows what it is. A field nobody set is *unknown*
+    -- rather than null: the specification may well require it, and answering
+    -- with "null" states a fact about the simulator as though it were a fact
+    -- about the world.
+    certainty: Answer
+}
+
+entity Setting {
+    world: World
+    name: String
+}
+
+------------------------------------------------------------
+-- What a step is made of
+------------------------------------------------------------
+
+entity Step {
+    world: World
+    trigger: String
+    taken_at: Timestamp
+
+    outcomes: RuleOutcome with step = this
+    fired_count: outcomes where disposition = fired
+    undecided_count: outcomes where disposition = unsettled
+
+    -- Rules whose condition became true because of this step. The browser
+    -- offers these as what a person may do next, so a rule missing from the
+    -- list for a reason nothing recorded is a rule silently not offered.
+    now_possible: Enabled with step = this
+}
+
+entity RuleOutcome {
+    step: Step
+    rule: reading/Construct
+    disposition: Disposition
+
+    clauses: ClauseVerdict with outcome = this
+    reasons: Reason with outcome = this
+    reason_count: reasons.count
+}
+
+entity ClauseVerdict {
+    outcome: RuleOutcome
+    text: String
+    answer: Answer
+
+    -- Sliced from the file by byte span, never rebuilt from the parse tree.
+    -- The person reading the panel wrote the file, and showing them a tidied
+    -- spelling of their own clause is a small lie that costs more than it saves.
+    quoted_from_source: Boolean
+}
+
+-- Why something could not be settled.
+--
+-- The load-bearing entity of this module. An undecided answer with no reason
+-- attached is indistinguishable from a bug, so every path that produces one
+-- produces one of these with it.
+entity Reason {
+    outcome: RuleOutcome
+    says: String
+    about_expression: String
+}
+
+entity Enabled {
+    step: Step
+    rule: reading/Construct
+
+    -- The instances the condition definitely holds for.
+    over: Instance with became_true_for = this
+    over_count: over.count
+
+    -- And the ones nothing could settle, with their reasons. Without these, an
+    -- instance the condition said *no* about and an instance nothing could
+    -- decide leave the same trace: none.
+    undecided_over: Reason with left_undecided_by = this
+}
+
+------------------------------------------------------------
+-- Configuration
+------------------------------------------------------------
+
+config {
+    -- How many rounds the engine will let the world settle for before saying
+    -- it did not. Bounded because two rules that re-enable each other would
+    -- otherwise run forever, and reporting the bound beats truncating quietly.
+    settle_rounds: Integer = 32
+}
+
+------------------------------------------------------------
+-- Taking a step
+------------------------------------------------------------
+
+rule TakeAStep {
+    when: SomebodyFiresATrigger(reader, world, trigger)
+
+    requires: world.instance_count >= 0
+
+    ensures: Step.created(
+        world: world,
+        trigger: trigger,
+        taken_at: world.now
+    )
+
+    ensures: StepTaken(step: step)
+}
+
+-- The ordinary case: every precondition held, so the postconditions applied.
+rule ApplyARule {
+    when: StepTaken(step)
+
+    requires: step.fired_count > 0
+
+    ensures: WorldChanged(step: step)
+}
+
+-- The case this design exists for. A rule nobody could evaluate is reported
+-- as such, with the sub-expression that stopped it — not as a refusal, which
+-- would be the specification saying no about a question nobody put to it.
+rule ReportWhatCouldNotBeDecided {
+    when: StepTaken(step)
+
+    requires: step.undecided_count > 0
+
+    ensures: SomethingWasUndecided(step: step)
+}
+
+rule AdvanceTheClock {
+    when: SomebodyMovesTheClock(reader, world, by)
+
+    requires: by > 0.seconds
+
+    ensures: world.now = world.now + by
+    ensures: ClockMoved(world: world)
+}
+
+-- Time passing is a claim about the world, so it answers like one. A rule that
+-- became true once the clock moved has happened; a rule nothing could settle
+-- has not been decided, and saying "time passed, all is well" over the top of
+-- that is the same failure in a different place.
+rule SettleWhatTimeMadeTrue {
+    when: ClockMoved(world)
+
+    requires: world.instance_count > 0
+
+    ensures: WorldSettled(world: world)
+}
+
+------------------------------------------------------------
+-- What has to hold
+------------------------------------------------------------
+
+-- The crate's whole contract, stated once. An undecided answer with no reason
+-- is indistinguishable from a bug, and the code asserts this as a property over
+-- every expression form rather than over a handful somebody thought of.
+invariant EveryUndecidedRuleSaysWhy {
+    for o in RuleOutcomes:
+        o.disposition = unsettled implies o.reason_count > 0
+}
+
+-- The two failure modes named in the same breath, because they are the same
+-- mistake pointing in opposite directions. Treating unknown as false reports a
+-- rule blocked by a precondition nothing checked; treating it as true fires a
+-- rule that should not have.
+invariant UndecidedIsNeitherHeldNorRefused {
+    for c in ClauseVerdicts:
+        c.answer = undecided implies c.outcome.disposition != fired
+}
+
+invariant ARefusalCameFromTheSpecification {
+    for o in RuleOutcomes:
+        o.disposition = blocked implies o.reason_count = 0
+}
+
+-- Shown text is the author's, sliced by span. See stipulation 3.
+invariant ClausesAreQuotedNotRebuilt {
+    for c in ClauseVerdicts:
+        c.quoted_from_source = true
+}
+
+-- Determinism, as a property of the data rather than a promise in a comment.
+-- Ids are handed out in order and the clock is a field, so the same world and
+-- the same event produce a byte-identical outcome — which is what makes a
+-- snapshot test, a shared link and mutation testing mean anything at all.
+invariant IdentifiersAreHandedOutInOrder {
+    for w in Worlds:
+        w.next_id > w.instance_count
+}
+
+invariant TheClockOnlyMovesWhenSomebodyMovesIt {
+    for s in Steps:
+        s.taken_at <= s.world.now
+}
+
+------------------------------------------------------------
+-- Where somebody drives it
+------------------------------------------------------------
+
+surface Simulator {
+    facing reader: reading/Reader
+
+    exposes:
+        World.now
+        World.instance_count
+        Instance.label
+        Value.certainty
+        RuleOutcome.disposition
+        ClauseVerdict.text
+        ClauseVerdict.answer
+        Reason.says
+        Reason.about_expression
+        Enabled.over_count
+
+    provides:
+        SomebodyFiresATrigger(reader, world, trigger)
+        SomebodyMovesTheClock(reader, world, by)
+
+    @guarantee AnUndecidedAnswerArrivesWithItsReason
+        -- The panel never shows "could not be decided" on its own. Which
+        -- sub-expression stopped it, and why, travel with the verdict — a
+        -- reader who is told only that something failed has been given the
+        -- least useful half of the answer.
+
+    @guarantee TheSimulatorNeverGuesses
+        -- Where the specification does not say, this surface says so. It does
+        -- not pick the reading that makes the rule fire, and it does not pick
+        -- the one that makes it fail.
+}

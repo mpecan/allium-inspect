@@ -1,0 +1,357 @@
+-- allium: 3
+-- reading.allium
+--
+-- What allium-inspect makes of a set of files before anybody looks at it.
+--
+-- This is the tool describing its own front half: pointing at a directory,
+-- reading what is there, resolving the references that cross between files, and
+-- saying plainly what it could not resolve. It is the domain `inspect-model`
+-- owns in the code, and the split is deliberate — the module boundaries in this
+-- spec set are the crate boundaries, so the Modules view of this spec is a
+-- picture of the architecture rather than a second thing to keep in step.
+--
+-- Written after the fact, which is worth admitting. A journey is the demand
+-- written first; this is a description written from a tool that already runs,
+-- and its value is different: it is the shape the code turned out to have, in a
+-- form somebody can argue with.
+
+------------------------------------------------------------
+-- What a specification is made of
+------------------------------------------------------------
+
+enum Severity { error | warning | info }
+
+-- The kinds of thing an Allium file declares. Eleven, because that is what the
+-- language has — and the tool draws each one differently on purpose.
+enum Kind {
+    entity | value | variant | enumeration | rule | trigger
+    | surface | actor | configuration | invariant | unresolved
+}
+
+entity SpecSet {
+    root: String
+    read_at: Timestamp
+
+    modules: Module with owner = this
+    module_count: modules.count
+
+    constructs: Construct with home = this
+    construct_count: constructs.count
+
+    -- How many times the set has been re-read. The browser holds a picture it
+    -- fetched once, and this is the only way it can tell that picture is stale.
+    revision: Integer
+
+    -- An edit has landed that this set has not read yet. A flag rather than an
+    -- emitted signal, because a journey can only name acts somebody performs —
+    -- and nobody performs "the watcher noticed". The world becoming dirty is
+    -- what wakes the re-read.
+    dirty: Boolean
+
+    -- Whether the files came back as a specification. This is the case that
+    -- actually happens: a spec stops parsing halfway through an edit, and the
+    -- reader must be told rather than left with the picture from before.
+    parsed: Boolean
+
+    status: reading | read | unreadable
+
+    transitions status {
+        reading -> read
+        reading -> unreadable
+        read -> reading
+        unreadable -> reading
+    }
+}
+
+entity Module {
+    owner: SpecSet
+    name: String
+    path: String
+
+    -- Every construct declared in this file.
+    holds: Construct where declared_in = this
+    held: holds.count
+
+    -- What the rest of the set reaches for. Allium has no `pub`, so a file's
+    -- interface is not something it declares — it is whatever the other files
+    -- named, and only the whole set can say.
+    surface_area: holds where reached_from_outside = true
+    exported: surface_area.count
+
+    source_readable: Boolean
+}
+
+entity Construct {
+    home: SpecSet
+    declared_in: Module
+    name: String
+    kind: Kind
+
+    -- Where the author wrote it, in bytes from the start of the file. Bytes,
+    -- because that is what the parser counts; every other unit agrees with it
+    -- only until a spec contains an em-dash.
+    span_start: Integer
+    span_end: Integer
+
+    outgoing: Reference with source = this
+    incoming: Reference with target = this
+    reached_from_outside: incoming where crosses_a_file = true
+}
+
+entity Reference {
+    source: Construct
+    target: Construct
+
+    -- The two facts that make this worth modelling separately from an edge.
+    crosses_a_file: Boolean
+    resolved: Boolean
+}
+
+-- A name a file used and the set could not place. Kept as a thing rather than
+-- dropped, because a reference that vanishes silently is indistinguishable
+-- from one that was never written.
+entity UnresolvedName {
+    home: SpecSet
+    written_as: String
+    named_in: Module
+}
+
+entity Diagnostic {
+    home: SpecSet
+    severity: Severity
+    message: String
+
+    -- The construct it is about, when it is about one. A diagnostic whose
+    -- location carries no file is one this tool used to discard whole, which
+    -- silently stopped badging the construct it concerned.
+    about: Construct
+    locatable: Boolean
+}
+
+------------------------------------------------------------
+-- Configuration
+------------------------------------------------------------
+
+config {
+    -- How long after a file changes before the set is re-read. One save is
+    -- several filesystem events, and re-reading per event is a flicker.
+    settle_delay: Duration = 150.milliseconds
+}
+
+------------------------------------------------------------
+-- Reading a set
+------------------------------------------------------------
+
+rule ReadTheSet {
+    when: SomebodyPointsAtASpecSet(reader, root)
+
+    requires: root != null
+
+    ensures: SpecSet.created(
+        root: root,
+        read_at: now,
+        revision: 0,
+        parsed: true,
+        dirty: false,
+        status: reading
+    )
+
+    ensures: ModulesWereRead(set: set)
+}
+
+rule FinishReading {
+    when: set: SpecSet.module_count > 0
+
+    requires: set.status = reading
+    requires: set.parsed = true
+
+    ensures: set.status = read
+    ensures: SetBecameReadable(set: set)
+}
+
+-- The spec stopped being a spec.
+--
+-- `allium analyse` reports this rule and `FinishReading` as a conflict: both
+-- leave `reading`, and they write `status` to different values. They cannot
+-- both fire — one requires `parsed = true` and the other `parsed = false` —
+-- but the check compares the shared from-state and the written value without
+-- reading the rest of the preconditions, so any two-outcome branch trips it.
+--
+-- Left as it is on purpose. The model is true, and a spec set that had been
+-- bent into shape to keep an analyser quiet would be a worse description of
+-- the thing it describes. Being able to say *why* a finding is not a bug is
+-- the ordinary use of a finding, and the tool is built for that reading.
+--
+-- Keeps the last good picture and records why the new one is not there, which
+-- is the only honest thing to do: a blank canvas would say the specification
+-- became empty, and it did not — it became unparseable, which is a different
+-- thing and a fixable one.
+rule ReadingFailed {
+    when: set: SpecSet.parsed = false
+
+    requires: set.status = reading
+    requires: set.parsed = false
+
+    ensures: set.status = unreadable
+    ensures: SetCouldNotBeRead(set: set)
+}
+
+rule NoticeAChange {
+    when: AuthorSavesAFile(author, module)
+
+    ensures: module.owner.dirty = true
+    ensures: SetNeedsRereading(set: module.owner)
+}
+
+-- Reading again, from either resting state.
+--
+-- A set that failed to read is not finished with: the fix is usually the next
+-- save. Coming back only from `read` would leave a spec that stopped parsing
+-- stuck on the last error until somebody restarted the tool, which is the sort
+-- of thing a reader blames on the tool rather than on the file.
+rule BeginReread {
+    when: set: SpecSet.dirty = true
+
+    requires: set.status = read or set.status = unreadable
+
+    ensures: set.status = reading
+    ensures: set.dirty = false
+    ensures: set.revision = set.revision + 1
+}
+
+-- A module the set has but whose file will not read back.
+--
+-- Not the same thing as a module the set never had, and the difference is the
+-- whole of this rule: telling somebody "no module named `lending` is loaded"
+-- about a file they can see on the canvas sends them hunting for a typo in a
+-- name that is correct.
+rule ReportUnreadableSource {
+    when: AuthorSavesAFile(author, module)
+
+    requires: module.source_readable = false
+
+    ensures: SourceWentMissing(module: module)
+}
+
+-- A reference that did not resolve.
+--
+-- A state condition rather than something anybody fires: nobody *decides* a
+-- name failed to place, the set simply turns out not to contain it. Resolution
+-- itself gets no rule, because it is what reading does — the edge existing is
+-- the whole record of it.
+--
+-- What this rule buys is the other half. A reference that quietly stopped being
+-- drawn is indistinguishable from one nobody wrote, and both a typo and a
+-- missing dependency look exactly like that.
+rule ReportUnresolvedName {
+    when: reference: Reference.resolved = false
+
+    ensures: UnresolvedName.created(
+        written_as: reference.source.name,
+        named_in: reference.source.declared_in
+    )
+
+    ensures: NameCouldNotBePlaced(name: name)
+}
+
+------------------------------------------------------------
+-- What has to hold
+------------------------------------------------------------
+
+invariant EveryConstructHasAFile {
+    for c in Constructs:
+        c.declared_in != null
+}
+
+-- The reference either became an edge or became a name somebody can see. What
+-- it must never do is neither.
+invariant NoReferenceIsDroppedSilently {
+    for r in References:
+        r.resolved = false implies r.crosses_a_file = true
+}
+
+-- Bytes, not characters and not UTF-16 units. The three agree for ASCII, which
+-- is exactly why conflating them survives every test written against an ASCII
+-- fixture and then puts a highlight a line off on the first real spec.
+invariant SpansAreOrdered {
+    for c in Constructs:
+        c.span_start <= c.span_end
+}
+
+-- A diagnostic that cannot be placed is still reported. Dropping it is how a
+-- construct stops being badged without anybody noticing.
+invariant AnUnplaceableDiagnosticIsStillReported {
+    for d in Diagnostics:
+        d.locatable = false implies d.message != null
+}
+
+------------------------------------------------------------
+-- Who reads
+------------------------------------------------------------
+
+external entity Person {
+    name: String
+    role: reader | author
+}
+
+-- Somebody meeting a specification they did not write. The tool's whole
+-- premise is that this is the ordinary case rather than the interesting one.
+actor Reader {
+    identified_by: Person where role = reader
+}
+
+-- Whoever is changing the files while somebody else is reading them. Often the
+-- same person a minute apart, which is the loop this tool is built around: save
+-- the file, watch the picture move.
+actor Author {
+    identified_by: Person where role = author
+}
+
+surface SetOfFiles {
+    facing reader: Reader
+
+    exposes:
+        SpecSet.module_count
+        SpecSet.construct_count
+        SpecSet.revision
+        SpecSet.status
+        Module.name
+        Module.held
+        Module.exported
+        UnresolvedName.written_as
+        Diagnostic.severity
+        Diagnostic.message
+
+    provides:
+        SomebodyPointsAtASpecSet(reader, root)
+
+    @guarantee WhatCouldNotBeReadIsSaid
+        -- A set that failed to read says so instead of showing the picture from
+        -- before the edit. The graph a reader is looking at must never be a
+        -- description of a file that no longer says that.
+
+    @guarantee ANameThatDidNotResolveIsVisible
+        -- An unresolved reference is either a typo or a missing dependency, and
+        -- both belong in front of whoever is reading. Neither is served by the
+        -- reference quietly not being drawn.
+}
+
+-- The files on disk, as a boundary.
+--
+-- Saving one is an act like any other, and modelling it as such is what makes
+-- live reload a rule rather than an implementation detail: the author does
+-- something, and the set has to catch up.
+surface TheFilesOnDisk {
+    facing author: Author
+
+    exposes:
+        Module.path
+        Module.source_readable
+
+    provides:
+        AuthorSavesAFile(author, module)
+
+    @guarantee AnEditIsNoticedWithoutBeingAskedAbout
+        -- The reader never presses reload. A save is the signal, and the
+        -- picture catches up on its own or says why it could not.
+}

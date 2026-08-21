@@ -1,0 +1,228 @@
+-- allium: 3
+-- browsing.allium
+--
+-- The thing a person actually touches: a canvas, a panel, and the file itself.
+--
+-- The half `inspect-server` and the Svelte application own between them. Every
+-- view here is a *projection* — one graph, filtered — rather than a separate
+-- picture, which is why switching between them is instant and why a selection
+-- survives the switch. The one exception is drawn from inside the constructs
+-- rather than across them, and it is called out below.
+
+use "./reading.allium" as reading
+use "./journeys.allium" as journeys
+
+------------------------------------------------------------
+-- What there is to look at
+------------------------------------------------------------
+
+-- Five views and a mode. Each answers one question, and its membership follows
+-- from that question rather than from what happens to look tidy.
+enum Lens {
+    domain      -- what the spec holds
+    | flow      -- what happens, and in what order
+    | lifecycle -- how each entity changes state
+    | chain     -- what follows from an action
+    | modules   -- how the files lean on each other
+    | journeys  -- what somebody set out to do
+    | simulate  -- fire a trigger and watch
+}
+
+enum Tracing { off | follows | leads_here | adjacent }
+
+entity Session {
+    on: reading/SpecSet
+
+    -- What the browser last saw. It holds a picture it fetched once, and a
+    -- reload that told nobody would leave somebody reading a description of a
+    -- file that no longer says that.
+    seen_revision: Integer
+    stale: Boolean
+
+    looking_at: Lens
+    tracing: Tracing
+
+    selection: Selection with session = this
+    hidden: HiddenModule with session = this
+}
+
+entity Selection {
+    session: Session
+    construct: reading/Construct
+
+    -- Where the strip is looking. A construct arrives with a byte span the
+    -- parser measured; a journey step arrives with a line number, because that
+    -- is what a reader cites.
+    showing_source: Boolean
+}
+
+entity HiddenModule {
+    session: Session
+    module: reading/Module
+}
+
+-- The file, given permanent space rather than a tooltip.
+--
+-- In most graph tools the picture is the product and the text is a footnote.
+-- That is backwards here: an Allium spec *is* the artifact — somebody wrote it,
+-- somebody reviews it — and the graph is one way of looking at it.
+entity SourceStrip {
+    session: Session
+    module: reading/Module
+    first_line: Integer
+    open: Boolean
+
+    -- Highlighted by byte offset converted to a line, never by string index.
+    -- The two agree for ASCII, which is why getting it wrong survives every
+    -- test written against an ASCII fixture.
+    measured_in_bytes: Boolean
+}
+
+------------------------------------------------------------
+-- Configuration
+------------------------------------------------------------
+
+config {
+    -- How often the browser asks whether the answer has changed. A poll rather
+    -- than a stream on purpose: one request a second to a loopback socket costs
+    -- nothing, it carries the state of the spec in the same response, and it
+    -- has no connection to lose behind a closed laptop lid.
+    poll_interval: Duration = 1.seconds
+}
+
+------------------------------------------------------------
+-- Looking
+------------------------------------------------------------
+
+rule OpenTheBrowser {
+    when: SomebodyOpensTheBrowser(reader, set)
+
+    requires: set.status = read
+
+    ensures: Session.created(
+        on: set,
+        seen_revision: set.revision,
+        stale: false,
+        looking_at: domain,
+        tracing: off
+    )
+
+    ensures: SessionOpened(session: session)
+}
+
+rule SwitchView {
+    when: SomebodyPicksAView(reader, session, lens)
+
+    ensures: session.looking_at = lens
+    ensures: ViewSwitched(session: session)
+}
+
+rule SelectAConstruct {
+    when: SomebodyPicksAConstruct(reader, session, construct)
+
+    ensures: Selection.created(
+        session: session,
+        construct: construct,
+        showing_source: true
+    )
+
+    ensures: ConstructSelected(session: session)
+}
+
+-- Narrowing to one file. The references that leave it terminate on the files
+-- they went to rather than vanishing, because a file that looks self-contained
+-- is the one answer somebody narrowing to it must not be given.
+rule HideAModule {
+    when: SomebodySwitchesAModuleOff(reader, session, module)
+
+    ensures: HiddenModule.created(
+        session: session,
+        module: module
+    )
+
+    ensures: ModuleHidden(session: session)
+}
+
+-- The reload signal. The revision moved, so what is on screen is a picture of
+-- a file that may no longer say that.
+rule NoticeTheSetChanged {
+    when: session: Session.stale = false
+
+    requires: session.seen_revision < session.on.revision
+
+    ensures: session.stale = true
+    ensures: PictureWentStale(session: session)
+}
+
+rule CatchUp {
+    when: session: Session.stale = true
+
+    ensures: session.seen_revision = session.on.revision
+    ensures: session.stale = false
+    ensures: PictureCaughtUp(session: session)
+}
+
+------------------------------------------------------------
+-- What has to hold
+------------------------------------------------------------
+
+-- Selecting something always has source behind it. The strip is where a reader
+-- confirms that the box they clicked is the declaration they think it is, and a
+-- selection with nothing to show breaks that.
+invariant ASelectionCanAlwaysBeRead {
+    for s in Selections:
+        s.showing_source = true implies s.construct != null
+}
+
+-- Stipulation 4, as a property. Bytes into lines, never string indices.
+invariant TheStripCountsBytes {
+    for s in SourceStrips:
+        s.measured_in_bytes = true
+}
+
+-- A session that has fallen behind says so. The alternative is a reader
+-- studying a canvas that quietly stopped describing the file.
+invariant AStaleSessionIsMarkedStale {
+    for s in Sessions:
+        s.seen_revision < s.on.revision implies s.stale = true
+}
+
+------------------------------------------------------------
+-- The canvas
+------------------------------------------------------------
+
+surface Canvas {
+    facing reader: reading/Reader
+
+    exposes:
+        Session.looking_at
+        Session.stale
+        Selection.construct
+        SourceStrip.first_line
+        SourceStrip.open
+        reading/Module.name
+        reading/Module.exported
+        journeys/Walk.held_count
+        journeys/Outcome.verdict
+
+    provides:
+        SomebodyOpensTheBrowser(reader, set)
+        SomebodyPicksAView(reader, session, lens)
+        SomebodyPicksAConstruct(reader, session, construct)
+        SomebodySwitchesAModuleOff(reader, session, module)
+
+    @guarantee TheTextIsTheArtifact
+        -- The source has permanent space, not a hover. Somebody wrote this
+        -- file and somebody will review it; the graph is a way of looking at
+        -- the text rather than the other way round.
+
+    @guarantee ANarrowedViewStillShowsWhatItNeeds
+        -- Switching a file off hides its constructs and keeps its boundary. A
+        -- reference that leaves the drawing ends on the file it went to, so
+        -- narrowing to one module never makes it look self-contained.
+
+    @guarantee AStalePictureSaysSo
+        -- The revision is polled rather than assumed. A spec that stopped
+        -- parsing says so across the top instead of leaving the last good
+        -- picture up with nothing to distinguish it from a current one.
+}
