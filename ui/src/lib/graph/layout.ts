@@ -90,6 +90,15 @@ export interface ElkNode {
   x?: number;
   y?: number;
   children?: ElkNode[];
+  /**
+   * Edges ELK decided this node contains.
+   *
+   * Only in a result, and only when the layout was hierarchical: ELK moves each
+   * edge to the lowest common ancestor of its two ends, so an edge declared at
+   * the root comes back nested when both ends turned out to be in the same
+   * container.
+   */
+  edges?: ElkEdge[];
   layoutOptions?: Record<string, string>;
 }
 
@@ -302,7 +311,7 @@ export async function layout(
       })),
     });
     return grouped
-      ? collectGrouped(result.children ?? [], sized)
+      ? collectGrouped(result.children ?? [], sized, result.edges ?? [], home)
       : collect(result.children ?? [], sized, result.edges ?? []);
   } catch {
     return grid(sized);
@@ -360,7 +369,13 @@ export function groupId(module: string): string {
  * space. So the container offset is added back in here rather than left for
  * four other places to remember.
  */
-function collectGrouped(placed: ElkNode[], sized: SizedNode[]): Layout {
+function collectGrouped(
+  placed: ElkNode[],
+  sized: SizedNode[],
+  routed: ElkEdge[],
+  /** Which file each construct belongs to, for placing an edge's route. */
+  home: Map<string, string>,
+): Layout {
   const flat = new Map<string, { x: number; y: number }>();
   const groups: PlacedGroup[] = [];
 
@@ -391,19 +406,77 @@ function collectGrouped(placed: ElkNode[], sized: SizedNode[]): Layout {
     return at ? { ...node, x: at.x, y: at.y } : (fallbackById.get(node.id) ?? { ...node, x: 0, y: 0 });
   });
 
-  // No routes when grouped, deliberately.
+  // Every edge comes back in the root's list, but measured from the *lowest
+  // common ancestor of its two ends* — which is the shared container when both
+  // ends live in one file, and the root when they do not.
   //
-  // ELK stores a hierarchical edge's route in the coordinate system of the
-  // graph that owns the edge, and with containers in play that is not always
-  // the root — so translating them all by one offset is wrong for some, and
-  // the ones it is wrong for draw as fragments and arrowheads in empty space.
-  // Nothing is worse on a diagram than a line that appears to connect two
-  // things it does not.
-  //
-  // An unrouted edge falls back to a straight line, which is honest about what
-  // it joins and says nothing about the path. That is the price of containment
-  // here, and it is the main thing to weigh against it.
-  return { ...bounds(nodes), groups, routes: new Map() };
+  // Both conventions in one list is why the first two attempts failed: reading
+  // them all as root-relative misplaced the within-file ones, and offsetting
+  // them all misplaced the between-file ones. Either way the misplaced ones
+  // drew as arrowheads pointing at nothing. Measured, not guessed: `Book` sits
+  // at x=1019 and its edge started at x=218, which is exactly 1019 minus
+  // catalogue's corner at 801.
+  const groupAt = new Map(groups.map((box) => [box.module, box]));
+  const shifted = routed.map((edge) => {
+    const from = home.get(edge.sources[0] ?? "");
+    const to = home.get(edge.targets[0] ?? "");
+    const shared = from !== undefined && from === to ? groupAt.get(from) : undefined;
+    return shared ? shift(edge, shared.x, shared.y) : edge;
+  });
+
+  return {
+    ...bounds(nodes),
+    groups,
+    // Nested edges too, in case a future ELK returns them where it says it
+    // does rather than hoisted — they are offset by the container they were
+    // found in, which is the same rule arrived at from the other direction.
+    routes: routesOf([...shifted, ...collectEdges(placed, 0, 0)]),
+  };
+}
+
+/**
+ * Every routed edge in a hierarchical result, moved into one flat space.
+ *
+ * A route's coordinates are relative to the node that *contains* the edge, and
+ * ELK moves each edge to the lowest common ancestor of its two ends — so an
+ * edge between two constructs in one file comes back nested inside that file's
+ * container and measured from its corner, while an edge between files stays at
+ * the root and is measured from the origin.
+ *
+ * Reading only the root ones lost the first kind; translating them all by one
+ * offset misplaced the second. Both were visible as arrowheads pointing at
+ * nothing. Each edge is offset by the container it was actually found in,
+ * which is the only answer that is right for both.
+ */
+function collectEdges(nodes: ElkNode[], x: number, y: number): ElkEdge[] {
+  const found: ElkEdge[] = [];
+  for (const node of nodes) {
+    const left = x + (node.x ?? 0);
+    const top = y + (node.y ?? 0);
+    for (const edge of node.edges ?? []) {
+      found.push(shift(edge, left, top));
+    }
+    if (node.children) {
+      found.push(...collectEdges(node.children, left, top));
+    }
+  }
+  return found;
+}
+
+/** One edge's route, moved by the corner of the container it was found in. */
+function shift(edge: ElkEdge, x: number, y: number): ElkEdge {
+  if (x === 0 && y === 0) {
+    return edge;
+  }
+  const move = (point: Point): Point => ({ x: point.x + x, y: point.y + y });
+  return {
+    ...edge,
+    sections: edge.sections?.map((section) => ({
+      startPoint: move(section.startPoint),
+      endPoint: move(section.endPoint),
+      bendPoints: section.bendPoints?.map(move),
+    })),
+  };
 }
 
 /** The polyline ELK routed each edge along, by the number it was given. */
