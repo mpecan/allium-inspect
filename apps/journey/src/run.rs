@@ -353,6 +353,47 @@ mod tests {
     }
 
     #[test]
+    fn a_refusal_is_reported_in_the_specs_own_words() {
+        // Which is the only thing the spec *text* is carried for. `BorrowCopy`
+        // requires the copy to be available, and a journey that borrows a lost
+        // one is not a bug in the journey — it is the specification saying no,
+        // and it should say so in the words the author wrote. Without the
+        // sources the clause has nothing to quote and the reader is told only
+        // that something was refused.
+        let dir = std::env::temp_dir().join(format!("allium-journey-quote-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a temp directory");
+        let file = dir.join("refused.journey");
+        std::fs::write(
+            &file,
+            "journey SheBorrowsOneNobodyCanFind {
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+    given:
+        ada.is_at_limit = false
+        copy.status = lost
+    1. she tries to borrow it
+        ada does MemberBorrows(ada, copy) on MemberShelf
+}
+",
+        )
+        .expect("the journey is writable");
+
+        let (runner, specs) = recorded();
+        let found = Found { specs, journeys: vec![file] };
+        let mut out = Vec::new();
+        let code =
+            all(&runner, &walk_command(), &options(false, false), &found, &mut out).expect("runs");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(code, REPORTED);
+        let printed = String::from_utf8(out).expect("UTF-8");
+        let document: serde_json::Value = serde_json::from_str(&printed).expect("JSON");
+        let message = document["diagnostics"][0]["message"].as_str().expect("a message");
+        assert!(message.contains("copy.status = available"), "{message}");
+    }
+
+    #[test]
     fn the_code_for_one_file_is_decided_by_what_it_reported() {
         let held = run_over(&walk_command(), "loss.journey", false, false).1;
         assert_eq!(held, CLEAN);
