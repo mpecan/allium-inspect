@@ -64,6 +64,42 @@ fn a_journey_the_spec_supports_has_nothing_to_report() {
 }
 
 #[test]
+fn a_collection_of_an_entity_the_spec_does_not_have_is_not_a_refusal() {
+    // A capitalised unbound name reads as every instance of that entity, so an
+    // entity that does not exist read as an *empty set* — and `ada in Dragons`
+    // came back **refused**, the specification saying no about something it
+    // has never heard of. A typo blaming the spec is the same failure as a
+    // simulator guessing, one level up.
+    let missing = notes(
+        "journey J {
+    cast:
+        ada: Member
+    1. she joins a species
+        then ada in Dragons
+}",
+    );
+    assert_eq!(missing.len(), 1, "{missing:?}");
+    assert_eq!(missing[0].0, Verdict::Unspecified);
+    assert!(missing[0].1.contains("no entity called `Dragon`"), "{missing:?}");
+
+    // The plural reading still resolves for entities that do exist, in both
+    // spellings — `Copies` is `Copy` — and a bound name is a value rather than
+    // a collection, so neither is reported.
+    let real = notes(
+        "journey J {
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+    1. she is one of them
+        then ada in Members
+        then copy in Copies
+        then copy in Copy
+}",
+    );
+    assert!(real.is_empty(), "{real:?}");
+}
+
+#[test]
 fn an_act_given_the_wrong_number_of_arguments_says_so() {
     // The extra one used to be bound to an invented name — `arg2` — that no
     // clause reads, so the rule fired on the two arguments it understood and

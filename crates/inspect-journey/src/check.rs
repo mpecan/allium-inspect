@@ -142,9 +142,9 @@ fn check_step(step: &Step, graph: &SpecGraph, known: &mut Names, notes: &mut Vec
                     notes,
                 );
             }
-            Clause::Then { assertion, line } => {
-                if let crate::journey::Assertion::Fires { rule, .. } = assertion
-                    && !declares(graph, NodeKind::Rule, rule)
+            Clause::Then { assertion, line } => match assertion {
+                crate::journey::Assertion::Fires { rule, .. }
+                    if !declares(graph, NodeKind::Rule, rule) =>
                 {
                     notes.push(Note {
                         line: *line,
@@ -152,10 +152,62 @@ fn check_step(step: &Step, graph: &SpecGraph, known: &mut Names, notes: &mut Vec
                         message: format!("no rule called `{rule}`"),
                     });
                 }
-            }
+                crate::journey::Assertion::Within { haystack, .. } => {
+                    check_collection(haystack, *line, known, graph, notes);
+                }
+                _ => {}
+            },
             Clause::Stipulate { .. } | Clause::After { .. } => {}
         }
     }
+}
+
+/// Is the collection an `in` reads from one the spec declares?
+///
+/// A capitalised name the journey never bound reads as "every instance of that
+/// entity" — `Loans` is every loan. A capitalised name of an entity that does
+/// not exist reads as an *empty* set, and `ada in Dragons` then comes back
+/// **refused**: the specification saying no to a question about something it
+/// has never heard of. A typo blaming the spec is the same failure as a
+/// simulator guessing, one level up.
+fn check_collection(
+    haystack: &crate::journey::Path,
+    line: usize,
+    known: &Names,
+    graph: &SpecGraph,
+    notes: &mut Vec<Note>,
+) {
+    // Only a bare, unbound, capitalised root is read as a collection; anything
+    // else is a path through the world and is the walk's business, not this
+    // function's.
+    if !haystack.segments.is_empty() || known.knows(&haystack.root) {
+        return;
+    }
+    if !haystack.root.chars().next().is_some_and(char::is_uppercase) {
+        return;
+    }
+    let entity = singular(&haystack.root);
+    if declares(graph, NodeKind::Entity, &entity)
+        || declares(graph, NodeKind::Entity, &haystack.root)
+    {
+        return;
+    }
+    notes.push(Note {
+        line,
+        verdict: Verdict::Unspecified,
+        message: format!(
+            "no entity called `{entity}`, so `{}` is nothing to be one of",
+            haystack.root
+        ),
+    });
+}
+
+/// `Loans` -> `Loan`, `Copies` -> `Copy`. The same reading the world uses.
+fn singular(name: &str) -> String {
+    if let Some(stem) = name.strip_suffix("ies") {
+        return format!("{stem}y");
+    }
+    name.strip_suffix('s').filter(|stem| !stem.is_empty()).unwrap_or(name).to_owned()
 }
 
 fn check_actor(actor: &str, line: usize, known: &Names, notes: &mut Vec<Note>) {
