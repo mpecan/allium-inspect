@@ -173,8 +173,10 @@ fn describes(journey: &Journey, line: usize) -> String {
     if let Some(member) = journey.cast.iter().find(|member| member.line == line) {
         return format!("cast {}: {}", member.name, member.type_expr);
     }
-    if journey.given.iter().any(|given| given.line() == line) {
-        return format!("given, line {line}");
+    if let Some(crate::journey::Given::Instance { name, type_expr, .. }) =
+        journey.given.iter().find(|given| given.line() == line)
+    {
+        return format!("given {name}: {type_expr}");
     }
     format!("line {line}")
 }

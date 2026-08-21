@@ -24,7 +24,7 @@ use inspect_model::{
     graph::{NodeDetail, SurfaceDetail},
 };
 
-use crate::journey::{Cast, Clause, Journey, Step};
+use crate::journey::{Cast, Clause, Given, Journey, Step};
 
 /// What the spec had to say about one line of a journey.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,6 +71,17 @@ pub fn check(journey: &Journey, graph: &SpecGraph) -> Vec<Note> {
 
     for member in &journey.cast {
         if let Some(note) = missing_type(member, graph) {
+            notes.push(note);
+        }
+    }
+    // A `given` instance is a cast member declared inline, so it is checked as
+    // one. Registering its name without checking its type let
+    // `given: ghost: Phantom { … }` walk away reporting every step held, which
+    // is the same fault the cast had and one line further down.
+    for given in &journey.given {
+        let Given::Instance { name, type_expr, line, .. } = given else { continue };
+        let member = Cast { name: name.clone(), type_expr: type_expr.clone(), line: *line };
+        if let Some(note) = missing_type(&member, graph) {
             notes.push(note);
         }
     }

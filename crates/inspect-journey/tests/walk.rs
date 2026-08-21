@@ -714,6 +714,80 @@ fn a_given_that_wrote_nothing_is_reported_too() {
 }
 
 #[test]
+fn a_given_instance_of_a_type_the_spec_does_not_have_is_reported() {
+    // The cast fault one line down, and it survived the fix to the cast for the
+    // same reason: `check` registered a given instance's *name* so later lines
+    // could refer to it, and never looked at its type. A mutation on the line
+    // that names it is what surfaced this — nothing reached that branch,
+    // because nothing ever put a note on a `given` line.
+    let walk = walked(
+        "journey J {
+    cast:
+        ada: Member
+    given:
+        ghost: Phantom { name: \"nobody\" }
+    1. she waits
+        after 1.day
+}",
+    );
+
+    assert_ne!(walk.verdict(), Verdict::Specified, "{walk:#?}");
+    let note = walk
+        .notes
+        .iter()
+        .find(|note| note.about.contains("ghost"))
+        .expect("the given instance is reported");
+    assert_eq!(note.verdict, Verdict::Unspecified);
+    assert!(note.about.contains("Phantom"), "names the type nobody declared: {note:?}");
+    assert!(!note.about.contains("ada"), "and not the cast member above it: {note:?}");
+}
+
+#[test]
+fn a_stipulation_reaches_through_a_reference_to_the_field_it_names() {
+    // The other half of the nested write. `loan.member` is a live reference, so
+    // `loan.member.name` must land on the *member's* name — not fail, and not
+    // write `member` on the loan. Without this only the failing direction was
+    // covered, and deleting the arm that follows a reference changed nothing
+    // any test could see.
+    let walk = walked(
+        "journey J {
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+    given:
+        ada.is_at_limit = false
+        copy.status = available
+    1. she borrows it
+        ada does MemberBorrows(ada, copy) on MemberShelf
+            creating loan: Loan
+    2. somebody corrects her name
+        stipulate loan.member.name = \"Ada Lovelace\"
+        then ada.name = \"Ada Lovelace\"
+}",
+    );
+
+    let stipulation = walk.steps[1]
+        .outcomes
+        .iter()
+        .find(|outcome| outcome.about.contains("stipulate"))
+        .expect("the stipulation is reported");
+    assert_eq!(stipulation.verdict, Verdict::Specified, "the write lands: {stipulation:?}");
+    assert_eq!(
+        walk.stipulated,
+        vec!["loan.member.name = \"Ada Lovelace\"".to_owned()],
+        "and is listed once it has"
+    );
+    // Read back through the other name for the same instance, which is the
+    // whole point of following the reference rather than the first segment.
+    let read = walk.steps[1]
+        .outcomes
+        .iter()
+        .find(|outcome| outcome.about.contains("ada.name"))
+        .expect("the read-back is reported");
+    assert_eq!(read.verdict, Verdict::Specified, "{read:?}");
+}
+
+#[test]
 fn a_stipulation_that_wrote_nothing_says_so_instead_of_printing_itself() {
     // The ledger is the guardrail this design leans on: an agent can make any
     // journey pass, but it cannot make one pass *invisibly*. A stipulation
