@@ -97,6 +97,22 @@ fn a_collection_of_an_entity_the_spec_does_not_have_is_not_a_refusal() {
 }",
     );
     assert!(real.is_empty(), "{real:?}");
+
+    // A name the journey *bound* is a value, not a collection — including a
+    // capitalised one, which the grammar allows and which is the only shape
+    // where the two halves of that guard disagree. The walk reads `Ada` as the
+    // instance and says so; reporting "no entity called `Ada`" here would deny
+    // a name the cast declares three lines up.
+    let bound = notes(
+        "journey J {
+    cast:
+        Ada:  Member
+        copy: catalogue/Copy
+    1. she is not a collection
+        then copy in Ada
+}",
+    );
+    assert!(bound.is_empty(), "{bound:?}");
 }
 
 #[test]
