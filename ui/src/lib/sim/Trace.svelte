@@ -149,7 +149,7 @@
                 <!-- Every reason, not the first. An invariant can be undecided
                      for two independent reasons, and fixing the one shown only
                      to be told about the next is the same round trip twice. -->
-                <span class="prose">{note.reason}</span>
+                <span class="reason">{note.reason}</span>
               {/each}
             </li>
           {/each}
@@ -263,18 +263,30 @@
   .clauses > li,
   .effects > li,
   .invariants li,
-  .undecided {
-    display: block;
-    color: var(--verdict-unknown);
-    font-size: var(--text-sm);
-  }
-
   .enabled li {
     display: flex;
     align-items: baseline;
     gap: var(--gap-2);
     flex-wrap: wrap;
     padding: 2px 0;
+  }
+
+  /* A reason breaks to its own line rather than running on after the thing it
+     is about. These rows are flex, so `display: block` is not enough — without
+     a full basis two reasons sit side by side and read as one sentence:
+     "`Member#1` has no `open_loan_count` set" followed by "an unknown cannot be
+     ordered against an integer" rendered as "setan unknown".
+
+     Scoped to `.enabled`, because `.rule.undecided` is a different thing with
+     the same word in it — and `.trace` is a *column* flex, where `flex-basis`
+     is the height, so a bare `.undecided` stretched the whole rule panel to
+     the height of the scroll area. */
+  .enabled .undecided,
+  .invariants .reason {
+    flex-basis: 100%;
+    margin-left: 1.6rem;
+    color: var(--verdict-unknown);
+    font-size: var(--t-small);
   }
 
   .why {

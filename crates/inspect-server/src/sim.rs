@@ -117,6 +117,20 @@ pub async fn setup(State(state): State<AppState>) -> Json<Setup> {
     Json(Setup { world: seed(graph), entities, triggers: fireable(graph) })
 }
 
+/// The names a rule binds this trigger's arguments under.
+///
+/// `None` when no trigger node declares it — a surface can offer an operation
+/// the spec never declares a trigger for, and the surface's own spelling is
+/// then the only name there is.
+fn bound_as(graph: &inspect_model::SpecGraph, trigger: &str) -> Option<Vec<String>> {
+    graph
+        .nodes_of(NodeKind::Trigger)
+        .find(|node| node.name == trigger)
+        .and_then(|node| node.detail.as_trigger())
+        .map(|detail| detail.parameters.clone())
+        .filter(|parameters| !parameters.is_empty())
+}
+
 /// Every trigger the user can fire, surfaces first.
 fn fireable(graph: &inspect_model::SpecGraph) -> Vec<Fireable> {
     let mut offered: Vec<Fireable> = Vec::new();
@@ -127,7 +141,21 @@ fn fireable(graph: &inspect_model::SpecGraph) -> Vec<Fireable> {
             offered.push(Fireable {
                 trigger: operation.trigger.clone(),
                 module: surface.module.clone(),
-                parameters: operation.parameters.clone(),
+                // The *trigger's* parameter names, not the surface's.
+                //
+                // A spec may spell the same argument twice: `MemberShelf`
+                // provides `MemberBorrows(reader, copy)` because it faces a
+                // reader, while `BorrowCopy` waits on `MemberBorrows(member,
+                // copy)` because it thinks about a member. Rules read the
+                // second set. Firing with the first bound `reader`, so
+                // `not member.is_at_limit` came back "nothing is bound to
+                // `member`" and the rule could never be satisfied from this
+                // view — for a spec that is perfectly well formed.
+                //
+                // The surface's spelling is a label for the actor's benefit.
+                // It is the binding names that have to match.
+                parameters: bound_as(graph, &operation.trigger)
+                    .unwrap_or_else(|| operation.parameters.clone()),
                 surface: Some(surface.name.clone()),
                 actor: detail.actor.clone(),
             });
@@ -189,15 +217,20 @@ mod tests {
             }),
         ));
 
-        for (name, source) in [
-            ("MemberBorrows", TriggerSource::External),
-            ("SomethingElse", TriggerSource::External),
-            ("Copy", TriggerSource::State),
+        // `MemberBorrows` is declared with the names a *rule* binds — the
+        // lending fixture really does this: the surface offers
+        // `MemberBorrows(reader, copy)` because it faces a reader, and
+        // `BorrowCopy` waits on `MemberBorrows(member, copy)` because it thinks
+        // about a member.
+        for (name, source, parameters) in [
+            ("MemberBorrows", TriggerSource::External, vec!["member", "copy"]),
+            ("SomethingElse", TriggerSource::External, vec!["it"]),
+            ("Copy", TriggerSource::State, vec!["it"]),
         ] {
             graph.nodes.push(Node::new("lending", NodeKind::Trigger, name).with(
                 NodeDetail::Trigger(TriggerDetail {
                     source,
-                    parameters: vec!["it".to_owned()],
+                    parameters: parameters.into_iter().map(ToOwned::to_owned).collect(),
                     condition: None,
                     entity: None,
                 }),
@@ -237,7 +270,15 @@ mod tests {
         let borrows = offered.iter().find(|f| f.trigger == "MemberBorrows").expect("offered");
         assert_eq!(borrows.surface.as_deref(), Some("MemberShelf"));
         assert_eq!(borrows.actor.as_deref(), Some("Reader"));
-        assert_eq!(borrows.parameters, ["reader", "copy"]);
+        // The trigger's names, not the surface's. Firing with `reader` bound
+        // left every rule reading `member` undecided — "nothing is bound to
+        // `member`" — so no rule behind this operation could ever be satisfied
+        // from the Simulate view, against a spec that is perfectly well formed.
+        assert_eq!(
+            borrows.parameters,
+            ["member", "copy"],
+            "the form asks for the names rules bind, not the label the surface uses"
+        );
     }
 
     #[test]
