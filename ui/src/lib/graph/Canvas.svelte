@@ -15,6 +15,7 @@
     MiniMap,
     SvelteFlow,
     type Edge as FlowEdge,
+    MarkerType,
     type Node as FlowNode,
   } from "@xyflow/svelte";
   import ELK from "elkjs/lib/elk.bundled.js";
@@ -164,11 +165,30 @@
         // the reader is following one chain, and that is the one worth naming.
         label: traced ? edge.label : undefined,
         animated: traced,
-        style: `stroke: ${traced ? "var(--edge-active)" : "var(--edge)"}; stroke-width: ${
-          traced ? 1.8 : 1
-        }; opacity: ${lit ? 0.55 : 0.12};`,
+        // Opacity mixed into the stroke rather than set as a property: the
+        // property applies to the arrowhead too, and an edge that recedes
+        // correctly leaves a head too faint to read a direction from. The line
+        // stays background; the head does not.
+        style: `stroke: ${
+          traced
+            ? "var(--edge-active)"
+            : `color-mix(in srgb, var(--edge) ${lit ? 70 : 14}%, var(--ground-canvas))`
+        }; stroke-width: ${traced ? 1.8 : 1}; opacity: ${traced ? 0.9 : 1};`,
         // The label is an HTML element, so the emphasis is `color`.
         labelStyle: traced ? "color: var(--ink);" : undefined,
+        // Every edge in this model is directed, and in one view the direction
+        // is the whole content: a Copy goes `available -> on_loan` *and*
+        // `on_loan -> available`, and without a head those are one line drawn
+        // twice. Sized down from the library default, which is built for a
+        // canvas of a dozen edges rather than a spec set with hundreds.
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          width: 14,
+          height: 14,
+          color: traced
+            ? "var(--edge-active)"
+            : `color-mix(in srgb, var(--edge) ${lit ? 100 : 16}%, var(--ground-canvas))`,
+        },
       } satisfies FlowEdge;
     });
   });
