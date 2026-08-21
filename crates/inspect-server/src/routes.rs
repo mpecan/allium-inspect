@@ -449,6 +449,7 @@ mod tests {
                 path: "journeys/lending.journey".to_owned(),
                 name: "lending.journey".to_owned(),
                 error: None,
+                text: String::new(),
                 walks: Vec::new(),
             }],
             holding: 0,

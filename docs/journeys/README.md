@@ -343,9 +343,12 @@ obligations a *spec* owes.
 1. **`allium-journey check` and `walk`** — the run above, `--text` for a
    person or JSON for a pipe. `allium-inspect --journeys PATH --check` is the
    same check from the other binary.
-2. **A Journeys view** — the written journey drawn against the derived trace,
+2. **A Journeys view** — the written journey drawn against the derived chain,
    with the divergences marked. Steps that are `unspecified` draw as gaps rather
    than as constructs, which makes a half-specified journey legible at a glance.
+   The journey's own source sits along the bottom, the way a spec's does:
+   selecting a step moves the strip to the line that step is written on, so the
+   verdict and the sentence that earned it are never in two different places.
 ### Not built
 
 Both of these are still ideas, listed here because the shape of the tool makes

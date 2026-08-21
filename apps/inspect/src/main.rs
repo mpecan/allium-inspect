@@ -88,7 +88,8 @@ async fn run(args: Args) -> Result<(), String> {
     // open in an editor beside it, and a reload that needs a restart turns a
     // two-second loop into a ten-second one.
     if !args.no_watch {
-        match watch::watch(paths.clone(), journeys.clone(), args.allium.clone(), state.clone()) {
+        match watch::watch(paths.clone(), args.journeys.clone(), args.allium.clone(), state.clone())
+        {
             Ok(_handle) => println!("watching for changes"),
             // Not fatal. A machine whose watcher limit is exhausted, or a
             // filesystem that does not support notifications, is a reason to

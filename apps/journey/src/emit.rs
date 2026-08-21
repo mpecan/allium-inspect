@@ -161,6 +161,7 @@ mod tests {
             steps: vec![inspect_journey::Walked {
                 number: 1,
                 title: "she does it".to_owned(),
+                line: 8,
                 world: inspect_sim::World::new(),
                 outcomes: outcomes
                     .into_iter()

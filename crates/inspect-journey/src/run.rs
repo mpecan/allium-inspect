@@ -85,6 +85,11 @@ pub struct CastMember {
 pub struct Walked {
     pub number: u32,
     pub title: String,
+    /// Where the step is written, for going there.
+    ///
+    /// The step's own heading rather than its first clause, because that is the
+    /// line a reader scrubbing the walk wants the source strip to land on.
+    pub line: usize,
     pub outcomes: Vec<Outcome>,
     /// The world as it stood when this step finished.
     ///
@@ -314,6 +319,7 @@ impl Walker<'_> {
         Walked {
             number: step.number,
             title: step.title.clone(),
+            line: step.line,
             outcomes,
             world: self.world.clone(),
         }

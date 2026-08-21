@@ -109,6 +109,7 @@ fn statically(journey: &inspect_journey::Journey, graph: &SpecGraph) -> Walk {
             inspect_journey::Walked {
                 number: step.number,
                 title: step.title.clone(),
+                line: step.line,
                 world: inspect_sim::World::new(),
                 outcomes: notes
                     .iter()

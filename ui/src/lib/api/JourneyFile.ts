@@ -16,4 +16,14 @@ name: string,
 /**
  * Why the file could not be read, if it could not.
  */
-error: string | null, walks: Array<Walk>, };
+error: string | null, 
+/**
+ * The file as written, for the source strip.
+ *
+ * A journey is a document somebody wrote, the same as a spec, and the one
+ * thing the browser could not do with it was read it. Carried on the
+ * report rather than fetched from a second route because it is already
+ * being read to parse it, and a journey file is a page rather than a
+ * module.
+ */
+text: string, walks: Array<Walk>, };

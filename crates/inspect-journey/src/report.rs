@@ -165,7 +165,13 @@ mod tests {
     }
 
     fn step(number: u32, title: &str, outcomes: Vec<Outcome>) -> Walked {
-        Walked { number, title: title.to_owned(), outcomes, world: inspect_sim::World::new() }
+        Walked {
+            number,
+            title: title.to_owned(),
+            line: 9,
+            outcomes,
+            world: inspect_sim::World::new(),
+        }
     }
 
     fn borrowing(verdict: Verdict) -> Walk {

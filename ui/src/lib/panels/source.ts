@@ -61,6 +61,29 @@ function lineStarts(lines: string[]): number[] {
   return starts;
 }
 
+/**
+ * The byte span covering one 1-based line, for highlighting a whole line.
+ *
+ * The inverse of what the rest of this module does. A construct in a spec
+ * arrives with a byte span the parser measured; a journey arrives with a line
+ * number, because that is what a reader cites and what the walk records. This
+ * turns the second into the first so both go through the same strip.
+ *
+ * Bytes throughout, like everything else here — `encoder.encode(...).length`
+ * rather than `String.length`, which agree only for ASCII.
+ */
+export function spanOfLine(text: string, line: number): Span | null {
+  const lines = text.split("\n");
+  const at = line - 1;
+  const found = lines[at];
+  if (found === undefined) {
+    return null;
+  }
+  const starts = lineStarts(lines);
+  const start = starts[at] ?? 0;
+  return { start, end: start + encoder.encode(found).length };
+}
+
 /** The zero-based line containing byte `offset`. */
 function lineOf(starts: number[], offset: number): number {
   let low = 0;

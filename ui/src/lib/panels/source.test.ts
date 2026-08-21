@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { sliceLines } from "./source";
+import { sliceLines, spanOfLine } from "./source";
 
 const SPEC = [
   "-- catalogue.allium", // 1
@@ -159,5 +159,38 @@ describe("sliceLines", () => {
     const text = "-- naïve\nentity A {}\n";
     const view = sliceLines(text, spanIn(text, "entity A {}"), 40);
     expect(view.firstLine).toBe(2);
+  });
+});
+
+describe("spanOfLine", () => {
+  // The inverse of everything above: a journey arrives with a line number,
+  // because that is what a reader cites and what the walk records, and the
+  // strip wants a byte span.
+
+  it("covers the line it names, one-based", () => {
+    const span = spanOfLine(SPEC, 5);
+    expect(span).not.toBeNull();
+    const view = sliceLines(SPEC, span, 1);
+    expect(view.firstLine).toBe(5);
+    expect(view.lines.filter((line) => line.highlit).map((line) => line.number)).toEqual([5]);
+  });
+
+  it("measures in bytes, so a multi-byte line above does not shift it", () => {
+    // The whole reason this is not `text.indexOf`. Two em-dashes above the
+    // declaration are two UTF-16 units and six bytes; a span built from string
+    // indices lands four bytes early, which is a line and a half in a dense
+    // file.
+    const text = "-- — —\nentity Book {\n  title: String\n}\n";
+    const span = spanOfLine(text, 2);
+    expect(span).not.toBeNull();
+    expect(span?.start).toBe(spanIn(text, "entity Book {").start);
+    expect(sliceLines(text, span, 1).firstLine).toBe(2);
+  });
+
+  it("is null for a line the file does not have", () => {
+    // Rather than an empty span at the end, which would silently highlight the
+    // last line of whatever the reader was looking at.
+    expect(spanOfLine("one\ntwo\n", 99)).toBeNull();
+    expect(spanOfLine("one\ntwo\n", 0)).toBeNull();
   });
 });

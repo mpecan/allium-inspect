@@ -98,7 +98,9 @@ And one mode that is not a view:
 Chain and Journeys answer next to each other on purpose. A chain is derived —
 which triggers a surface offers, which each rule emits — so it is what follows.
 A journey is written by a person. The language has no construct for one, so
-somebody has to say it.
+somebody has to say it — and because somebody wrote it, a journey gets the same
+source strip a spec does: selecting a step moves it to the line that step is
+written on, so the verdict and the sentence that earned it stay together.
 
 `/` opens search, which matches a construct's name, its kind or the module it
 is in — and opening a result clears whatever was in the way, turning its module

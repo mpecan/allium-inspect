@@ -27,6 +27,14 @@ pub struct JourneyFile {
     pub name: String,
     /// Why the file could not be read, if it could not.
     pub error: Option<String>,
+    /// The file as written, for the source strip.
+    ///
+    /// A journey is a document somebody wrote, the same as a spec, and the one
+    /// thing the browser could not do with it was read it. Carried on the
+    /// report rather than fetched from a second route because it is already
+    /// being read to parse it, and a journey file is a page rather than a
+    /// module.
+    pub text: String,
     pub walks: Vec<Walk>,
 }
 
@@ -73,6 +81,7 @@ fn read_one(path: &Path, graph: &SpecGraph, program: &Program, sources: &Sources
         path: path.to_string_lossy().into_owned(),
         name,
         error: None,
+        text: String::new(),
         walks: Vec::new(),
     };
 
@@ -83,6 +92,7 @@ fn read_one(path: &Path, graph: &SpecGraph, program: &Program, sources: &Sources
             return file;
         }
     };
+    file.text.clone_from(&text);
     match parse(&text) {
         // The parse error already names its own line, which is what turns it
         // into somewhere to go rather than a complaint about a file.

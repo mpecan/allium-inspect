@@ -21,14 +21,23 @@
     span: Span | null;
     open: boolean;
     ontoggle: () => void;
+    /** What this strip is showing, for a reader who cannot see it. */
+    label?: string;
   }
 
-  const { path, text, span, open, ontoggle }: Props = $props();
+  const {
+    path,
+    text,
+    span,
+    open,
+    ontoggle,
+    label = "Specification source",
+  }: Props = $props();
 
   const view = $derived(sliceLines(text, span, open ? 40 : 1));
 </script>
 
-<section class="strip" class:open aria-label="Specification source">
+<section class="strip" class:open aria-label={label}>
   <header>
     <button
       type="button"

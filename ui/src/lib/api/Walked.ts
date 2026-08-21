@@ -5,7 +5,14 @@ import type { World } from "./World";
 /**
  * What became of one step.
  */
-export type Walked = { number: number, title: string, outcomes: Array<Outcome>, 
+export type Walked = { number: number, title: string, 
+/**
+ * Where the step is written, for going there.
+ *
+ * The step's own heading rather than its first clause, because that is the
+ * line a reader scrubbing the walk wants the source strip to land on.
+ */
+line: number, outcomes: Array<Outcome>, 
 /**
  * The world as it stood when this step finished.
  *

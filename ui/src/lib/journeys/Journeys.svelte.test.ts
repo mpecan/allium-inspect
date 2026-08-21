@@ -40,7 +40,7 @@ function walk(name: string, outcomes: Outcome[], stipulated: string[] = []): Wal
     goal: ["she borrows a copy and brings it back"],
     ends: ["the copy is back on the shelf"],
     line: 6,
-    steps: [{ number: 1, title: "she borrows it", outcomes, world: world() }],
+    steps: [{ number: 1, title: "she borrows it", line: 8, outcomes, world: world() }],
     stipulated,
     notes: [],
   };
@@ -53,6 +53,7 @@ function report(walks: Walk[], error: string | null = null): JourneyReport {
         path: "specs/journeys/lending.journey",
         name: "lending.journey",
         error,
+        text: "journey ACopyGoesOut {\n    cast:\n        ada: Member\n\n    1. she borrows it\n}\n",
         walks,
       },
     ],
@@ -141,9 +142,13 @@ describe("Journeys", () => {
     expect(screen.getByText("2")).toBeTruthy();
   });
 
-  it("shows where the journey is, so a reader can go and edit it", () => {
+  it("shows the journey's own source, not just what the spec said about it", () => {
+    // A journey is a document somebody wrote, the same as the spec it is
+    // written against — and it was the one thing in this tool you could not
+    // read. The strip carries the address, so the header no longer repeats it.
     render(Journeys, { report: report([walk("A", [line("specified", "then x = 1")])]), failure: null });
     expect(screen.getByText("specs/journeys/lending.journey:6")).toBeTruthy();
+    expect(screen.getByLabelText("Journey source")).toBeTruthy();
   });
 
   it("reports its own failure without claiming there are no journeys", () => {

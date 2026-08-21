@@ -45,7 +45,7 @@ const SETTLE: Duration = Duration::from_millis(150);
 /// Returns a message when no watcher could be set up.
 pub fn watch(
     paths: Vec<PathBuf>,
-    journeys: Vec<PathBuf>,
+    journeys: Option<PathBuf>,
     allium: PathBuf,
     state: AppState,
 ) -> Result<std::thread::JoinHandle<()>, String> {
@@ -68,8 +68,19 @@ pub fn watch(
     // Journey directories too. A journey is written against a spec, and the
     // loop is to save one and watch the verdicts move; watching only the specs
     // would make every journey edit look like it did nothing.
-    for path in paths.iter().chain(journeys.iter()) {
-        let Some(directory) = path.parent() else { continue };
+    // The journey root is watched as itself when it is a directory, so a
+    // journey *added* while the tool is open is noticed. Watching the parent of
+    // each journey file instead only ever noticed the files that existed at
+    // startup.
+    let journey_directory = journeys.as_ref().filter(|root| root.is_dir()).cloned();
+    for path in paths.iter().chain(journey_directory.iter()) {
+        let directory = if path.is_dir() {
+            path.clone()
+        } else {
+            let Some(parent) = path.parent() else { continue };
+            parent.to_path_buf()
+        };
+        let directory = directory.as_path();
         if watched.contains(&directory.to_path_buf()) {
             continue;
         }
@@ -96,7 +107,13 @@ pub fn watch(
                 }
             }
 
-            match Inspection::build(&runner, &paths, &journeys) {
+            // Re-resolved every time, not carried from startup. The list
+            // used to be fixed when the process began, so adding a journey
+            // triggered a reload that printed "reloaded" and then ignored the
+            // new file — the watcher noticed the change and the rebuild could
+            // not see what had changed.
+            let found = journeys.as_deref().map(crate::args::journeys).unwrap_or_default();
+            match Inspection::build(&runner, &paths, &found) {
                 Ok(inspection) => {
                     let graph = &inspection.graph;
                     println!(

@@ -15,6 +15,8 @@
   import type { Walk } from "../api/Walk";
   import type { Verdict as VerdictKind } from "../api/Verdict";
   import Verdict from "../panels/Verdict.svelte";
+  import SourceStrip from "../panels/SourceStrip.svelte";
+  import { spanOfLine } from "../panels/source";
   import Cast from "./Cast.svelte";
   import { MARK, MEANING, needsAttention, tally, worst } from "./verdicts";
 
@@ -28,7 +30,7 @@
   /** Every walk in the report, with the file it came from. */
   const walks = $derived(
     (report?.files ?? []).flatMap((file) =>
-      file.walks.map((walk) => ({ walk, file: file.name, path: file.path })),
+      file.walks.map((walk) => ({ walk, file: file.name, path: file.path, text: file.text })),
     ),
   );
 
@@ -58,12 +60,44 @@
     return found === -1 ? steps.length - 1 : found;
   });
 
+  /**
+   * Where the source strip is looking.
+   *
+   * The line of the step being read, or the journey's own line when the reader
+   * has not picked one. A journey is a document somebody wrote, the same as the
+   * spec it is written against, and until now it was the one thing in this tool
+   * you could not read — you could see what the spec said about a line without
+   * ever seeing the line.
+   */
+  const sourceSpan = $derived.by(() => {
+    if (!current) {
+      return null;
+    }
+    const step = current.walk.steps[stepIndex];
+    const line = at?.journey === current.walk.name && step ? step.line : current.walk.line;
+    return spanOfLine(current.text, line);
+  });
+
+  let sourceOpen = $state(false);
+
   function scrub(journey: string, step: number) {
     at = at?.journey === journey && at.step === step ? null : { journey, step };
   }
 
+  /** Every verdict in a walk, including the ones outside its steps. */
+  function verdictsOf(walk: Walk): VerdictKind[] {
+    // The notes count. A cast the spec cannot supply makes every step below it
+    // meaningless, and leaving them out of the summary put a tick beside a
+    // journey whose people do not exist — the panel showed the fault and the
+    // heading above it disagreed.
+    return [
+      ...walk.steps.flatMap((step) => step.outcomes.map((outcome) => outcome.verdict)),
+      ...walk.notes.map((note) => note.verdict),
+    ];
+  }
+
   function verdictOf(walk: Walk): VerdictKind {
-    return worst(walk.steps.map((step) => worst(step.outcomes.map((o) => o.verdict))));
+    return worst(verdictsOf(walk));
   }
 
   function stepVerdict(step: Walk["steps"][number]): VerdictKind {
@@ -133,7 +167,6 @@
           <Verdict kind={MARK[verdict]} label={MEANING[verdict]} />
           <h2>{walk.name}</h2>
         </div>
-        <p class="address">{current.path}:{walk.line}</p>
       </header>
 
       {#if walk.goal.length > 0}
@@ -141,7 +174,7 @@
       {/if}
 
       <ul class="tally">
-        {#each tally(walk.steps.flatMap((s) => s.outcomes.map((o) => o.verdict))) as entry (entry.verdict)}
+        {#each tally(verdictsOf(walk)) as entry (entry.verdict)}
           <li>
             <Verdict kind={MARK[entry.verdict]} label={MEANING[entry.verdict]} />
             <span class="count">{entry.count}</span>
@@ -235,6 +268,19 @@
   {#if current}
     <Cast walk={current.walk} at={stepIndex} />
   {/if}
+
+  {#if current}
+    <div class="source">
+      <SourceStrip
+        path={current.path}
+        text={current.text}
+        span={sourceSpan}
+        open={sourceOpen}
+        ontoggle={() => (sourceOpen = !sourceOpen)}
+        label="Journey source"
+      />
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -243,9 +289,19 @@
     /* Wider than the standard sidebar. These are CamelCase identifiers with no
        break in them, so a narrow column snaps every one mid-word. */
     grid-template-columns: 16rem minmax(0, 1fr) var(--inspector);
+    /* The strip spans all three columns along the bottom, the way it does over
+       the canvas — the journey is the artifact here, so it gets the same
+       permanent space the spec gets rather than a panel you have to go and
+       find. */
+    grid-template-rows: minmax(0, 1fr) auto;
     height: 100%;
     min-height: 0;
     overflow: hidden;
+  }
+
+  .source {
+    grid-column: 1 / -1;
+    min-width: 0;
   }
 
   .list {
@@ -360,13 +416,6 @@
     letter-spacing: var(--track-tight);
     text-transform: none;
     color: var(--ink);
-  }
-
-  .address {
-    margin: 0;
-    font-family: var(--font-mono);
-    font-size: var(--t-micro);
-    color: var(--ink-faint);
   }
 
   .goal {
