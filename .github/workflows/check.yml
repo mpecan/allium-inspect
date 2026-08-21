@@ -1,0 +1,79 @@
+# The gates, run by somebody other than their author.
+#
+# `just check` is the whole hot path: format, clippy, docs, 868 Rust tests, the
+# frontend suite, file sizes, the gate self-test, generated-type freshness, the
+# third-party notice, and two receipt checks. It needs no `allium` binary —
+# ingestion and simulation run against recorded fixtures, and the one test that
+# exercises the process runner deliberately names a binary that does not exist.
+#
+# `fetch-depth: 0` is not optional: `coverage-fresh` and `mutation-debt` both
+# measure drift in commits since a recorded sha, and a shallow clone makes that
+# distance meaningless — the gates would either fail on a stranger's PR or,
+# worse, quietly pass because the sha was not there to compare against.
+
+name: check
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # rust-toolchain.toml pins the version, so this installs what the file
+      # asks for rather than whatever the runner shipped with.
+      - name: Install Rust
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup component add rustfmt clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,cargo-nextest
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install frontend dependencies
+        run: cd ui && npm ci
+
+      - name: just check
+        run: just check
+
+  audit:
+    # Separate because it reads the network, and a registry hiccup should not
+    # look like a broken pull request.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,cargo-deny
+      - name: just deny
+        run: just deny
