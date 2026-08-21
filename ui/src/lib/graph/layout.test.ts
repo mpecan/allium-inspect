@@ -460,3 +460,88 @@ describe("the measured floor and the drawn floor", () => {
     );
   });
 });
+
+describe("routing when files are grouped", () => {
+  // Two files. `Book` and `Copy` share one, so ELK measures their edge from
+  // that file's corner; `Loan` is in the other, so its edge to `Copy` is
+  // measured from the origin. Both conventions arrive in one list, and getting
+  // that wrong draws arrowheads pointing at nothing.
+  const grouped = () => {
+    const nodes = [
+      node({ id: "catalogue::entity::Book", kind: "entity", name: "Book" }),
+      node({ id: "catalogue::entity::Copy", kind: "entity", name: "Copy" }),
+      node({
+        id: "lending::entity::Loan",
+        kind: "entity",
+        name: "Loan",
+        module: "lending",
+      }),
+    ];
+    const edges: Edge[] = [
+      { from: "catalogue::entity::Book", to: "catalogue::entity::Copy", kind: "relationship", label: "", span: null },
+      { from: "lending::entity::Loan", to: "catalogue::entity::Copy", kind: "relationship", label: "", span: null },
+    ];
+    return { nodes, edges };
+  };
+
+  /** An ELK that reproduces the two coordinate conventions ELK really uses. */
+  const twoConventions: ElkLike = {
+    async layout(graph) {
+      // catalogue's container sits at (800, 10); lending's at (0, 200).
+      const containers = (graph.children ?? []).map((child) => {
+        const at = child.id.startsWith("catalogue") ? { x: 800, y: 10 } : { x: 0, y: 200 };
+        return {
+          ...child,
+          ...at,
+          width: 400,
+          height: 300,
+          children: (child.children ?? []).map((inner, index) => ({
+            ...inner,
+            x: 20,
+            y: 20 + index * 100,
+          })),
+        };
+      });
+      return {
+        ...graph,
+        children: containers,
+        edges: [
+          // Within catalogue: measured from that container's corner. Book sits
+          // at 800+20=820 absolute, so its own corner reads as 20.
+          {
+            id: "e0",
+            sources: ["catalogue::entity::Book"],
+            targets: ["catalogue::entity::Copy"],
+            sections: [{ startPoint: { x: 20, y: 40 }, endPoint: { x: 20, y: 120 } }],
+          },
+          // Across files: measured from the origin. Loan is at 0+20=20.
+          {
+            id: "e1",
+            sources: ["lending::entity::Loan"],
+            targets: ["catalogue::entity::Copy"],
+            sections: [{ startPoint: { x: 20, y: 220 }, endPoint: { x: 820, y: 130 } }],
+          },
+        ],
+      };
+    },
+  };
+
+  it("measures a within-file route from its container and a crossing one from the origin", async () => {
+    const { nodes, edges } = grouped();
+    const result = await layout(twoConventions, "domain", nodes, edges, true);
+
+    // e0 was given (20,40) inside catalogue, which sits at (800,10).
+    expect(result.routes.get(0)?.[0]).toEqual({ x: 820, y: 50 });
+    // e1 was given (20,220) at the root, and must not be moved.
+    expect(result.routes.get(1)?.[0]).toEqual({ x: 20, y: 220 });
+  });
+
+  it("reports each container so the boundary is ELK's, not a guess", async () => {
+    const { nodes, edges } = grouped();
+    const result = await layout(twoConventions, "domain", nodes, edges, true);
+    expect(result.groups?.map((box) => `${box.module} ${box.x},${box.y}`).sort()).toEqual([
+      "catalogue 800,10",
+      "lending 0,200",
+    ]);
+  });
+});
