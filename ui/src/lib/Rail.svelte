@@ -56,6 +56,7 @@
     { kind: "flow", name: "Flow" },
     { kind: "lifecycle", name: "Lifecycle" },
     { kind: "chain", name: "Chain" },
+    { kind: "modules", name: "Modules" },
   ];
 
   // Each carries what it does on screen rather than in a `title`. The view

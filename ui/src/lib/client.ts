@@ -54,7 +54,7 @@ export interface ModuleSource {
  * `simulate` is not a projection — it replaces the canvas rather than filtering
  * it — but it is a mode the rail switches between, so it lives in the same type.
  */
-export type ViewKind = "domain" | "flow" | "lifecycle" | "chain";
+export type ViewKind = "domain" | "flow" | "lifecycle" | "chain" | "modules";
 export type Mode = ViewKind | "simulate" | "journeys";
 
 /**

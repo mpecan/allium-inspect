@@ -21,6 +21,7 @@
   import type { Severity } from "../api/Severity";
   import { PILL_ROWS, familyOf } from "./layout";
   import { summaryRows } from "./rows";
+  import { isModuleNode } from "./views";
 
   interface Props {
     node: SpecNode;
@@ -32,6 +33,11 @@
   const { node, severity = null, dimmed = false, selected = false }: Props = $props();
 
   const family = $derived(familyOf(node.kind));
+  // A module borrows the `config` kind for its colour and its row renderer —
+  // it is the one kind in the vocabulary that means "a named container of
+  // declarations" — but it is not a config block, and a header saying so would
+  // teach the reader the wrong word for the thing they are looking at.
+  const eyebrow = $derived(isModuleNode(node.id) ? "module" : node.kind);
   const rows = $derived(summaryRows(node));
   // See `PILL_ROWS`: past a few values a stadium is a lens rather than a pill,
   // and the rows nearest its top and bottom are clipped by its own outline.
@@ -45,7 +51,7 @@
   class:dimmed={dimmed}
 >
   <header>
-    <span class="kind">{node.kind}</span>
+    <span class="kind">{eyebrow}</span>
     {#if severity}
       <span
         class="severity {severity}"

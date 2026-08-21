@@ -4,9 +4,9 @@ import type { Edge } from "../api/Edge";
 import type { Node } from "../api/Node";
 import type { NodeDetail } from "../api/NodeDetail";
 import type { ViewKind } from "../client";
-import { ANSWERS, inView, ownerOf, project, stateId } from "./views";
+import { ANSWERS, inView, moduleId, ownerOf, project, stateId } from "./views";
 
-const VIEWS: ViewKind[] = ["domain", "flow", "lifecycle", "chain"];
+const VIEWS: ViewKind[] = ["domain", "flow", "lifecycle", "chain", "modules"];
 
 function node(
   kind: Node["kind"],
@@ -272,5 +272,99 @@ describe("ANSWERS", () => {
     for (const view of VIEWS) {
       expect(ANSWERS[view].length).toBeGreaterThan(8);
     }
+  });
+});
+
+function wire(from: string, to: string): Edge {
+  return { from, to, kind: "relationship", label: "", span: null };
+}
+
+describe("the modules view", () => {
+  // One node per file, and edges weighted by how much crosses. Two modules
+  // that reference each other both ways are a cycle, and a single edge running
+  // back against many is the thing this view exists to surface.
+  const graph = () => {
+    const nodes = [
+      node("entity", "Identity", { type: "none" }, "identity"),
+      node("entity", "Device", { type: "none" }, "identity"),
+      node("entity", "Group", { type: "none" }, "membership"),
+      node("rule", "Join", { type: "none" }, "membership"),
+      node("entity", "Message", { type: "none" }, "messaging"),
+    ];
+    const edges: Edge[] = [
+      // membership leans on identity twice...
+      wire("membership::entity::Group", "identity::entity::Identity"),
+      wire("membership::rule::Join", "identity::entity::Device"),
+      // ...and identity leans back exactly once. The interesting one.
+      wire("identity::entity::Identity", "membership::entity::Group"),
+      wire("messaging::entity::Message", "identity::entity::Identity"),
+      // A reference that stays at home is not a crossing and must not appear.
+      wire("membership::entity::Group", "membership::rule::Join"),
+    ];
+    return { nodes, edges };
+  };
+
+  it("draws one node per module, whatever it holds", () => {
+    const { nodes, edges } = project("modules", graph().nodes, graph().edges);
+    expect(nodes.map((n) => n.name)).toEqual(["identity", "membership", "messaging"]);
+    expect(edges.every((e) => e.from !== e.to)).toBe(true);
+  });
+
+  it("counts what each file holds and how far it reaches", () => {
+    const { nodes } = project("modules", graph().nodes, graph().edges);
+    const identity = nodes.find((n) => n.name === "identity");
+    expect(identity?.detail.type).toBe("config");
+    if (identity?.detail.type !== "config") {
+      throw new Error("the census renders through the config rows");
+    }
+    const census = Object.fromEntries(
+      identity.detail.parameters.map((p) => [p.name, p.type_expr]),
+    );
+    expect(census).toEqual({
+      constructs: "2",
+      "references out": "1",
+      "referenced by": "3",
+    });
+  });
+
+  it("weights each crossing and keeps the two directions apart", () => {
+    const { edges } = project("modules", graph().nodes, graph().edges);
+    const weights = Object.fromEntries(
+      edges.map((e) => [`${e.from} ${e.to}`, e.label]),
+    );
+    // Sixteen-against-one is the real shape this reproduces in miniature: the
+    // pair is a cycle, and collapsing the directions would hide that one of
+    // them is an exception.
+    expect(weights[`${moduleId("membership")} ${moduleId("identity")}`]).toBe("2");
+    expect(weights[`${moduleId("identity")} ${moduleId("membership")}`]).toBe("1");
+    expect(weights[`${moduleId("messaging")} ${moduleId("identity")}`]).toBe("1");
+    // Five edges in, three crossings out: the within-module one is not a
+    // relationship between files.
+    expect(edges).toHaveLength(3);
+  });
+
+  it("leaves out a module the rail switched off, and the crossings to it", () => {
+    const { nodes, edges } = project(
+      "modules",
+      graph().nodes,
+      graph().edges,
+      new Set(["messaging"]),
+    );
+    expect(nodes.map((n) => n.name)).toEqual(["identity", "membership"]);
+    // `messaging -> identity` had one end hidden. Drawing it would be an arrow
+    // out of empty space.
+    expect(edges.some((e) => e.from.startsWith("messaging"))).toBe(false);
+    expect(edges).toHaveLength(2);
+  });
+
+  it("gives a module node no span, because a file is not a declaration", () => {
+    const { nodes } = project("modules", graph().nodes, graph().edges);
+    expect(nodes.every((n) => n.span === null)).toBe(true);
+  });
+
+  it("leaves a module id alone when asked what construct it belongs to", () => {
+    // Unlike a lifecycle state, a module maps to no construct — there is no
+    // narrower thing to select.
+    expect(ownerOf(moduleId("identity"))).toBe(moduleId("identity"));
   });
 });

@@ -163,7 +163,13 @@
         // Labelled only on a traced path. A real spec set has hundreds of
         // edges, and a label on every one covers the graph it is describing —
         // the reader is following one chain, and that is the one worth naming.
-        label: traced ? edge.label : undefined,
+        //
+        // The modules view is the exception, because there the label *is* the
+        // content: an edge weighted 16 and an edge weighted 1 are different
+        // relationships, and hiding that leaves five boxes joined by arrows
+        // that all look alike. It can afford it — one node per file means ten
+        // edges where the others have hundreds.
+        label: traced || view === "modules" ? edge.label : undefined,
         animated: traced,
         // Opacity mixed into the stroke rather than set as a property: the
         // property applies to the arrowhead too, and an edge that recedes
@@ -175,7 +181,7 @@
             : `color-mix(in srgb, var(--edge) ${lit ? 70 : 14}%, var(--ground-canvas))`
         }; stroke-width: ${traced ? 1.8 : 1}; opacity: ${traced ? 0.9 : 1};`,
         // The label is an HTML element, so the emphasis is `color`.
-        labelStyle: traced ? "color: var(--ink);" : undefined,
+        labelStyle: traced || view === "modules" ? "color: var(--ink);" : undefined,
         // Every edge in this model is directed, and in one view the direction
         // is the whole content: a Copy goes `available -> on_loan` *and*
         // `on_loan -> available`, and without a head those are one line drawn

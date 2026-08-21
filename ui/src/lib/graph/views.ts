@@ -11,6 +11,7 @@
 //   flow       what happens, in order     triggers, rules, and what they touch
 //   lifecycle  how an entity changes      only entities that have a lifecycle
 //   chain      what follows from an act   the boundary, and the chain from it
+//   modules    how the files depend        one node per file, weighted by crossings
 //
 // An `external` node appears only in the domain view. Everywhere else it would
 // be a dead end in the middle of a chain, and the chain is the point.
@@ -26,6 +27,9 @@ const MEMBERS: Record<ViewKind, readonly NodeKind[]> = {
   flow: ["rule", "trigger", "entity", "value", "variant"],
   lifecycle: ["entity"],
   chain: ["surface", "actor", "trigger", "rule", "entity"],
+  // Synthesised rather than filtered, like `lifecycle`. Every kind counts
+  // toward its module's census, so nothing is excluded here.
+  modules: [],
 };
 
 /** Whether `node` belongs in `view`. */
@@ -52,6 +56,7 @@ export const ANSWERS: Record<ViewKind, string> = {
   flow: "what happens, and in what order",
   lifecycle: "how each entity changes state",
   chain: "what follows from an action",
+  modules: "how the files lean on each other",
 };
 
 /**
@@ -74,6 +79,9 @@ export function project(
   // transition list rather than as nodes of their own.
   if (view === "lifecycle") {
     return stateMachines(visible);
+  }
+  if (view === "modules") {
+    return moduleGraph(visible, edges);
   }
 
   const kept = visible.filter((node) => inView(node, view));
@@ -182,4 +190,113 @@ function stateMachines(nodes: Node[]): { nodes: Node[]; edges: Edge[] } {
   }
 
   return { nodes: drawn, edges: wires };
+}
+
+/** The id of a module node. Not a construct, so it has a namespace of its own. */
+export function moduleId(name: string): string {
+  return `${name}::module`;
+}
+
+/**
+ * Whether a canvas id is a module rather than a construct.
+ *
+ * The namespace is the marker. A module borrows the `config` kind to be drawn,
+ * so `kind` cannot answer this and the id has to.
+ */
+export function isModuleNode(id: string): boolean {
+  return id.endsWith("::module");
+}
+
+/**
+ * The spec set as its own files, and how much each leans on the others.
+ *
+ * The one view that is about the *decomposition* rather than about what is in
+ * it. Every other view treats a module as a filter — a checkbox in the rail —
+ * and throws away what the split means. But putting `Group` in `membership`
+ * and `Message` in `messaging` was a decision, and the references that cross
+ * between them are the interface those files have with each other, whether or
+ * not the spec ever says the word.
+ *
+ * Two things this makes visible that nothing else does. **Weight**: an edge
+ * labelled 16 and an edge labelled 1 are not the same relationship, and the
+ * construct-level views draw them as the same number of arrows scattered
+ * across the canvas. **Direction**: a pair of modules that reference each other
+ * both ways is a cycle in the dependency graph, and a single edge running back
+ * against sixteen is either a deliberate exception or something nobody has
+ * noticed.
+ *
+ * Drawn as `config` nodes. A module is not a configuration block, but it is the
+ * one kind in the vocabulary that means "a named container of declarations"
+ * rather than a thing with behaviour of its own — and its row renderer is the
+ * name-and-number shape a census wants. The same borrowing the lifecycle view
+ * makes when it draws states as pills.
+ */
+function moduleGraph(nodes: Node[], edges: Edge[]): { nodes: Node[]; edges: Edge[] } {
+  const home = new Map(nodes.map((node) => [node.id, node.module]));
+
+  const held = new Map<string, number>();
+  for (const node of nodes) {
+    held.set(node.module, (held.get(node.module) ?? 0) + 1);
+  }
+
+  // Crossings, counted per ordered pair. An edge with an end this view cannot
+  // place — one of the modules is switched off in the rail — is not a crossing
+  // anybody can see, so it is left out rather than drawn into empty space.
+  const crossings = new Map<string, number>();
+  const out = new Map<string, number>();
+  const into = new Map<string, number>();
+  for (const edge of edges) {
+    const from = home.get(edge.from);
+    const to = home.get(edge.to);
+    if (from === undefined || to === undefined || from === to) {
+      continue;
+    }
+    const pair = `${from} ${to}`;
+    crossings.set(pair, (crossings.get(pair) ?? 0) + 1);
+    out.set(from, (out.get(from) ?? 0) + 1);
+    into.set(to, (into.get(to) ?? 0) + 1);
+  }
+
+  const drawn: Node[] = [...held.keys()].sort().map((name) => ({
+    id: moduleId(name),
+    kind: "config",
+    name,
+    module: name,
+    qualified: name,
+    // A module is a file rather than a declaration inside one, so there is no
+    // span to point at. The source strip has nothing narrower to show than the
+    // whole file, and saying so beats sending a reader to line 1.
+    span: null,
+    detail: {
+      type: "config",
+      parameters: [
+        census("constructs", held.get(name) ?? 0),
+        census("references out", out.get(name) ?? 0),
+        census("referenced by", into.get(name) ?? 0),
+      ],
+    },
+    prose: { note: [], guidance: [] },
+  }));
+
+  const wires: Edge[] = [...crossings.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([pair, count]) => {
+      const [from = "", to = ""] = pair.split(" ");
+      return {
+        from: moduleId(from),
+        to: moduleId(to),
+        // `imports` is what this is: the edge kind the model already uses
+        // for one file depending on another, here weighted by how much.
+        kind: "imports" as Edge["kind"],
+        label: String(count),
+        span: null,
+      };
+    });
+
+  return { nodes: drawn, edges: wires };
+}
+
+/** One census line, in the shape the config row renderer reads. */
+function census(name: string, count: number) {
+  return { name, type_expr: String(count), default_expr: null };
 }
