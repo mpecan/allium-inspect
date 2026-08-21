@@ -114,7 +114,11 @@ describe("sliceLines", () => {
   });
 
   it("handles an empty span at a position", () => {
-    const at = SPEC.indexOf("entity Book {");
+    // Through `spanIn`, not `indexOf`. The fixture is ASCII so the two agree
+    // here — which is exactly why writing it the other way survives every test
+    // and then puts the highlight a line off on the first spec with an
+    // em-dash in a comment.
+    const { start: at } = spanIn(SPEC, "entity Book {");
     const view = sliceLines(SPEC, { start: at, end: at }, 40);
     expect(view.lines.filter((line) => line.highlit).map((l) => l.number)).toEqual([5]);
   });

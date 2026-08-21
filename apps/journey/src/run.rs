@@ -10,7 +10,7 @@
 
 use std::{collections::BTreeMap, io::Write, path::Path};
 
-use inspect_journey::{Verdict, Walk};
+use inspect_journey::{Strictness, Walk};
 use inspect_model::{
     AlliumRunner, FileReader, Ingestion, Program, SourceReader, SpecGraph, ingest, module_name,
 };
@@ -146,11 +146,14 @@ pub fn code_for(walks: &[Walk], unreadable: bool, report: bool) -> u8 {
         // does not excuse it: there is nothing to report *from*.
         return REPORTED;
     }
-    if report {
-        return CLEAN;
-    }
-    let reported = walks.iter().any(|walk| walk.verdict() != Verdict::Specified);
-    if reported { REPORTED } else { CLEAN }
+    // The library owns what counts as a failure, and it is the same question
+    // `allium-inspect --check --strict` asks. This used to fail on anything
+    // that was not `Specified`, which made *undecided* a build failure in one
+    // binary and not the other — and undecided is the ordinary state of a
+    // journey touching a derived value, so the strict gate here failed on
+    // journeys the other tool passed.
+    let strictness = if report { Strictness::Report } else { Strictness::Strict };
+    if inspect_journey::passes(walks, strictness) { CLEAN } else { REPORTED }
 }
 
 /// The text report, for a person rather than for a pipe.
@@ -293,7 +296,7 @@ mod tests {
 
     #[test]
     fn check_answers_without_running_anything() {
-        // The static half. It reaches a different verdict from a walk on the
+        // The static half. It reports something different from a walk on the
         // same file — the walk finds what the world could not settle, and this
         // finds only what the graph does not have.
         let (printed, code) = run_over(&check_command(), "undecided.journey", false, false);
@@ -302,8 +305,25 @@ mod tests {
         assert_eq!(code, CLEAN, "the graph has everything this journey names");
 
         let (walked, walk_code) = run_over(&walk_command(), "undecided.journey", false, false);
-        assert_eq!(walk_code, REPORTED, "but the world could not settle it");
-        assert_ne!(printed, walked);
+        assert_ne!(printed, walked, "the two commands say different things");
+
+        // And both exit clean, because *undecided* is not a failure. This
+        // binary used to fail on it while `allium-inspect --check --strict`
+        // passed, which made a build gate depend on which of the two you ran.
+        // A real spec cannot decide a derived value, so a gate that failed
+        // there would fail on every journey that touches one.
+        assert_eq!(walk_code, CLEAN, "a world that could not settle it is not a refusal");
+    }
+
+    #[test]
+    fn a_journey_the_spec_refuses_still_fails_the_strict_gate() {
+        // The other side of the line above, so "undecided passes" cannot
+        // quietly become "everything passes". `forms.journey` exercises every
+        // assertion form against a world that does not satisfy all of them, so
+        // it walks to `refused` — the spec doing something other than what
+        // somebody said it would, which is what strict mode is for.
+        let (_, code) = run_over(&walk_command(), "forms.journey", false, false);
+        assert_eq!(code, REPORTED, "refused is still a failure");
     }
 
     #[test]

@@ -169,9 +169,19 @@
             <li>
               <span class="eyebrow">{rule.source}</span>
               <strong>{rule.name}</strong>
-              <span class="over">
-                over {rule.over.map((value) => render(value).text).join(", ")}
-              </span>
+              {#if rule.over.length > 0}
+                <span class="over">
+                  over {rule.over.map((value) => render(value).text).join(", ")}
+                </span>
+              {/if}
+              {#each rule.undecided as note, at (note.reason + at)}
+                <!-- Instances the condition could not settle. Without these a
+                     rule that holds for nobody and a rule nothing could decide
+                     look identical here — and this list is what a person picks
+                     their next step from, so the difference is the whole
+                     question. -->
+                <span class="undecided">{note.reason}</span>
+              {/each}
             </li>
           {/each}
         </ul>
@@ -253,6 +263,12 @@
   .clauses > li,
   .effects > li,
   .invariants li,
+  .undecided {
+    display: block;
+    color: var(--verdict-unknown);
+    font-size: var(--text-sm);
+  }
+
   .enabled li {
     display: flex;
     align-items: baseline;

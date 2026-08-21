@@ -103,6 +103,15 @@ pub struct Enabled {
     /// `when: copy: Copy.status = lost`. Anything running the rule has to bind
     /// it under that name or every clause that mentions it reads as unknown.
     pub binding: String,
+    /// Instances whose condition could not be settled, and why.
+    ///
+    /// `over` holds the ones this rule definitely holds for. Everything else
+    /// used to be dropped without distinction, so an instance the condition
+    /// said *no* about and one nothing could decide left the same trace: none.
+    /// This was the only verdict-bearing type in a step outcome with nowhere
+    /// to put a reason, which made it the one place the simulator could go
+    /// quiet without breaking its own rule.
+    pub undecided: Vec<Unresolved>,
 }
 
 /// Everything one step produced.
@@ -341,6 +350,7 @@ pub fn enabled(
         let entity = detail.trigger.as_str();
         let binding = name.name.as_str();
         let mut over = Vec::new();
+        let mut undecided = Vec::new();
 
         for instance in world.instances_of(entity) {
             let mut scope = Env::new(world, &node.module, source);
@@ -355,12 +365,19 @@ pub fn enabled(
             for (field, value) in &instance.fields {
                 scope.bindings.insert(field.clone(), value.clone());
             }
-            if eval(condition, &scope).truth() == Truth::True {
-                over.push(Value::Ref(instance.id.clone()));
+            let evaluated = eval(condition, &scope);
+            match evaluated.truth() {
+                Truth::True => over.push(Value::Ref(instance.id.clone())),
+                // A condition nobody could settle is not a condition that said
+                // no, and the browser offers these as the steps a person may
+                // take next — so an instance missing from that list for a
+                // reason nothing recorded is a rule silently not offered.
+                Truth::Unknown => undecided.extend(evaluated.unresolved),
+                Truth::False => {}
             }
         }
 
-        if !over.is_empty() {
+        if !over.is_empty() || !undecided.is_empty() {
             found.push(Enabled {
                 rule: node.id.as_str().to_owned(),
                 name: node.name.clone(),
@@ -369,6 +386,7 @@ pub fn enabled(
                 source: detail.source,
                 over,
                 binding: binding.to_owned(),
+                undecided,
             });
         }
     }
