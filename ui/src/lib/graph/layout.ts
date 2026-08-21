@@ -296,12 +296,14 @@ function bounds(nodes: PlacedNode[]): Omit<Layout, "routes"> {
 export type Family = "thing" | "behaviour" | "boundary" | "constraint" | "unresolved";
 
 /**
- * Four families rather than eleven hues.
+ * The band a kind belongs to: what a spec *has*, what it *does*, where it
+ * *touches the world*, and what *limits* it.
  *
- * Eleven colours is a rainbow nobody can hold in their head. Four groups —
- * what a spec *has*, what it *does*, where it *touches the world*, and what
- * *limits* it — is a distinction a reader learns in a minute, and form
- * distinguishes the kinds within a group.
+ * A distinction a reader learns in a minute, and the one the layout and the
+ * palette are both organised around. Each kind carries its own hue *within*
+ * its band — see `--kind-*` in `theme.css` — so a trigger is tellable from a
+ * rule without either leaving the band it belongs to. This function is the
+ * grouping; the hue is the differentiation, and neither does the other's job.
  */
 export function familyOf(kind: NodeKind): Family {
   switch (kind) {

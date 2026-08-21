@@ -215,10 +215,10 @@
   /* The loose ends. A rule emitting something says another should react, and a
    * run that never follows it stopped halfway through what the spec says. */
   .pending {
-    border: 1px solid var(--behaviour-edge);
+    border: 1px solid color-mix(in srgb, var(--behaviour) 52%, var(--ground-canvas));
     border-radius: var(--radius);
     padding: var(--gap-2);
-    background: var(--behaviour-fill);
+    background: color-mix(in srgb, var(--behaviour) 13%, var(--ground-canvas));
   }
   .pending li button {
     color: var(--behaviour);

@@ -53,32 +53,48 @@
   --edge-active: #a08ce8;
 
   /* --- construct families -------------------------------------------- */
+  /*
+   * Four bands, eleven hues.
+   *
+   * The band is what a reader learns first — what a spec *has*, what it
+   * *does*, where it *touches the world*, what *limits* it — and it survives
+   * because every kind in a band shares a temperature and a chroma. The hue
+   * rotates inside it, so a trigger is tellable from a rule at a glance
+   * without either of them leaving the band they belong to.
+   *
+   * The family token is the band's anchor kind, and is also what the interface
+   * chrome uses. Fills and edges are mixed from the accent against the canvas
+   * rather than written out, so the two themes derive them and eleven kinds
+   * cost eleven values instead of thirty-three.
+   */
   /* Things: entities, value types, variants, enums. Sage — grown, structural,
    * the part of a spec that simply exists. */
-  --thing: #7fa88a;
-  --thing-fill: #1b2a22;
-  --thing-edge: #4a6b56;
+  /* What a spec has — green through teal to olive, the material band. */
+  --kind-entity: #7fa88a; /* sage: the spine of a spec, and the anchor */
+  --kind-value: #5fa6ac; /* teal: no identity of its own, so cooler */
+  --kind-variant: #a5ad68; /* olive: a fork in a type, so warmer */
+  --kind-enum: #8ecb9c; /* mint: a closed set of names, and lighter */
+  --thing: var(--kind-entity);
 
-  /* Behaviour: rules and triggers. The allium's own violet, and the half of a
-   * specification that actually does something. */
-  --behaviour: #a08ce8;
-  --behaviour-fill: #221d33;
-  --behaviour-edge: #5f4fa0;
+  /* What a spec does — violet through blue, the action band. */
+  --kind-rule: #a08ce8; /* violet: logic, and the anchor */
+  --kind-trigger: #6ea4f0; /* blue: a signal arriving, not logic */
+  --behaviour: var(--kind-rule);
 
-  /* Boundary: surfaces and actors — where the outside world touches. */
-  --boundary: #d0a561;
-  --boundary-fill: #2b2317;
-  --boundary-edge: #7d6435;
+  /* Where it touches the world — gold through terracotta, the contact band. */
+  --kind-surface: #d0a561; /* gold: the boundary itself, and the anchor */
+  --kind-actor: #e28468; /* terracotta: somebody on the other side of it */
+  --boundary: var(--kind-surface);
 
-  /* Constraint: invariants and config. Deliberately colourless: a limit is not
-   * a thing in the domain, it is a fact about all of them. */
-  --constraint: #8b97a8;
-  --constraint-fill: #1c222b;
-  --constraint-edge: #414c5c;
+  /* What limits it — slate through mauve, the quietest band. */
+  --kind-invariant: #8b97a8; /* slate: a law about the data, and the anchor */
+  --kind-config: #b087c4; /* mauve: the data the laws are written against */
+  --constraint: var(--kind-invariant);
 
-  /* Unresolved: a reference nothing in this spec set declares. */
-  --unresolved: #6b7688;
-  --unresolved-fill: transparent;
+  /* A reference to something no file in the set declares. Deliberately the
+   * dimmest thing on the canvas: it is an absence, not another kind. */
+  --kind-external: #6b7688;
+  --unresolved: var(--kind-external);
 
   /* --- verdicts ------------------------------------------------------- */
   /* The tool's one point of view, in colour. True and false are quiet; a
@@ -163,29 +179,33 @@
     --edge: #a8a294;
     --edge-active: #6b4fc4;
 
-    --thing: #3f6b4e;
-    --thing-fill: #dfe9e0;
-    --thing-edge: #7ea488;
+    /* Darker and more saturated, because these sit on a light ground. The
+     * bands and their order are the same; only the lightness inverts. */
+    --kind-entity: #3f6b4e;
+    --kind-value: #175f80;
+    --kind-variant: #5d6a24;
+    --kind-enum: #188f52;
+    --thing: var(--kind-entity);
 
-    --behaviour: #5b45a8;
-    --behaviour-fill: #e4dff5;
-    --behaviour-edge: #9484d0;
+    --kind-rule: #5b45a8;
+    --kind-trigger: #2a56a6;
+    --behaviour: var(--kind-rule);
 
-    --boundary: #8a6318;
-    --boundary-fill: #f2e6cd;
-    --boundary-edge: #c2a163;
+    --kind-surface: #8a6318;
+    --kind-actor: #a54a2b;
+    --boundary: var(--kind-surface);
 
-    --constraint: #55606f;
-    --constraint-fill: #e3e5e8;
-    --constraint-edge: #a3abb6;
+    --kind-invariant: #55606f;
+    --kind-config: #6d4f78;
+    --constraint: var(--kind-invariant);
 
-    --unresolved: #8d877b;
+    --kind-external: #8d877b;
+    --unresolved: var(--kind-external);
 
     --verdict-true: #2f7c4c;
     --verdict-false: #a83b30;
     --verdict-unknown: #8a6200;
     --verdict-unknown-fill: #fbeec4;
-  --verdict-missing: #5f57a0;
     --verdict-missing: #5f57a0;
 
     --focus: 0 0 0 2px var(--ground-panel), 0 0 0 4px var(--behaviour);
@@ -209,23 +229,28 @@
   --edge: #a8a294;
   --edge-active: #6b4fc4;
 
-  --thing: #3f6b4e;
-  --thing-fill: #dfe9e0;
-  --thing-edge: #7ea488;
+  /* Darker and more saturated, because these sit on a light ground. The
+   * bands and their order are the same; only the lightness inverts. */
+  --kind-entity: #3f6b4e;
+  --kind-value: #175f80;
+  --kind-variant: #5d6a24;
+  --kind-enum: #188f52;
+  --thing: var(--kind-entity);
 
-  --behaviour: #5b45a8;
-  --behaviour-fill: #e4dff5;
-  --behaviour-edge: #9484d0;
+  --kind-rule: #5b45a8;
+  --kind-trigger: #2a56a6;
+  --behaviour: var(--kind-rule);
 
-  --boundary: #8a6318;
-  --boundary-fill: #f2e6cd;
-  --boundary-edge: #c2a163;
+  --kind-surface: #8a6318;
+  --kind-actor: #a54a2b;
+  --boundary: var(--kind-surface);
 
-  --constraint: #55606f;
-  --constraint-fill: #e3e5e8;
-  --constraint-edge: #a3abb6;
+  --kind-invariant: #55606f;
+  --kind-config: #6d4f78;
+  --constraint: var(--kind-invariant);
 
-  --unresolved: #8d877b;
+  --kind-external: #8d877b;
+  --unresolved: var(--kind-external);
 
   --verdict-true: #2f7c4c;
   --verdict-false: #a83b30;

@@ -75,7 +75,7 @@
   {/each}
 {/snippet}
 
-<aside class="inspector {family}" aria-label="Construct details">
+<aside class="inspector {family} kind-{node?.kind ?? 'none'}" aria-label="Construct details">
   {#if !node}
     <div class="empty">
       <p class="eyebrow">Nothing selected</p>
@@ -399,6 +399,7 @@
     border-left: 1px solid var(--line);
   }
 
+  /* The band, as a fallback for a kind this file has not heard of. */
   .thing {
     --accent: var(--thing);
   }
@@ -413,6 +414,40 @@
   }
   .unresolved {
     --accent: var(--unresolved);
+  }
+
+  /* Then the kind. Selecting a trigger on the canvas and reading it here must
+   * be the same colour in both places, or the panel reads as being about
+   * something else. */
+  .kind-entity {
+    --accent: var(--kind-entity);
+  }
+  .kind-value {
+    --accent: var(--kind-value);
+  }
+  .kind-variant {
+    --accent: var(--kind-variant);
+  }
+  .kind-enum {
+    --accent: var(--kind-enum);
+  }
+  .kind-rule {
+    --accent: var(--kind-rule);
+  }
+  .kind-trigger {
+    --accent: var(--kind-trigger);
+  }
+  .kind-surface {
+    --accent: var(--kind-surface);
+  }
+  .kind-actor {
+    --accent: var(--kind-actor);
+  }
+  .kind-invariant {
+    --accent: var(--kind-invariant);
+  }
+  .kind-config {
+    --accent: var(--kind-config);
   }
 
   .empty {

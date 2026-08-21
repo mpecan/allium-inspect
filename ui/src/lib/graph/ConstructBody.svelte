@@ -86,26 +86,69 @@
       opacity 120ms ease;
   }
 
+  /* One accent per kind, and the fill and edge mixed from it against the
+   * canvas. Writing all three out per kind would be thirty-three values kept
+   * in step by hand, and the first one to drift would be a node that reads as
+   * a different family than its border says. */
+  .thing,
+  .behaviour,
+  .boundary,
+  .constraint {
+    --node-fill: color-mix(in srgb, var(--node-accent) 17%, var(--ground-canvas));
+    --node-edge: color-mix(in srgb, var(--node-accent) 62%, var(--ground-canvas));
+  }
+
+  /* The band each kind belongs to, as a fallback. A kind the language gains
+   * before this file hears about it still lands in the right band rather than
+   * rendering with no accent at all. */
   .thing {
-    --node-edge: var(--thing-edge);
-    --node-fill: var(--thing-fill);
     --node-accent: var(--thing);
   }
   .behaviour {
-    --node-edge: var(--behaviour-edge);
-    --node-fill: var(--behaviour-fill);
     --node-accent: var(--behaviour);
   }
   .boundary {
-    --node-edge: var(--boundary-edge);
-    --node-fill: var(--boundary-fill);
     --node-accent: var(--boundary);
   }
   .constraint {
-    --node-edge: var(--constraint-edge);
-    --node-fill: var(--constraint-fill);
     --node-accent: var(--constraint);
   }
+
+  /* And the kind itself, which is what a reader actually tells apart. A
+   * trigger beside a rule and an enum beside an entity are the two pairs that
+   * carried one colour between them, and they are the two that co-occur most:
+   * triggers and rules fill the Flow view, entities and enums the Domain. */
+  .kind-entity {
+    --node-accent: var(--kind-entity);
+  }
+  .kind-value {
+    --node-accent: var(--kind-value);
+  }
+  .kind-variant {
+    --node-accent: var(--kind-variant);
+  }
+  .kind-enum {
+    --node-accent: var(--kind-enum);
+  }
+  .kind-rule {
+    --node-accent: var(--kind-rule);
+  }
+  .kind-trigger {
+    --node-accent: var(--kind-trigger);
+  }
+  .kind-surface {
+    --node-accent: var(--kind-surface);
+  }
+  .kind-actor {
+    --node-accent: var(--kind-actor);
+  }
+  .kind-invariant {
+    --node-accent: var(--kind-invariant);
+  }
+  .kind-config {
+    --node-accent: var(--kind-config);
+  }
+
   .unresolved {
     --node-edge: var(--unresolved);
     --node-fill: transparent;
@@ -173,11 +216,17 @@
     background: var(--severity-info);
   }
 
+  /* The name carries the accent too, not only the kind label above it.
+   * The label is six microtype letters; the name is the largest thing on the
+   * box, and it is what a reader is scanning for when they are looking for
+   * "the triggers" rather than for one construct by name. Lightened toward the
+   * ink so it stays a name being read rather than a colour being shown. */
   .name {
     margin: 0;
     font-size: var(--t-title);
     letter-spacing: var(--track-tight);
     line-height: 1.2;
+    color: color-mix(in srgb, var(--node-accent) 38%, var(--ink));
   }
 
   .rows {
