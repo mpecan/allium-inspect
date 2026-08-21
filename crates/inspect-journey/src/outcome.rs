@@ -43,7 +43,16 @@ pub(crate) fn refusal(outcome: &StepOutcome) -> Option<String> {
             Disposition::Undecided => {
                 let reason = rule.unresolved.first().map_or_else(
                     || "something could not be evaluated".to_owned(),
-                    |note| note.reason.clone(),
+                    // The sub-expression as well as the reason, when the note
+                    // located one. "`Member#1` has no `is_at_limit` set" says
+                    // what is missing; it does not say which clause asked, and
+                    // a rule with four preconditions has four candidates. The
+                    // quote comes from the spec text, which is why the walker
+                    // is handed it.
+                    |note| match &note.expression {
+                        Some(expression) => format!("{} — in `{expression}`", note.reason),
+                        None => note.reason.clone(),
+                    },
                 );
                 return Some(format!("`{}` could not be decided: {reason}", rule.name));
             }

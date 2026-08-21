@@ -353,6 +353,18 @@ mod tests {
     }
 
     #[test]
+    fn an_undecided_step_quotes_the_sub_expression_from_the_spec_text() {
+        // The only thing the spec *text* is carried for. "`Member#1` has no
+        // `is_at_limit` set" says what is missing; it does not say which clause
+        // asked, and a rule with four preconditions has four candidates. The
+        // quote comes from the source, so without it the reader is told half.
+        let (printed, _) = run_over(&walk_command(), "undecided.journey", false, false);
+        let document: serde_json::Value = serde_json::from_str(&printed).expect("JSON");
+        let message = document["diagnostics"][0]["message"].as_str().expect("a message");
+        assert!(message.contains("in `member.is_at_limit`"), "{message}");
+    }
+
+    #[test]
     fn a_refusal_is_reported_in_the_specs_own_words() {
         // Which is the only thing the spec *text* is carried for. `BorrowCopy`
         // requires the copy to be available, and a journey that borrows a lost

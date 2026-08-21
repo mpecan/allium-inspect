@@ -721,3 +721,20 @@ fn every_step_carries_the_configuration_in_force() {
         assert_eq!(step.world.config("lending", "loan_limit"), inspect_sim::Value::Int(5));
     }
 }
+
+#[test]
+fn an_undecided_rule_names_the_sub_expression_that_could_not_be_settled() {
+    // Two halves of one answer, and only one of them is about the world.
+    // "`Member#1` has no `is_at_limit` set" says what is missing; it does not
+    // say which clause asked, and `BorrowCopy` has two preconditions. The quote
+    // is sliced out of the spec text, which is why the walker is handed it —
+    // without it the reader is told half of what happened.
+    let walk = walked(UNDECIDED);
+    let act = outcomes(&walk)
+        .into_iter()
+        .find(|(_, about, _)| about.contains("does MemberBorrows"))
+        .expect("the act");
+    let detail = act.2.expect("a detail");
+    assert!(detail.contains("has no `is_at_limit` set"), "{detail}");
+    assert!(detail.contains("in `member.is_at_limit`"), "and which clause asked: {detail}");
+}
