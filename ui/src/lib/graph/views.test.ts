@@ -233,15 +233,23 @@ describe("project", () => {
     expect(project("lifecycle", nodes, edges, new Set(["catalogue"])).nodes).toEqual([]);
   });
 
-  it("hides the modules it was told to hide, and their edges with them", () => {
+  it("hides a module's constructs but stands a box where its references arrive", () => {
+    // The constructs go; the file does not vanish. Dropping the crossing edges
+    // as well made whatever was left look self-contained, which is the one
+    // answer a reader narrowing to a single module must not be given.
     const { nodes: kept, edges: keptEdges } = project(
       "domain",
       nodes,
       edges,
       new Set(["lending"]),
     );
-    expect(kept.map((n) => n.name).sort()).toEqual(["Book", "Copy"]);
-    expect(keptEdges).toHaveLength(1);
+    expect(kept.filter((n) => !n.id.endsWith("::module")).map((n) => n.name).sort()).toEqual([
+      "Book",
+      "Copy",
+    ]);
+    expect(kept.some((n) => n.id === moduleId("lending"))).toBe(true);
+    // The one local edge, plus the crossing that now terminates on the box.
+    expect(keptEdges).toHaveLength(2);
   });
 
   it("returns nothing when every module is hidden", () => {
@@ -366,5 +374,71 @@ describe("the modules view", () => {
     // Unlike a lifecycle state, a module maps to no construct — there is no
     // narrower thing to select.
     expect(ownerOf(moduleId("identity"))).toBe(moduleId("identity"));
+  });
+});
+
+describe("switched-off modules, as the boxes their references arrive from", () => {
+  const spread = () => ({
+    nodes: [
+      node("entity", "Identity", { type: "none" }, "identity"),
+      node("entity", "Group", { type: "none" }, "membership"),
+      node("entity", "Roster", { type: "none" }, "membership"),
+      node("entity", "Message", { type: "none" }, "messaging"),
+    ],
+    edges: [
+      wire("membership::entity::Group", "identity::entity::Identity"),
+      // The same construct reaching into the same file twice is one
+      // relationship, not two arrows.
+      wire("membership::entity::Group", "identity::entity::Identity"),
+      wire("membership::entity::Roster", "identity::entity::Identity"),
+      // Arriving from outside, which must terminate too.
+      wire("messaging::entity::Message", "membership::entity::Group"),
+    ],
+  });
+
+  it("draws nothing extra while every module is on", () => {
+    const { nodes } = project("domain", spread().nodes, spread().edges);
+    expect(nodes.some((n) => n.id.endsWith("::module"))).toBe(false);
+  });
+
+  it("terminates a reference that leaves the drawing on the file it went to", () => {
+    // Narrowed to one file. Dropping these edges made `membership` look
+    // self-contained, which is the most misleading answer available.
+    const { nodes, edges } = project(
+      "domain",
+      spread().nodes,
+      spread().edges,
+      new Set(["identity", "messaging"]),
+    );
+
+    expect(nodes.filter((n) => n.id.endsWith("::module")).map((n) => n.name)).toEqual([
+      "identity",
+      "messaging",
+    ]);
+    // Group and Roster each reach identity once, and Group is reached from
+    // messaging once: three lines, not four.
+    expect(edges).toHaveLength(3);
+    expect(edges.filter((e) => e.to === moduleId("identity"))).toHaveLength(2);
+    expect(edges.filter((e) => e.from === moduleId("messaging"))).toHaveLength(1);
+  });
+
+  it("leaves out a relationship between two files nobody is looking at", () => {
+    // `messaging -> identity` has both ends hidden. Drawing it would answer a
+    // question the reader did not ask, on a canvas about `membership`.
+    const nodes = [
+      node("entity", "Group", { type: "none" }, "membership"),
+      node("entity", "Identity", { type: "none" }, "identity"),
+      node("entity", "Message", { type: "none" }, "messaging"),
+    ];
+    const edges = [wire("messaging::entity::Message", "identity::entity::Identity")];
+    const drawn = project("domain", nodes, edges, new Set(["identity", "messaging"]));
+    expect(drawn.nodes.map((n) => n.name)).toEqual(["Group"]);
+    expect(drawn.edges).toEqual([]);
+  });
+
+  it("gives a destination box no census, unlike the modules view", () => {
+    const { nodes } = project("domain", spread().nodes, spread().edges, new Set(["identity"]));
+    const port = nodes.find((n) => n.id === moduleId("identity"));
+    expect(port?.detail.type).toBe("none");
   });
 });

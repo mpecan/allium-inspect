@@ -11,8 +11,10 @@
     origins,
     type Trace,
   } from "./lib/graph/trace";
-  import { inView, ownerOf, project } from "./lib/graph/views";
+  import { reportOn } from "./lib/graph/modules";
+  import { inView, isModuleNode, ownerOf, project } from "./lib/graph/views";
   import Inspector from "./lib/panels/Inspector.svelte";
+  import ModulePanel from "./lib/panels/ModulePanel.svelte";
   import SourceStrip from "./lib/panels/SourceStrip.svelte";
   import Rail from "./lib/Rail.svelte";
   import Reports from "./lib/Reports.svelte";
@@ -170,6 +172,23 @@
   );
 
   const selected = $derived(nodes.find((node) => node.id === selectedId) ?? null);
+
+  /**
+   * The file behind a selected module box, if that is what was selected.
+   *
+   * A module node is synthesised for the canvas and is not in the graph, so
+   * `selected` above cannot find it — which is why picking one used to say
+   * "nothing selected" about a box the reader had just clicked.
+   */
+  const selectedModuleReport = $derived.by(() => {
+    if (selectedId === null || !isModuleNode(selectedId) || graph === null) {
+      return null;
+    }
+    const name = selectedId.slice(0, -"::module".length);
+    return graph.modules.some((module) => module.name === name)
+      ? reportOn(name, graph.nodes, graph.edges)
+      : null;
+  });
 
   const trace = $derived.by<Trace | null>(() => {
     if (!selectedId || traceMode === "off") {
@@ -451,7 +470,13 @@
   </main>
   {/if}
 
-  {#if mode !== "simulate" && mode !== "journeys"}
+  {#if mode !== "simulate" && mode !== "journeys" && selectedModuleReport !== null}
+  <ModulePanel
+    report={selectedModuleReport}
+    path={graph?.modules.find((module) => module.name === selectedModuleReport.module)?.path ?? ""}
+    onselect={find}
+  />
+  {:else if mode !== "simulate" && mode !== "journeys"}
   <Inspector
     node={selected}
     position={selectedPosition}

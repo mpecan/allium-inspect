@@ -86,9 +86,88 @@ export function project(
 
   const kept = visible.filter((node) => inView(node, view));
   const present = new Set(kept.map((node) => node.id));
+  const drawn = edges.filter((edge) => present.has(edge.from) && present.has(edge.to));
+  const { nodes: ports, edges: crossings } = neighbours(nodes, edges, present, hiddenModules);
+  return { nodes: [...kept, ...ports], edges: [...drawn, ...crossings] };
+}
+
+/**
+ * The files switched off, drawn as the boxes their references arrive from.
+ *
+ * Switching a module off in the rail used to delete its constructs *and*
+ * silently drop every edge that reached them, so narrowing to one file made it
+ * look self-contained — the most misleading possible answer, because the whole
+ * reason to look at one file is to understand what it needs from the others.
+ *
+ * So a reference that leaves the drawing terminates on the module it went to,
+ * and the boundary becomes something on screen rather than an edge that ends
+ * nowhere. Narrow the rail to a single module and you get that file in full,
+ * ringed by the files it leans on and the files that lean on it.
+ *
+ * Inert when nothing is hidden: every edge has both ends on the canvas, so
+ * there is nothing to terminate.
+ */
+function neighbours(
+  all: Node[],
+  edges: Edge[],
+  present: ReadonlySet<string>,
+  hidden: ReadonlySet<string>,
+): { nodes: Node[]; edges: Edge[] } {
+  if (hidden.size === 0) {
+    return { nodes: [], edges: [] };
+  }
+  const home = new Map(all.map((node) => [node.id, node.module]));
+  const reached = new Set<string>();
+  const wires = new Map<string, Edge>();
+
+  for (const edge of edges) {
+    const from = home.get(edge.from);
+    const to = home.get(edge.to);
+    if (from === undefined || to === undefined) {
+      continue;
+    }
+    // Exactly one end on the canvas. Both ends hidden is a relationship
+    // between two files the reader is not looking at, and drawing it would
+    // answer a question nobody asked.
+    const here = present.has(edge.from);
+    const there = present.has(edge.to);
+    if (here === there) {
+      continue;
+    }
+    const away = here ? to : from;
+    if (!hidden.has(away)) {
+      continue;
+    }
+    reached.add(away);
+    // One line per construct per neighbour. A construct that reaches into the
+    // same file three times has one relationship with it, and three parallel
+    // arrows say nothing the one does not.
+    const wire: Edge = here
+      ? { ...edge, to: moduleId(away) }
+      : { ...edge, from: moduleId(away) };
+    wires.set(`${wire.from} ${wire.to}`, wire);
+  }
+
   return {
-    nodes: kept,
-    edges: edges.filter((edge) => present.has(edge.from) && present.has(edge.to)),
+    nodes: [...reached].sort().map(portNode),
+    edges: [...wires.values()],
+  };
+}
+
+/** A switched-off module, as the box its references arrive from. */
+function portNode(name: string): Node {
+  return {
+    id: moduleId(name),
+    kind: "config",
+    name,
+    module: name,
+    qualified: name,
+    span: null,
+    // No census here. In the modules view the numbers are the content; here
+    // the box is a destination, and rows would give a file nobody is looking
+    // at more weight on the canvas than the ones they are.
+    detail: { type: "none" },
+    prose: { note: [], guidance: [] },
   };
 }
 
