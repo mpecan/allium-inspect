@@ -7,6 +7,8 @@
   // heading that says so — you can still fire it, and doing so means starting
   // in the middle of something the spec describes.
 
+  import { tick } from "svelte";
+
   import type { Value } from "../api/Value";
   import type { Fireable } from "./setup";
   import { grouped } from "./setup";
@@ -25,12 +27,21 @@
 
   let chosen = $state<Fireable | null>(null);
   let bindings = $state<Record<string, string>>({});
+  let form = $state<HTMLFormElement | null>(null);
 
   const groups = $derived(grouped(triggers));
 
-  function choose(trigger: Fireable) {
+  async function choose(trigger: Fireable) {
     chosen = trigger;
     bindings = Object.fromEntries(trigger.parameters.map((name) => [name, ""]));
+
+    // The form is the last thing in a column that lists every trigger in the
+    // set, so on a spec that emits a couple of dozen it opens far below the
+    // fold and choosing looks like it did nothing at all. Bring it to the
+    // reader rather than leaving them to find it. `nearest` scrolls the least
+    // that works, so a form already on screen does not move.
+    await tick();
+    form?.scrollIntoView({ block: "nearest" });
   }
 
   function fire() {
@@ -108,6 +119,7 @@
   {#if chosen}
     <form
       class="arguments"
+      bind:this={form}
       onsubmit={(event) => {
         event.preventDefault();
         fire();
@@ -171,6 +183,10 @@
     padding: var(--gap-3);
     height: 100%;
     overflow-y: auto;
+    /* Deliberately not `scroll-behavior: smooth`. Choosing a trigger scrolls
+     * its form into view, and an animated scroll is skipped outright in a
+     * background tab — it works when you watch it and does nothing when
+     * anything else checks, which is the one behaviour a gate cannot catch. */
     background: var(--ground-panel);
     border-right: 1px solid var(--line);
   }
