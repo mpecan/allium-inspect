@@ -115,7 +115,7 @@ mod tests {
 
     fn manifest_naming(image: &str) -> String {
         format!(
-            r#"{{"version":1,"sealed_at":"now","walk":null,"frames":[{{"step":"R.1","image":"{image}","caption":null,"passed":true,"taken_at":"t","source":null,"said":"1. a step"}}]}}"#
+            r#"{{"version":1,"sealed_at":"now","walk":null,"frames":[{{"step":"R.1","image":"{image}","caption":null,"passed":true,"taken_at":"t","source":null,"said":"1. a step","tags":{{"theme":"dark"}}}}]}}"#
         )
     }
 

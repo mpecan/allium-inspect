@@ -176,6 +176,18 @@ quiet lie rather than an untidiness.
   same trace — none — and the first would be reported as the second. That is
   stipulation 7 one layer out.
 
+A step may be photographed more than once, and a frame's `tags` say what each
+picture is *of* beyond which step: `theme: dark`, `platform: ios`. **Named, not
+bare**, and that is the whole reason the panel can offer a dropdown: the name
+says which pictures are alternatives to each other, so picking `dark` declines
+`light` and says nothing about `platform`. A flat `["dark", "ios"]` would leave
+a reader to work out which of a pile of words were answers to the same question.
+
+The tool never learns what a key means. Anything a harness names becomes an
+axis, two harnesses with different vocabularies produce two axes rather than an
+argument, and a picture that says nothing on an axis is shown whatever is picked
+on it — silence is not disagreement.
+
 `just walk` is the producer and is **not** in `check`: it needs a browser
 downloaded and costs minutes, so it is a decision like `mutants`. The walk
 asserts almost nothing on purpose — a journey's verdicts are the assertion, and

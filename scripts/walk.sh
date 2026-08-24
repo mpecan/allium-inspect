@@ -37,6 +37,14 @@ if ! (cd ui && npx playwright --version >/dev/null 2>&1); then
     exit 1
 fi
 
+# Emptied here rather than by the harness. Two projects load the harness module
+# twice, so a wipe in there takes the first project's pictures with it — and a
+# directory holding half a walk reads as a walkthrough of a flow that no longer
+# works.
+echo "walk: clearing $evidence"
+rm -rf "$evidence"
+mkdir -p "$evidence"
+
 echo "walk: building"
 just build
 

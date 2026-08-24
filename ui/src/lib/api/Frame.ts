@@ -12,4 +12,13 @@ export type Frame = { step: StepId, image: string, caption: string | null, passe
  * it stops matching: a digest can say *something changed*, and this can
  * show them what the step said then beside what it says now.
  */
-said: string, };
+said: string, 
+/**
+ * What this picture is of, beyond which step. See [`Shot::tags`].
+ *
+ * `default` on both sides, so a manifest sealed before tags existed still
+ * reads and a manifest with them is still read by a binary that predates
+ * them. Neither is a version change: nothing about what the old fields
+ * mean has moved.
+ */
+tags: { [key in string]: string }, };

@@ -171,6 +171,7 @@ mod tests {
             taken_at: "2026-08-24T09:00:00Z".to_owned(),
             source: None,
             said: said.to_owned(),
+            tags: BTreeMap::new(),
         }
     }
 

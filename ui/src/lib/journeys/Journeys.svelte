@@ -23,6 +23,8 @@
   import {
     WORD,
     at as evidenceAt,
+    axes as evidenceAxes,
+    type Narrowing,
     summary as evidenceSummary,
     worthShowing,
   } from "./evidence";
@@ -102,6 +104,24 @@
 
   /** Where each step of the current walk stands, and what it was shown by. */
   const standings = $derived(report?.evidence);
+
+  /**
+   * The questions the evidence can be narrowed by, and the reader's answers.
+   *
+   * Across the whole report rather than the current walk, so the controls do
+   * not appear and vanish as you move between journeys — a control that comes
+   * and goes is one nobody learns is there.
+   */
+  const axes = $derived(evidenceAxes(standings));
+  let narrowing = $state<Narrowing>({});
+
+  function narrowTo(key: string, value: string) {
+    // An empty value is "either", which is the default: showing both a dark and
+    // a light picture of one step is the ordinary reading, and the dropdown is
+    // for when a reader wants one of them rather than for choosing at all.
+    const { [key]: _dropped, ...rest } = narrowing;
+    narrowing = value === "" ? rest : { ...rest, [key]: value };
+  }
 
   const shownHere = $derived(
     current
@@ -216,15 +236,35 @@
            That one says what the *specification* supports; this says whether
            anybody has shown the software doing it. Reading either as the other
            gets the wrong answer in both directions. -->
-      {#if shownHere.length > 0}
-        <ul class="tally evidence-tally">
-          {#each shownHere as entry (entry.standing)}
-            <li>
-              <span class="count">{entry.count}</span>
-              <span class="meaning standing-{entry.standing}">{WORD[entry.standing]}</span>
-            </li>
+      {#if shownHere.length > 0 || axes.length > 0}
+        <div class="evidence-line">
+          <ul class="tally evidence-tally">
+            {#each shownHere as entry (entry.standing)}
+              <li>
+                <span class="count">{entry.count}</span>
+                <span class="meaning standing-{entry.standing}">{WORD[entry.standing]}</span>
+              </li>
+            {/each}
+          </ul>
+
+          <!-- One control per question the pictures answer. The keys come from
+               what the harness wrote, so this is empty until somebody tags
+               something and grows a control the day they do. -->
+          {#each axes as axis (axis.key)}
+            <label class="axis">
+              <span>{axis.key}</span>
+              <select
+                value={narrowing[axis.key] ?? ""}
+                onchange={(event) => narrowTo(axis.key, event.currentTarget.value)}
+              >
+                <option value="">either</option>
+                {#each axis.values as value (value)}
+                  <option {value}>{value}</option>
+                {/each}
+              </select>
+            </label>
           {/each}
-        </ul>
+        </div>
       {/if}
 
       {#if walk.stipulated.length > 0}
@@ -305,6 +345,7 @@
                 evidence={shown}
                 open={openFrame}
                 onopen={(image) => (openFrame = image)}
+                {narrowing}
               />
             {/if}
           </li>
@@ -485,6 +526,30 @@
     padding: var(--gap-2) 0;
     border-top: 1px solid var(--line);
     border-bottom: 1px solid var(--line);
+  }
+
+  .evidence-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--gap-3);
+  }
+
+  .axis {
+    display: flex;
+    align-items: center;
+    gap: var(--gap-2);
+    font-size: var(--t-small);
+    color: var(--ink-dim);
+  }
+  .axis select {
+    font: inherit;
+    font-size: var(--t-small);
+    color: var(--ink);
+    background: var(--ground-input);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 1px var(--gap-2);
   }
 
   .evidence-tally .standing-shown {

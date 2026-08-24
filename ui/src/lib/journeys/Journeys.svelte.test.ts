@@ -229,6 +229,7 @@ describe("Journeys cast panel", () => {
       taken_at: "2026-08-24T09:00:00Z",
       source: null,
       said: "1. she borrows it",
+      tags: {},
     };
 
     it("shows a picture of a step somebody photographed", () => {
@@ -310,6 +311,101 @@ describe("Journeys cast panel", () => {
 
       await fireEvent.click(button);
       expect(button.getAttribute("aria-pressed")).toBe("false");
+    });
+
+    describe("tags", () => {
+      const dark = { ...picture, image: "01-dark.png", tags: { theme: "dark" } };
+      const light = { ...picture, image: "01-light.png", tags: { theme: "light" } };
+
+      function tagged() {
+        return report([walk("ACopyGoesOut", [line("specified", "ada does Borrow")])], null,
+          standing("shown", { frames: [dark, light] }));
+      }
+
+      it("shows every picture of a step until the reader narrows", () => {
+        render(Journeys, { report: tagged(), failure: null });
+        expect(screen.getAllByRole("img", { name: "the copy in her hands" })).toHaveLength(2);
+      });
+
+      it("offers one control per question the pictures answer", () => {
+        render(Journeys, { report: tagged(), failure: null });
+        const control = screen.getByRole("combobox", { name: "theme" });
+        const options = [...control.querySelectorAll("option")].map((o) => o.textContent);
+        expect(options).toEqual(["either", "dark", "light"]);
+      });
+
+      it("offers nothing to narrow by when nothing is tagged", () => {
+        render(Journeys, {
+          report: report([walk("ACopyGoesOut", [line("specified", "ada does Borrow")])], null,
+            standing("shown", { frames: [picture] })),
+          failure: null,
+        });
+        expect(screen.queryByRole("combobox")).toBeNull();
+      });
+
+      it("switches the pictures when the reader picks one", async () => {
+        render(Journeys, { report: tagged(), failure: null });
+
+        await fireEvent.change(screen.getByRole("combobox", { name: "theme" }), {
+          target: { value: "light" },
+        });
+
+        const shown = screen.getAllByRole("img", { name: "the copy in her hands" });
+        expect(shown).toHaveLength(1);
+        expect(shown[0]?.getAttribute("src")).toBe("/api/evidence/01-light.png");
+      });
+
+      it("goes back to both when the reader picks either", async () => {
+        render(Journeys, { report: tagged(), failure: null });
+        const control = screen.getByRole("combobox", { name: "theme" });
+
+        await fireEvent.change(control, { target: { value: "dark" } });
+        expect(screen.getAllByRole("img", { name: "the copy in her hands" })).toHaveLength(1);
+
+        await fireEvent.change(control, { target: { value: "" } });
+        expect(screen.getAllByRole("img", { name: "the copy in her hands" })).toHaveLength(2);
+      });
+
+      it("labels each picture with what it is of", () => {
+        const { container } = render(Journeys, { report: tagged(), failure: null });
+        // Scoped to the strip: the words are also in the dropdown, which is a
+        // different thing saying a different thing.
+        const chips = [...container.querySelectorAll(".tags li")].map((li) => li.textContent);
+        expect(chips).toEqual(["theme dark", "theme light"]);
+      });
+
+      /// A step that was photographed, just not the way the reader asked to see
+      /// it. The standing above still reads `shown` — that is a fact about the
+      /// step, not about the filter — so saying nothing here would leave the
+      /// panel contradicting itself.
+      it("says so when narrowing hides every picture of a step", async () => {
+        // Step 1 was only ever photographed dark. `light` is on the axis
+        // because another step of the walk was photographed that way.
+        const lopsided: Resolution = {
+          steps: {
+            "ACopyGoesOut.1": { standing: "shown", frames: [dark], claims: [], says_now: null },
+            "ACopyGoesOut.2": { standing: "shown", frames: [light], claims: [], says_now: null },
+          },
+          unknown: [],
+        };
+
+        render(Journeys, {
+          report: report([walk("ACopyGoesOut", [line("specified", "ada does Borrow")])], null,
+            lopsided),
+          failure: null,
+        });
+
+        expect(screen.getAllByRole("img", { name: "the copy in her hands" })).toHaveLength(1);
+
+        await fireEvent.change(screen.getByRole("combobox", { name: "theme" }), {
+          target: { value: "light" },
+        });
+
+        expect(screen.queryByRole("img", { name: "the copy in her hands" })).toBeNull();
+        expect(screen.getByText(/not the way you have asked to see it/)).toBeTruthy();
+        // And the standing is unchanged, because the step has not changed.
+        expect(screen.getAllByText("shown").length).toBeGreaterThan(0);
+      });
     });
 
     /// The two counts answer different questions and are drawn apart, so the

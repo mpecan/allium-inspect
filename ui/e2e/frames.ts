@@ -11,7 +11,7 @@
 /// stopped is exactly the evidence somebody wants, and a document written once
 /// at the end would have none of it.
 
-import { appendFileSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { Page } from "@playwright/test";
@@ -24,6 +24,12 @@ interface Shot {
   passed: boolean;
   taken_at: string;
   source: string | null;
+  /// What this picture is *of*, beyond which step: `{ theme: "dark" }`.
+  ///
+  /// Named rather than bare, which is what lets the panel offer one dropdown
+  /// per question instead of a pile of words a reader has to sort into axes
+  /// themselves.
+  tags: Record<string, string>;
 }
 
 const LOG = "frames.jsonl";
@@ -35,19 +41,17 @@ export class Frames {
 
   private constructor(private readonly dir: string) {}
 
-  /// An empty directory, so every picture in it came from this run.
+  /// Ready to append to.
   ///
-  /// Without this, a walk that stops at step 2 leaves the *previous* run's
-  /// steps 3 and 4 beside it and the directory reads as one walkthrough of a
-  /// flow that no longer works.
+  /// Emptying the directory is the *script's* job, not this one's. It was here
+  /// first and it is wrong here: a config with two projects loads this module
+  /// once per project, so the second would wipe the first one's pictures and
+  /// the walk would finish holding half of what it took.
   static open(dir: string): Frames {
     mkdirSync(dir, { recursive: true });
-    for (const name of readdirSync(dir)) {
-      if (name.endsWith(".png") || name === LOG || name === "manifest.json") {
-        rmSync(join(dir, name));
-      }
+    if (!existsSync(join(dir, LOG))) {
+      writeFileSync(join(dir, LOG), "");
     }
-    writeFileSync(join(dir, LOG), "");
     return new Frames(dir);
   }
 
@@ -60,9 +64,21 @@ export class Frames {
   ///
   /// Numbered across the whole walk rather than per step, because a directory
   /// listing is sorted and a reader wants the order the walk took them in.
-  async take(page: Page, step: string, caption: string, source: string): Promise<string> {
+  async take(
+    page: Page,
+    step: string,
+    caption: string,
+    source: string,
+    tags: Record<string, string> = {},
+  ): Promise<string> {
     this.thisStep += 1;
-    const image = `${String(++this.taken).padStart(2, "0")}-${slug(step)}.png`;
+    // The tags are in the file name as well as in the log. Two projects
+    // photographing one step would otherwise write the same name twice, and the
+    // second would quietly overwrite the first.
+    const marks = Object.values(tags).map(slug).join("-");
+    const image = `${String(++this.taken).padStart(2, "0")}-${slug(step)}${
+      marks === "" ? "" : `-${marks}`
+    }.png`;
     await page.screenshot({ path: join(this.dir, image) });
 
     const shot: Shot = {
@@ -72,6 +88,7 @@ export class Frames {
       passed: true,
       taken_at: new Date().toISOString(),
       source,
+      tags,
     };
     appendFileSync(join(this.dir, LOG), `${JSON.stringify(shot)}\n`);
     return image;

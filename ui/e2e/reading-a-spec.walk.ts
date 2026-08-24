@@ -27,6 +27,14 @@ const frames = Frames.open(process.env.INSPECT_EVIDENCE ?? "../target/evidence")
 
 test.describe.configure({ mode: "serial" });
 
+/// Which way of looking at the tool this run is photographing.
+///
+/// The project's name, so the axis and its answers come from the config rather
+/// than from a second list here that could disagree with it.
+function tags(): Record<string, string> {
+  return { theme: test.info().project.name };
+}
+
 test.beforeEach(() => frames.begin());
 
 test.afterEach(({}, info) => {
@@ -48,7 +56,7 @@ test("she opens it in a browser", async ({ page }) => {
   );
   await expect(page.locator(".svelte-flow__node").first()).toBeVisible();
 
-  await frames.take(page, `${JOURNEY}.3`, "the domain view, first paint", `${HERE}:37`);
+  await frames.take(page, `${JOURNEY}.3`, "the domain view, first paint", `${HERE}:37`, tags());
 });
 
 // journey: SomebodyMeetsASpecTheyDidNotWrite.4
@@ -63,7 +71,7 @@ test("she picks something that looks load-bearing", async ({ page }) => {
   const details = page.getByRole("complementary", { name: "Construct details" });
   await expect(details.locator("h2")).toBeVisible();
 
-  await frames.take(page, `${JOURNEY}.4`, "a construct picked, and its fields", `${HERE}:54`);
+  await frames.take(page, `${JOURNEY}.4`, "a construct picked, and its fields", `${HERE}:54`, tags());
 });
 
 // journey: SomebodyMeetsASpecTheyDidNotWrite.5
@@ -83,5 +91,5 @@ test("and reads what the author wrote", async ({ page }) => {
   await expect(strip).toHaveClass(/open/);
   await expect(strip).toContainText(/entity|rule|surface|actor|invariant|enum|config/);
 
-  await frames.take(page, `${JOURNEY}.5`, "the declaration in its own words", `${HERE}:70`);
+  await frames.take(page, `${JOURNEY}.5`, "the declaration in its own words", `${HERE}:70`, tags());
 });

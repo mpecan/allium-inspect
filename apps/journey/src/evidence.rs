@@ -242,7 +242,8 @@ fn render(resolution: &Resolution) -> String {
         let _ = writeln!(out, "  {:<10} {id}", word(evidence.standing));
 
         for frame in &evidence.frames {
-            let _ = writeln!(out, "               {} — {}", frame.image, frame.taken_at);
+            let _ =
+                writeln!(out, "               {} — {}{}", frame.image, frame.taken_at, tags(frame));
         }
         if let Some(now) = &evidence.says_now {
             let _ = writeln!(out, "               it now says: {}", first_line(now));
@@ -266,6 +267,16 @@ fn render(resolution: &Resolution) -> String {
     }
 
     out
+}
+
+/// What a picture is of, beyond which step, for the line that names it.
+fn tags(frame: &inspect_journey::Frame) -> String {
+    if frame.tags.is_empty() {
+        return String::new();
+    }
+    let listed: Vec<String> =
+        frame.tags.iter().map(|(key, value)| format!("{key}={value}")).collect();
+    format!("  [{}]", listed.join(" "))
 }
 
 /// The word a report prints for a standing.
@@ -314,6 +325,12 @@ journey Reading {
     fn log_line(step: &str, image: &str) -> String {
         format!(
             r#"{{"step":"{step}","image":"{image}","caption":null,"passed":true,"taken_at":"2026-08-24T09:00:00Z","source":null}}"#
+        )
+    }
+
+    fn tagged_line(step: &str, image: &str, key: &str, value: &str) -> String {
+        format!(
+            r#"{{"step":"{step}","image":"{image}","caption":null,"passed":true,"taken_at":"2026-08-24T09:00:00Z","source":null,"tags":{{"{key}":"{value}"}}}}"#
         )
     }
 
@@ -596,6 +613,41 @@ journey Reading {
         );
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Two pictures of one step, differing only in what they are of.
+    #[test]
+    fn a_step_may_be_photographed_once_per_tag_and_the_report_says_which() {
+        let root = scratch("tagged");
+        std::fs::write(
+            root.join(LOG),
+            format!(
+                "{}\n{}\n",
+                tagged_line("Reading.1", "01-dark.png", "theme", "dark"),
+                tagged_line("Reading.1", "01-light.png", "theme", "light"),
+            ),
+        )
+        .expect("a log");
+        std::fs::write(root.join("01-dark.png"), "a picture").expect("a picture");
+        std::fs::write(root.join("01-light.png"), "a picture").expect("a picture");
+
+        seal(&sealing(&root), &mut Vec::new()).expect("two tagged frames seal");
+
+        let options = Checking {
+            evidence: Some(root.clone()),
+            journeys: vec![root.join("reading.journey")],
+            code: Vec::new(),
+            report: false,
+        };
+        let mut out = Vec::new();
+        assert_eq!(check(&options, &mut out), Ok(CLEAN));
+
+        let said = String::from_utf8(out).expect("text");
+        assert!(said.contains("01-dark.png"), "{said}");
+        assert!(said.contains("[theme=dark]"), "{said}");
+        assert!(said.contains("[theme=light]"), "{said}");
+        // One step, two pictures — not two steps.
+        assert!(said.starts_with("1 of 2 steps have been shown"), "{said}");
     }
 
     #[test]

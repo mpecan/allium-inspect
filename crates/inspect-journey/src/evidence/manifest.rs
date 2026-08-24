@@ -52,6 +52,20 @@ pub struct Shot {
     pub taken_at: String,
     /// Where in the harness it was taken, for going there.
     pub source: Option<String>,
+    /// What this picture is *of*, beyond which step: `theme: dark`,
+    /// `platform: ios`.
+    ///
+    /// Named rather than bare, and that is the whole of why the panel can offer
+    /// a dropdown. `theme` tells a reader that `dark` and `light` are two
+    /// answers to one question, so picking one means not the other; a flat
+    /// `["dark", "ios"]` cannot say that, and a reader would be left to infer
+    /// which of a pile of words are alternatives to which.
+    ///
+    /// The tool never learns what a key means. Anything a harness names becomes
+    /// an axis, and two harnesses that disagree about vocabulary produce two
+    /// axes rather than an argument.
+    #[serde(default)]
+    pub tags: BTreeMap<String, String>,
 }
 
 /// One picture, once the step it names has been resolved.
@@ -70,6 +84,14 @@ pub struct Frame {
     /// it stops matching: a digest can say *something changed*, and this can
     /// show them what the step said then beside what it says now.
     pub said: String,
+    /// What this picture is of, beyond which step. See [`Shot::tags`].
+    ///
+    /// `default` on both sides, so a manifest sealed before tags existed still
+    /// reads and a manifest with them is still read by a binary that predates
+    /// them. Neither is a version change: nothing about what the old fields
+    /// mean has moved.
+    #[serde(default)]
+    pub tags: BTreeMap<String, String>,
 }
 
 /// A sealed run.
@@ -150,6 +172,7 @@ pub fn seal(
             taken_at: shot.taken_at,
             source: shot.source,
             said: said.clone(),
+            tags: shot.tags,
         });
     }
 
@@ -179,6 +202,7 @@ mod tests {
             passed: true,
             taken_at: "2026-08-24T09:00:00Z".to_owned(),
             source: Some("walk.ts:12".to_owned()),
+            tags: BTreeMap::new(),
         }
     }
 
@@ -279,6 +303,47 @@ mod tests {
         let said = fault.to_string();
         assert!(said.contains("07.png"), "{said}");
         assert!(said.contains("Gone.3"), "{said}");
+    }
+
+    #[test]
+    fn a_picture_keeps_what_it_was_tagged_with() {
+        let mut tagged = shot(StepId::new("First", 1), "01.png");
+        tagged.tags = BTreeMap::from([
+            ("theme".to_owned(), "dark".to_owned()),
+            ("platform".to_owned(), "macos".to_owned()),
+        ]);
+
+        let manifest = seal(vec![tagged], &steps(), "now", None).expect("it seals");
+        let frame = manifest.frames.first().expect("one frame");
+
+        assert_eq!(frame.tags.get("theme").map(String::as_str), Some("dark"));
+        assert_eq!(frame.tags.get("platform").map(String::as_str), Some("macos"));
+    }
+
+    /// Two pictures of one step, differing only in what they are of, is the
+    /// case tags exist for.
+    #[test]
+    fn one_step_may_be_photographed_once_per_tag() {
+        let mut dark = shot(StepId::new("First", 1), "01-dark.png");
+        dark.tags = BTreeMap::from([("theme".to_owned(), "dark".to_owned())]);
+        let mut light = shot(StepId::new("First", 1), "01-light.png");
+        light.tags = BTreeMap::from([("theme".to_owned(), "light".to_owned())]);
+
+        let manifest = seal(vec![dark, light], &steps(), "now", None).expect("it seals");
+        assert_eq!(manifest.frames.len(), 2);
+    }
+
+    /// A log written before tags existed, and a manifest sealed from one.
+    /// Neither is a version change, so both must simply read.
+    #[test]
+    fn a_shot_with_no_tags_at_all_still_reads() {
+        let line = r#"{"step":"First.1","image":"01.png","caption":null,"passed":true,"taken_at":"t","source":null}"#;
+        let shot: Shot = serde_json::from_str(line).expect("the older shape reads");
+        assert!(shot.tags.is_empty());
+
+        let sealed = r#"{"version":1,"sealed_at":"now","walk":null,"frames":[{"step":"First.1","image":"01.png","caption":null,"passed":true,"taken_at":"t","source":null,"said":"1. she points at it"}]}"#;
+        let manifest: Manifest = serde_json::from_str(sealed).expect("the older manifest reads");
+        assert!(manifest.frames.first().is_some_and(|frame| frame.tags.is_empty()));
     }
 
     #[test]

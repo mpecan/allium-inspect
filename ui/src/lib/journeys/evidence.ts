@@ -79,6 +79,67 @@ export function pictureUrl(frame: Frame): string {
   return `/api/evidence/${encodeURIComponent(frame.image)}`;
 }
 
+/**
+ * One question a reader can narrow by, and the answers anybody gave to it.
+ *
+ * A tag is named — `theme: dark` rather than `dark` — and that is what makes a
+ * dropdown possible at all. The name says which pictures are *alternatives* to
+ * each other: pick `dark` and you are declining `light`, but you have said
+ * nothing about `platform`. A flat list of words could not tell a reader which
+ * of them were answers to the same question.
+ *
+ * Derived from what the frames actually carry rather than from a list the tool
+ * holds. The tool never learns what `theme` means; anything a harness names
+ * becomes an axis, and two harnesses with different vocabularies produce two
+ * axes rather than an argument.
+ */
+export interface Axis {
+  key: string;
+  values: string[];
+}
+
+/** Every axis in the evidence, and the answers given on each, sorted. */
+export function axes(resolution: Resolution | undefined): Axis[] {
+  const found = new Map<string, Set<string>>();
+
+  for (const step of Object.values(resolution?.steps ?? {})) {
+    for (const frame of step.frames) {
+      for (const [key, value] of Object.entries(frame.tags)) {
+        const values = found.get(key) ?? new Set<string>();
+        values.add(value);
+        found.set(key, values);
+      }
+    }
+  }
+
+  return [...found.entries()]
+    .map(([key, values]) => ({ key, values: [...values].sort() }))
+    .filter((axis) => axis.values.length > 0)
+    .sort((a, b) => a.key.localeCompare(b.key));
+}
+
+/** What the reader has narrowed to: an axis key to one of its values. */
+export type Narrowing = Record<string, string>;
+
+/**
+ * Whether a picture answers to what the reader asked for.
+ *
+ * A frame that carries nothing on an axis is shown whatever is picked on it.
+ * Silence is not disagreement: a harness that never said which platform it was
+ * photographing has not thereby said it was photographing the other one.
+ */
+export function matches(frame: Frame, narrowing: Narrowing): boolean {
+  return Object.entries(narrowing).every(([key, value]) => {
+    const carried = frame.tags[key];
+    return carried === undefined || carried === value;
+  });
+}
+
+/** The frames of a step that answer to what the reader asked for. */
+export function narrow(evidence: StepEvidence, narrowing: Narrowing): Frame[] {
+  return evidence.frames.filter((frame) => matches(frame, narrowing));
+}
+
 /** How many steps have been shown, out of how many there are. */
 export function tally(resolution: Resolution | undefined): { shown: number; total: number } {
   const steps = Object.values(resolution?.steps ?? {});

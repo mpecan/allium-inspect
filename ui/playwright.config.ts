@@ -31,12 +31,19 @@ export default defineConfig({
     video: "off",
     trace: "off",
     viewport: { width: 1440, height: 900 },
-    // Pinned rather than inherited. The tool follows the reader's OS theme, so
-    // a walk that took the default would photograph a different-looking product
-    // on a laptop set to light than on one set to dark — and the pictures are
-    // committed, compared between runs, and read months later. Same reasoning
-    // as the ordered maps and the clock-as-a-field: the same walk twice should
-    // produce the same evidence.
-    colorScheme: "dark",
   },
+  // One project per way of looking at the tool, and the project's name is the
+  // tag its pictures carry. Two answers to one question — `theme` — which is
+  // what becomes a dropdown in the panel.
+  //
+  // Pinned rather than inherited, either way. The tool follows the reader's OS
+  // theme, so a walk that took the default would photograph a different-looking
+  // product on a laptop set to light than on one set to dark — and these
+  // pictures are committed, compared between runs, and read months later. Same
+  // reasoning as the ordered maps and the clock-as-a-field: the same walk twice
+  // should produce the same evidence.
+  projects: [
+    { name: "dark", use: { colorScheme: "dark" } },
+    { name: "light", use: { colorScheme: "light" } },
+  ],
 });

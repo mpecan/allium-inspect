@@ -93,6 +93,7 @@ fn a_walk_of_the_real_file_seals_and_resolves() {
         passed: true,
         taken_at: "2026-08-24T09:00:00Z".to_owned(),
         source: Some("ui/e2e/reading-a-spec.walk.ts:42".to_owned()),
+        tags: std::collections::BTreeMap::from([("theme".to_owned(), "dark".to_owned())]),
     };
 
     let sealed = seal(vec![shot], &texts, "2026-08-24T09:01:00Z", Some("reading".to_owned()))
@@ -132,6 +133,7 @@ fn rewording_a_real_step_makes_its_picture_stale() {
             passed: true,
             taken_at: "2026-08-24T09:00:00Z".to_owned(),
             source: None,
+            tags: std::collections::BTreeMap::new(),
         }],
         &before,
         "now",

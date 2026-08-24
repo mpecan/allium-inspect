@@ -13,29 +13,43 @@
   // accounted for.
 
   import type { StepEvidence } from "../api/StepEvidence";
-  import { MEANING, WORD, needsAttention, pictureUrl } from "./evidence";
+  import { MEANING, WORD, type Narrowing, narrow, needsAttention, pictureUrl } from "./evidence";
 
   interface Props {
     evidence: StepEvidence;
     /** Which frame is open, by image name, or null for none. */
     open: string | null;
     onopen: (image: string | null) => void;
+    /** What the reader has narrowed the pictures to. */
+    narrowing: Narrowing;
   }
 
-  const { evidence, open, onopen }: Props = $props();
+  const { evidence, open, onopen, narrowing }: Props = $props();
+
+  const showing = $derived(narrow(evidence, narrowing));
+
+  /**
+   * Whether narrowing is what emptied this step.
+   *
+   * Worth saying out loud rather than rendering nothing. The standing above
+   * still reads `shown` — it is a fact about the step, not about the filter —
+   * and a strip that said `shown` over an empty space would be the tool
+   * contradicting itself.
+   */
+  const hiddenByNarrowing = $derived(evidence.frames.length > 0 && showing.length === 0);
 </script>
 
 <div class="evidence" class:attention={needsAttention(evidence.standing)}>
   <p class="eyebrow" title={MEANING[evidence.standing]}>
     <span class="standing {evidence.standing}">{WORD[evidence.standing]}</span>
-    {#if evidence.frames.length > 0}
-      <span class="when">{evidence.frames[0]?.taken_at}</span>
+      {#if showing.length > 0}
+      <span class="when">{showing[0]?.taken_at}</span>
     {/if}
   </p>
 
-  {#if evidence.frames.length > 0}
+  {#if showing.length > 0}
     <ul class="frames">
-      {#each evidence.frames as frame (frame.image)}
+      {#each showing as frame (frame.image)}
         <li class:open={open === frame.image}>
           <button
             type="button"
@@ -46,10 +60,24 @@
           >
             <img src={pictureUrl(frame)} alt={frame.caption ?? `a picture of this step`} />
           </button>
+          <!-- What this one is of, on every picture rather than only when
+               several are side by side. A reader who narrowed to `dark` two
+               screens ago should not have to remember that they did. -->
+          {#if Object.keys(frame.tags).length > 0}
+            <ul class="tags">
+              {#each Object.entries(frame.tags) as [key, value] (key)}
+                <li><span class="tag-key">{key}</span> <span>{value}</span></li>
+              {/each}
+            </ul>
+          {/if}
           {#if frame.caption}<p class="caption">{frame.caption}</p>{/if}
         </li>
       {/each}
     </ul>
+  {:else if hiddenByNarrowing}
+    <p class="prose caveat none">
+      This step was photographed, and not the way you have asked to see it.
+    </p>
   {/if}
 
   <!-- Both halves in front of the reader. A picture that no longer matches its
@@ -64,7 +92,7 @@
       <div class="side-by-side">
         <div>
           <p class="eyebrow">it said</p>
-          <pre>{evidence.frames[0]?.said ?? ""}</pre>
+          <pre>{(showing[0] ?? evidence.frames[0])?.said ?? ""}</pre>
         </div>
         <div>
           <p class="eyebrow">it says now</p>
@@ -157,6 +185,31 @@
     display: block;
     width: 100%;
     height: auto;
+  }
+
+  /* Small, and under the picture rather than over it: it labels the thumbnail
+     and must not compete with the caption, which says what is happening. */
+  .tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--gap-2);
+    list-style: none;
+    margin: 2px 0 0;
+    padding: 0;
+    font-size: var(--t-small);
+    color: var(--ink-dim);
+  }
+  /* The key is the quieter half: a reader scanning a row of thumbnails is
+     looking for `dark`, not for `theme`. The space between them is in the
+     markup rather than in a `::after`, so it is there for a screen reader and
+     for anyone copying the text. */
+  .tag-key {
+    color: var(--ink-dim);
+    opacity: 0.7;
+  }
+
+  .none {
+    margin: var(--gap-2) 0 0;
   }
 
   .caption {
