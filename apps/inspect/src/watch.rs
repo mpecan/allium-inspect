@@ -24,7 +24,7 @@ use std::{
 };
 
 use inspect_model::ProcessRunner;
-use inspect_server::{AppState, Inspection};
+use inspect_server::{AppState, Evidence, Inspection};
 use notify::{Event, RecursiveMode, Watcher};
 
 /// How long to wait for a burst of filesystem events to settle.
@@ -33,6 +33,14 @@ use notify::{Event, RecursiveMode, Watcher};
 /// feels like a consequence of hitting save.
 const SETTLE: Duration = Duration::from_millis(150);
 
+/// Everything a reload re-reads.
+#[derive(Debug, Clone)]
+pub struct Inputs {
+    pub paths: Vec<PathBuf>,
+    pub journeys: Option<PathBuf>,
+    pub evidence: Option<PathBuf>,
+    pub code: Vec<PathBuf>,
+}
 /// Watch `paths` and rebuild `state` whenever any of them changes.
 ///
 /// Runs until the process ends. Returns an error only if a watcher could not be
@@ -40,15 +48,20 @@ const SETTLE: Duration = Duration::from_millis(150);
 /// the loop keeps going, because a spec that stops parsing is the expected case
 /// rather than a reason to give up watching.
 ///
+/// Everything a reload re-reads travels together in [`Inputs`]. They are one
+/// thing — what this process was pointed at — and four positional arguments of
+/// two shapes is a call nobody can read at the site.
+///
 /// # Errors
 ///
 /// Returns a message when no watcher could be set up.
 pub fn watch(
-    paths: Vec<PathBuf>,
-    journeys: Option<PathBuf>,
+    inputs: Inputs,
     allium: PathBuf,
     state: AppState,
 ) -> Result<std::thread::JoinHandle<()>, String> {
+    let Inputs { paths, journeys, evidence, code } = inputs;
+
     let (sender, receiver) = mpsc::channel::<()>();
 
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<Event>| {
@@ -113,7 +126,11 @@ pub fn watch(
             // new file — the watcher noticed the change and the rebuild could
             // not see what had changed.
             let found = journeys.as_deref().map(crate::args::journeys).unwrap_or_default();
-            match Inspection::build(&runner, &paths, &found) {
+            // Re-read with the rest. A walk sealed since the last reload should
+            // appear without restarting the browser, which is the same loop the
+            // spec itself is on.
+            let shown = Evidence::read(evidence.as_deref(), &code);
+            match Inspection::build(&runner, &paths, &found, &shown) {
                 Ok(inspection) => {
                     let graph = &inspection.graph;
                     println!(

@@ -85,6 +85,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/spec", get(spec))
         .route("/api/spec/source/{module}", get(source))
         .route("/api/journeys", get(journeys))
+        .route("/api/evidence/{image}", get(evidence))
         .route("/api/sim/setup", get(crate::sim::setup))
         .route("/api/sim/step", axum::routing::post(crate::sim::take_step))
         .fallback(assets)
@@ -129,6 +130,50 @@ async fn spec(State(state): State<AppState>) -> Json<inspect_model::SpecGraph> {
 /// about the graph the rest of the browser is showing.
 async fn journeys(State(state): State<AppState>) -> Json<crate::JourneyReport> {
     Json(state.get().journeys().clone())
+}
+
+/// One picture a sealed frame names.
+///
+/// The manifest is the allowlist: the name is looked up among the frames, and
+/// nothing a client sends is ever joined to a path. A sanitiser would have to
+/// be right about every spelling of `..`; a lookup has to be right about
+/// nothing. See `evidence::Evidence::picture`.
+async fn evidence(
+    State(state): State<AppState>,
+    Path(image): Path<String>,
+) -> Result<Response, Response> {
+    let inspection = state.get();
+    let Some(path) = inspection.evidence().picture(&image) else {
+        return Err(
+            (StatusCode::NOT_FOUND, format!("no sealed frame names `{image}`")).into_response()
+        );
+    };
+
+    let bytes = std::fs::read(&path).map_err(|error| {
+        (StatusCode::NOT_FOUND, format!("`{image}` could not be read: {error}")).into_response()
+    })?;
+
+    // Named by the run that took it and served from a directory that changes
+    // under us, so it is revalidated rather than cached: a walk re-run between
+    // two reloads would otherwise show the previous run's pictures.
+    Ok(([(header::CONTENT_TYPE, picture_type(&image)), (header::CACHE_CONTROL, "no-cache")], bytes)
+        .into_response())
+}
+
+/// What kind of picture a name says it is.
+///
+/// A short list rather than a crate: a harness photographs a screen, and this
+/// is what a screenshot is saved as. Anything else is served as bytes the
+/// browser is left to sniff, which for an `<img>` means it simply will not
+/// render — the honest outcome for a file nothing here claims to understand.
+fn picture_type(image: &str) -> &'static str {
+    match image.rsplit_once('.').map(|(_, extension)| extension.to_ascii_lowercase()) {
+        Some(extension) if extension == "png" => "image/png",
+        Some(extension) if extension == "jpg" || extension == "jpeg" => "image/jpeg",
+        Some(extension) if extension == "webp" => "image/webp",
+        Some(extension) if extension == "avif" => "image/avif",
+        _ => "application/octet-stream",
+    }
 }
 
 async fn source(
@@ -454,6 +499,7 @@ mod tests {
             }],
             holding: 0,
             total: 0,
+            evidence: inspect_journey::resolve(&std::collections::BTreeMap::new(), None, &[]),
         };
         let state = AppState::new(fixture_inspection().with_journeys(report));
         let (status, body) = get(router(state), "/api/journeys").await;
@@ -461,6 +507,34 @@ mod tests {
         let document: Value = serde_json::from_str(&body).expect("JSON");
         assert_eq!(document["files"][0]["name"], "lending.journey");
         assert_eq!(document["files"][0]["path"], "journeys/lending.journey");
+    }
+
+    /// The traversal defence, asserted at the route rather than only at the
+    /// lookup behind it. A server started with no evidence at all has an empty
+    /// allowlist, so every name is refused — which is the state most people run
+    /// the tool in and the one a regression would slip through.
+    #[tokio::test]
+    async fn a_picture_no_frame_names_is_not_served() {
+        for name in
+            ["01.png", "..%2F..%2F..%2Fetc%2Fpasswd", "%2Fetc%2Fpasswd", "%2E%2E%2Fsecret.txt"]
+        {
+            let state = AppState::new(fixture_inspection());
+            let (status, body) = get(router(state), &format!("/api/evidence/{name}")).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "`{name}` was served");
+            assert!(body.contains("no sealed frame names"), "`{name}`: {body}");
+        }
+    }
+
+    #[test]
+    fn a_picture_is_served_as_what_its_name_says_it_is() {
+        assert_eq!(picture_type("01-a-step.png"), "image/png");
+        assert_eq!(picture_type("01.JPEG"), "image/jpeg");
+        assert_eq!(picture_type("01.webp"), "image/webp");
+        assert_eq!(picture_type("01.avif"), "image/avif");
+        // Nothing here claims to know what these are, and saying so leaves an
+        // `<img>` refusing to render rather than the browser guessing.
+        assert_eq!(picture_type("notes.txt"), "application/octet-stream");
+        assert_eq!(picture_type("nodot"), "application/octet-stream");
     }
 
     #[tokio::test]

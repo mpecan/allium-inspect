@@ -9,10 +9,17 @@
 //! alternative is a journey silently vanishing from the list, which reads as
 //! "it passed".
 
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
-use inspect_journey::{Verdict, Walk, parse, walk};
+use inspect_journey::{
+    Resolution, StepId, Verdict, Walk, parse, resolve as stand, step_texts, walk,
+};
 use inspect_model::{Program, SpecGraph};
+
+use crate::evidence::Evidence;
 use inspect_sim::step::Sources;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -46,6 +53,14 @@ pub struct JourneyReport {
     /// How many journeys hold end to end, out of how many were walked.
     pub holding: usize,
     pub total: usize,
+    /// Where every step stands: shown, stale, claimed, or nothing.
+    ///
+    /// A different question from the verdicts beside it, and the panel keeps
+    /// them apart on purpose. A verdict says whether the *specification*
+    /// supports a step; this says whether anybody has shown the software doing
+    /// it. A step can hold and have never been photographed, and one that has
+    /// been photographed can still be a step the spec does not support.
+    pub evidence: Resolution,
 }
 
 impl JourneyReport {
@@ -56,19 +71,36 @@ impl JourneyReport {
         graph: &SpecGraph,
         program: &Program,
         sources: &Sources,
+        evidence: &Evidence,
     ) -> Self {
         let files: Vec<JourneyFile> =
             files.iter().map(|path| read_one(path, graph, program, sources)).collect();
         let walks = files.iter().flat_map(|file| file.walks.iter());
         let total = walks.clone().count();
         let holding = walks.filter(|walk| walk.verdict() == Verdict::Specified).count();
-        Self { files, holding, total }
+
+        // Sliced from the same text the walks were read from, so a step's
+        // standing and its verdict are always about the same version of it.
+        let mut steps: BTreeMap<StepId, String> = BTreeMap::new();
+        for file in &files {
+            if let Ok(journeys) = parse(&file.text) {
+                steps.extend(step_texts(&file.text, &journeys));
+            }
+        }
+
+        let evidence = stand(&steps, evidence.manifest.as_ref(), &evidence.claims);
+        Self { files, holding, total, evidence }
     }
 
     /// A report with nothing in it, for a server started without `--journeys`.
     #[must_use]
     pub fn empty() -> Self {
-        Self { files: Vec::new(), holding: 0, total: 0 }
+        Self {
+            files: Vec::new(),
+            holding: 0,
+            total: 0,
+            evidence: stand(&BTreeMap::new(), None, &[]),
+        }
     }
 }
 
@@ -128,7 +160,13 @@ mod tests {
     }
 
     fn build(paths: &[PathBuf]) -> JourneyReport {
-        JourneyReport::build(paths, &spec(), &Program::new(), &BTreeMap::new())
+        JourneyReport::build(
+            paths,
+            &spec(),
+            &Program::new(),
+            &BTreeMap::new(),
+            &Evidence::default(),
+        )
     }
 
     const ONE: &str =

@@ -12,11 +12,13 @@
 
 #![forbid(unsafe_code)]
 
+mod evidence;
 mod journeys;
 mod routes;
 mod sim;
 mod state;
 
+pub use evidence::Evidence;
 pub use journeys::{JourneyFile, JourneyReport};
 pub use routes::{router, serve};
 pub use state::{AppState, Inspection, ModuleSource};

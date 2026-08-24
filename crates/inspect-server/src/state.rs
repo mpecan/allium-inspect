@@ -21,7 +21,7 @@ use inspect_model::{
 use inspect_sim::step::Sources;
 use serde::Serialize;
 
-use crate::journeys::JourneyReport;
+use crate::{evidence::Evidence, journeys::JourneyReport};
 
 /// One spec file's text, as the source panel needs it.
 #[derive(Debug, Clone, Serialize)]
@@ -46,6 +46,8 @@ pub struct Inspection {
     /// spec and the verdicts have to move with it; a report that outlived the
     /// graph it was computed from would be the most confident kind of wrong.
     journeys: JourneyReport,
+    /// The run behind the pictures, kept for the route that serves them.
+    evidence: Evidence,
 }
 
 impl Inspection {
@@ -59,6 +61,7 @@ impl Inspection {
         runner: &R,
         paths: &[PathBuf],
         journeys: &[PathBuf],
+        evidence: &Evidence,
     ) -> Result<Self, IngestError> {
         let Ingestion { graph, program } = ingest(runner, &FileReader, paths)?;
         let mut sources = BTreeMap::new();
@@ -76,8 +79,8 @@ impl Inspection {
         }
         let texts: Sources =
             sources.iter().map(|(module, source)| (module.clone(), source.text.clone())).collect();
-        let journeys = JourneyReport::build(journeys, &graph, &program, &texts);
-        Ok(Self { graph, program, sources, texts, journeys })
+        let journeys = JourneyReport::build(journeys, &graph, &program, &texts, evidence);
+        Ok(Self { graph, program, sources, texts, journeys, evidence: evidence.clone() })
     }
 
     /// An inspection assembled from parts, without running anything.
@@ -91,7 +94,14 @@ impl Inspection {
             sources.into_iter().map(|source| (source.module.clone(), source)).collect();
         let texts =
             sources.iter().map(|(module, source)| (module.clone(), source.text.clone())).collect();
-        Self { graph, program: Program::new(), sources, texts, journeys: JourneyReport::empty() }
+        Self {
+            graph,
+            program: Program::new(),
+            sources,
+            texts,
+            journeys: JourneyReport::empty(),
+            evidence: Evidence::default(),
+        }
     }
 
     /// Give an assembled inspection a journey report, for the route tests.
@@ -105,6 +115,12 @@ impl Inspection {
     #[must_use]
     pub fn journeys(&self) -> &JourneyReport {
         &self.journeys
+    }
+
+    /// The pictures a run left behind.
+    #[must_use]
+    pub fn evidence(&self) -> &Evidence {
+        &self.evidence
     }
 
     /// One module's source.

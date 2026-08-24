@@ -51,6 +51,21 @@ pub struct Args {
     #[arg(long, requires = "journeys")]
     pub json: bool,
 
+    /// A directory holding a sealed `manifest.json` and its pictures.
+    ///
+    /// What a test run *showed* of a journey, beside what the specification
+    /// says about it. Written by `allium-journey evidence seal`.
+    #[arg(long, value_name = "PATH", requires = "journeys")]
+    pub evidence: Option<PathBuf>,
+
+    /// Where to look for `journey:` markers in source.
+    ///
+    /// Separate from `--evidence` because the case worth reporting is a test
+    /// that claims a step and produced no picture — and in exactly that case
+    /// the run wrote nothing, so the claim cannot be derived from the manifest.
+    #[arg(long, value_name = "PATH", requires = "journeys")]
+    pub code: Vec<PathBuf>,
+
     /// The allium binary to run.
     #[arg(long, default_value = "allium")]
     pub allium: PathBuf,

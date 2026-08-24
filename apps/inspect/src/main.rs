@@ -17,7 +17,7 @@ use std::{net::SocketAddr, path::PathBuf, process::ExitCode};
 use args::Args;
 use clap::Parser;
 use inspect_model::ProcessRunner;
-use inspect_server::{AppState, Inspection, serve};
+use inspect_server::{AppState, Evidence, Inspection, serve};
 use tokio::net::TcpListener;
 
 #[tokio::main]
@@ -64,8 +64,9 @@ async fn run(args: Args) -> Result<(), String> {
     };
 
     let runner = ProcessRunner::new(&args.allium);
-    let inspection =
-        Inspection::build(&runner, &paths, &journeys).map_err(|error| error.to_string())?;
+    let evidence = Evidence::read(args.evidence.as_deref(), &args.code);
+    let inspection = Inspection::build(&runner, &paths, &journeys, &evidence)
+        .map_err(|error| error.to_string())?;
 
     // `--strict` and `--json` are terminal answers, so asking for either is
     // asking for the terminal.
@@ -88,8 +89,13 @@ async fn run(args: Args) -> Result<(), String> {
     // open in an editor beside it, and a reload that needs a restart turns a
     // two-second loop into a ten-second one.
     if !args.no_watch {
-        match watch::watch(paths.clone(), args.journeys.clone(), args.allium.clone(), state.clone())
-        {
+        let inputs = watch::Inputs {
+            paths: paths.clone(),
+            journeys: args.journeys.clone(),
+            evidence: args.evidence.clone(),
+            code: args.code.clone(),
+        };
+        match watch::watch(inputs, args.allium.clone(), state.clone()) {
             Ok(_handle) => println!("watching for changes"),
             // Not fatal. A machine whose watcher limit is exhausted, or a
             // filesystem that does not support notifications, is a reason to
