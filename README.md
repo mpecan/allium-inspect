@@ -341,11 +341,37 @@ never heard of this" and "this tool could not tell" are three different pieces
 of work, and a reader who sees one failure for all three will go and change a
 specification that is not wrong.
 
-Every form a journey can contain is in
-[`docs/journeys/reference.md`](docs/journeys/reference.md) — one example each,
-all of them runnable against the fixture spec set. The design, and what is
-deliberately left out of it, is in
-[`docs/journeys/README.md`](docs/journeys/README.md).
+### And what actually happened
+
+A verdict says whether the *specification* supports a step. Whether the
+**software** does it is a different claim, and evidence is where that one is
+answered: a test run photographs the product, each picture says which step it
+shows, and the panel puts them under the steps they are of.
+
+```sh
+just walk                                             # drive the UI, seal what it took
+allium-inspect --journeys journeys/ --evidence target/evidence/ --code . specs/
+```
+
+```text
+2 claimed  3 shown       theme [ dark ▾ ]
+```
+
+Five standings, and the useful ones are the negative ones. **claimed** is a test
+that says it demonstrates a step and produced nothing — without a marker in the
+code that is indistinguishable from a step nobody ever covered. **stale** is a
+picture taken before the step was reworded, shown beside what the step used to
+say. A journey can declare the ways it should be shown, and then the control
+appears before any picture does.
+
+### Reading further
+
+| | |
+|---|---|
+| [`reference.md`](docs/journeys/reference.md) | every form a journey can contain, one runnable example each |
+| [`evidence.md`](docs/journeys/evidence.md) | the marker, the log, the seal, the tags |
+| [`adopting.md`](docs/journeys/adopting.md) | adding journeys to a repository that has none |
+| [`README.md`](docs/journeys/README.md) | the design, and what is deliberately left out |
 
 ## Quality gates
 

@@ -1,5 +1,10 @@
 # User journeys over an Allium spec
 
+> **Writing one?** [`reference.md`](reference.md) is the grammar,
+> [`adopting.md`](adopting.md) is the path through a repository that has none,
+> and [`evidence.md`](evidence.md) is how a journey gets pictures of itself.
+> This file is the design and the reasoning.
+
 > **Looking for the syntax?** [`reference.md`](reference.md) has every form a
 > journey can contain, with a runnable example of each. This document is the
 > reasoning: what a journey is for, and what it deliberately is not.
@@ -102,7 +107,7 @@ conditionals for exactly that reason.
 
 Beside the specs, and read with them:
 
-```
+```text
 specs/     messaging.allium  delivery.allium  …
 journeys/  deletion-taken-back.journey  deletion-becomes-final.journey  …
 ```
@@ -140,7 +145,7 @@ journey DeletionCanBeTakenBack {
         his_phone.identity = bruno
         his_phone.status = active
 
-        chat: membership/Group
+        chat: membership/Group {}
         note: messaging/Message { author: ada, group: chat, body: "forget I said that" }
 
     1. ada deletes it everywhere
@@ -254,7 +259,7 @@ and tells nobody — and `friend-mesh` has one: `OpenDeletions` exposes deletion
 `where status = applied`, so once an intent settles it vanishes from the only
 screen that ever mentioned it. A second journey states it in one line:
 
-```
+```no-check
 journey DeletionBecomesFinal {
     …
     2. the day passes and it settles
@@ -273,7 +278,7 @@ how many steps hold, and which spec constructs the rest are waiting on.
 > Report, do not reject is one option, I would allow a switch that allows
 > either, default to report.
 
-```
+```text
 allium-journey walk  --report   every step gets a status; exit 0
 allium-journey walk             unspecified or refused is a failure; exit non-zero
 
@@ -306,7 +311,7 @@ stipulate ada.active_devices.count = 2
 *Take this as true; I am not asking you to work it out.* The rule is that **every
 stipulation appears at the top of the report**, always:
 
-```
+```text
 DeletionCanBeTakenBack — holds, given 2 things it was told rather than shown
     stipulated  ada.active_devices.count = 2
     stipulated  note.has_attachment = false
@@ -349,14 +354,20 @@ obligations a *spec* owes.
    The journey's own source sits along the bottom, the way a spec's does:
    selecting a step moves the strip to the line that step is written on, so the
    verdict and the sentence that earned it are never in two different places.
+3. **Evidence** — a picture of the software doing the step, under the step. A
+   test run photographs the product, a marker in the code says which step a test
+   demonstrates, and the panel tells *shown* from *claimed and never
+   photographed* from *photographed before the step was reworded*. The whole
+   chain is in [`evidence.md`](evidence.md).
+
 ### Not built
 
 Both of these are still ideas, listed here because the shape of the tool makes
 them cheap and because a reader should be told which parts they cannot use yet.
 
-3. **Coverage, both ways** — which surface operations no journey exercises, and
+4. **Coverage, both ways** — which surface operations no journey exercises, and
    which journey steps no spec construct answers. The second is the backlog.
-4. **Proposed journeys** — skeletons from surfaces and traces, for filling in.
+5. **Proposed journeys** — skeletons from surfaces and traces, for filling in.
    Useful for covering a spec that already exists; it is *not* the main path, and
    a tool that only proposed journeys derived from the spec could never find a
    step nobody had specified.
@@ -392,9 +403,12 @@ says so rather than a rule in the checker that guesses.
   `announces_reads(owner)` is a call the simulator does not make. The honest
   fraction on a real spec is unknown until it is tried, and if it is low the
   `unexposed` verdict is worth less than this design assumes.
-- **What does a step number mean when a journey changes?** `friend-mesh` numbers
-  steps and refers to them by number in prose across other documents. Renumbering
-  on an insert would break those references.
+- ~~**What does a step number mean when a journey changes?**~~ Settled, and by
+  building on it rather than by deciding: a step number is now a citation that
+  code carries (`// journey: Name.3`), so renumbering on an insert breaks real
+  references and not only prose ones. Never renumber. Rewording a step is
+  allowed and detected — the pictures of it go `stale` and say what it used to
+  say — which is the safety the numbers do not need.
 - **Does `given` need a spec-level home?** If journeys are part of the
   specification, a world every journey in a module shares starts to look like
   something the spec should declare rather than something each file repeats.

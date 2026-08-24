@@ -70,6 +70,26 @@ one.
 
 The names are what every clause below refers to.
 
+## `shows` — how it should be demonstrated
+
+Optional, and only worth writing when a journey is photographed more than one
+way. Each line is a question a picture can answer and the answers worth having.
+
+```
+shows:
+    theme: dark, light
+```
+
+The Journeys view grows one dropdown per key, offering it **before any picture
+exists** and marking the values nothing has answered *none yet*: a declaration
+is a demand written before the thing it asks for, the same as a step. A tag
+outside the declaration is reported — which is the typo it exists to catch.
+
+An axis needs at least two values (a control offering one does nothing) and may
+not list the same value twice. Declaring nothing constrains nothing.
+
+See [`evidence.md`](evidence.md) for the whole chain.
+
 ## `given` — what is already true
 
 Two forms.
