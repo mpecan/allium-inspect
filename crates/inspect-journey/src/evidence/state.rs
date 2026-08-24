@@ -37,12 +37,6 @@ pub enum Standing {
 }
 
 impl Standing {
-    /// Whether this is something a reader should look at.
-    #[must_use]
-    pub fn needs_attention(self) -> bool {
-        matches!(self, Standing::Failing | Standing::Stale | Standing::Claimed)
-    }
-
     /// Whether a gate should fail on it.
     ///
     /// Unclaimed is not a failure: most steps of most journeys are demand

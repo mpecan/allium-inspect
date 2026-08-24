@@ -47,7 +47,7 @@ fn main() -> ExitCode {
             Ok(code) => ExitCode::from(code),
             Err(message) => {
                 eprintln!("allium-journey: {message}");
-                ExitCode::from(evidence::unusable())
+                ExitCode::from(run::UNUSABLE)
             }
         };
     }

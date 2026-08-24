@@ -194,6 +194,55 @@ journey Second {
         assert_ne!(after.get(&StepId::new("First", 1)), texts().get(&StepId::new("First", 1)));
     }
 
+    /// A clause wrapped over two lines: the parser records only where it
+    /// *starts*, so a step bounded by its last clause's line alone would stop
+    /// one line short and lose the rest of the sentence.
+    #[test]
+    fn a_clause_continued_on_the_next_line_is_part_of_the_step() {
+        let source = "\
+journey Wrapped {
+    goal: something
+
+    1. she borrows one
+        ada does MemberBorrows(ada, copy) on MemberShelf
+            creating loan: Loan
+}
+";
+        let journeys = parse(source).expect("a wrapped clause parses");
+        let text = step_texts(source, &journeys)
+            .get(&StepId::new("Wrapped", 1))
+            .cloned()
+            .unwrap_or_default();
+
+        assert!(text.contains("creating loan: Loan"), "the continuation was cut off: {text}");
+        assert!(!text.contains('}'), "and it did not run on past the journey: {text}");
+    }
+
+    /// The other direction: a continuation must not swallow what follows it.
+    #[test]
+    fn a_continuation_stops_at_the_next_thing_at_its_own_depth() {
+        let source = "\
+journey Wrapped {
+    goal: something
+
+    1. she borrows one
+        ada does MemberBorrows(ada, copy) on MemberShelf
+            creating loan: Loan
+        then loan.status = open
+
+    2. and returns it
+        then loan.status = returned
+}
+";
+        let journeys = parse(source).expect("the fixture parses");
+        let texts = step_texts(source, &journeys);
+        let first = texts.get(&StepId::new("Wrapped", 1)).cloned().unwrap_or_default();
+
+        assert!(first.contains("creating loan: Loan"), "{first}");
+        assert!(first.contains("then loan.status = open"), "{first}");
+        assert!(!first.contains("returned"), "step 1 ran on into step 2: {first}");
+    }
+
     #[test]
     fn a_journey_with_no_steps_contributes_nothing() {
         let source = "journey Empty {\n    goal: nothing happens\n}\n";

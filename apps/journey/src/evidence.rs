@@ -24,7 +24,7 @@ use inspect_journey::{
 use crate::{
     args::{Checking, Sealing},
     resolve::resolve,
-    run::{CLEAN, REPORTED, UNUSABLE},
+    run::{CLEAN, REPORTED},
 };
 
 /// The log a harness appends to, one JSON object a line.
@@ -283,12 +283,6 @@ fn first_line(text: &str) -> &str {
     text.lines().next().unwrap_or(text)
 }
 
-/// Whether a run is worth a non-zero exit, for `main`.
-#[must_use]
-pub fn unusable() -> u8 {
-    UNUSABLE
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -516,6 +510,92 @@ journey Reading {
                 .any(|(path, _)| path.contains("node_modules")),
             "a marker in a dependency is not this repository's claim"
         );
+    }
+
+    /// `now()` is the one clock in any of this. Untested, a seal without
+    /// `--at` would stamp a manifest with whatever it liked.
+    #[test]
+    fn a_seal_with_no_time_given_stamps_one_of_its_own() {
+        let root = scratch("clock");
+        std::fs::write(root.join(LOG), format!("{}\n", log_line("Reading.1", "01.png")))
+            .expect("a log");
+        std::fs::write(root.join("01.png"), "not really a png").expect("a picture");
+
+        let mut options = sealing(&root);
+        options.at = None;
+        seal(&options, &mut Vec::new()).expect("it seals");
+
+        let written = std::fs::read_to_string(root.join(MANIFEST)).expect("a manifest");
+        let manifest: Manifest = serde_json::from_str(&written).expect("it reads back");
+
+        let seconds: u64 = manifest.sealed_at.parse().expect("a stamp, in seconds");
+        // Later than this file was written, and not some distant future.
+        assert!(seconds > 1_750_000_000, "not a plausible time: {seconds}");
+        assert!(seconds < 4_000_000_000, "not a plausible time: {seconds}");
+    }
+
+    /// A step is several lines. A report that printed all of them under every
+    /// stale entry would bury the list it exists to be.
+    #[test]
+    fn a_stale_step_reports_only_its_first_line() {
+        let root = scratch("firstline");
+        std::fs::write(root.join(LOG), format!("{}\n", log_line("Reading.1", "01.png")))
+            .expect("a log");
+        std::fs::write(root.join("01.png"), "not really a png").expect("a picture");
+        seal(&sealing(&root), &mut Vec::new()).expect("it seals");
+
+        // The same journey with that step reworded under it.
+        std::fs::write(
+            root.join("reading.journey"),
+            journey_text().replace("she points at it", "she points at the directory"),
+        )
+        .expect("a reworded journey");
+
+        let options = Checking {
+            evidence: Some(root.clone()),
+            journeys: vec![root.join("reading.journey")],
+            code: Vec::new(),
+            report: false,
+        };
+
+        let mut out = Vec::new();
+        assert_eq!(check(&options, &mut out), Ok(REPORTED));
+        let said = String::from_utf8(out).expect("text");
+
+        assert!(said.contains("it now says: 1. she points at the directory"), "{said}");
+        assert!(
+            !said.contains("then set.status = reading"),
+            "the whole step was printed where one line was wanted: {said}"
+        );
+    }
+
+    /// The backstop the walk has for the same reason: a link pointing at one of
+    /// its own parents. Only a real guard if something has been down there.
+    #[test]
+    fn a_tree_deeper_than_the_cap_stops_rather_than_running_out_of_stack() {
+        let root =
+            std::env::temp_dir().join(format!("allium-journey-deep-scan-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+
+        let mut deep = root.clone();
+        for level in 0..(DEEPEST + 5) {
+            deep = deep.join(format!("level{level}"));
+        }
+        std::fs::create_dir_all(&deep).expect("a deep temp tree");
+        std::fs::write(deep.join("buried.rs"), "// journey: Reading.1\n").expect("a marked file");
+        std::fs::write(root.join("shallow.rs"), "// journey: Reading.2\n").expect("a marked file");
+
+        let found = sources_under(std::slice::from_ref(&root));
+        assert!(
+            found.iter().any(|(path, _)| path.ends_with("shallow.rs")),
+            "the shallow file must still be scanned"
+        );
+        assert!(
+            !found.iter().any(|(path, _)| path.ends_with("buried.rs")),
+            "the cap must stop before the buried one"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
