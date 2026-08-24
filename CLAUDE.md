@@ -183,10 +183,27 @@ says which pictures are alternatives to each other, so picking `dark` declines
 `light` and says nothing about `platform`. A flat `["dark", "ios"]` would leave
 a reader to work out which of a pile of words were answers to the same question.
 
-The tool never learns what a key means. Anything a harness names becomes an
-axis, two harnesses with different vocabularies produce two axes rather than an
-argument, and a picture that says nothing on an axis is shown whatever is picked
-on it — silence is not disagreement.
+A journey **declares** the ways it should be shown, beside `cast:` and `given:`:
+
+```
+shows:
+    theme: dark, light
+```
+
+That is the difference between evidence a harness happened to produce and
+evidence the journey asked for. The control appears before a picture exists,
+with the values nothing has answered marked *none yet* — a declaration is a
+demand written before the thing it asks for, the same as a step, so it is
+reported and is **not** a failure. A tag outside the declaration is: usually a
+typo, which without this quietly becomes a second axis nobody meant.
+
+Declaring nothing constrains nothing. A journey with no `shows:` block reads its
+axes off whatever the pictures carry and reports no tag, so a set that has never
+used this is never suddenly told about every tag it has. Declaring one axis is
+opting in to being told about the rest.
+
+The tool never learns what a key means. A picture that says nothing on an axis
+is shown whatever is picked on it — silence is not disagreement.
 
 `just walk` is the producer and is **not** in `check`: it needs a browser
 downloaded and costs minutes, so it is a decision like `mutants`. The walk
