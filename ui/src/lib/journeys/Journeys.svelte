@@ -18,7 +18,14 @@
   import SourceStrip from "../panels/SourceStrip.svelte";
   import { spanOfLine } from "../panels/source";
   import Cast from "./Cast.svelte";
+  import Evidence from "./Evidence.svelte";
   import { MARK, MEANING, needsAttention, tally, worst } from "./verdicts";
+  import {
+    WORD,
+    at as evidenceAt,
+    summary as evidenceSummary,
+    worthShowing,
+  } from "./evidence";
 
   interface Props {
     report: JourneyReport | null;
@@ -83,6 +90,28 @@
   function scrub(journey: string, step: number) {
     at = at?.journey === journey && at.step === step ? null : { journey, step };
   }
+
+  /**
+   * Which picture is open, by image name.
+   *
+   * Held here rather than per step so that opening one closes the last: two
+   * screenshots at full width, of two different steps, is a page nobody can
+   * read against the clauses either of them is under.
+   */
+  let openFrame = $state<string | null>(null);
+
+  /** Where each step of the current walk stands, and what it was shown by. */
+  const standings = $derived(report?.evidence);
+
+  const shownHere = $derived(
+    current
+      ? evidenceSummary(
+          standings,
+          current.walk.name,
+          current.walk.steps.map((step) => step.number),
+        )
+      : [],
+  );
 
   /** Every verdict in a walk, including the ones outside its steps. */
   function verdictsOf(walk: Walk): VerdictKind[] {
@@ -183,6 +212,21 @@
         {/each}
       </ul>
 
+      <!-- A separate line from the tally above it, and separate on purpose.
+           That one says what the *specification* supports; this says whether
+           anybody has shown the software doing it. Reading either as the other
+           gets the wrong answer in both directions. -->
+      {#if shownHere.length > 0}
+        <ul class="tally evidence-tally">
+          {#each shownHere as entry (entry.standing)}
+            <li>
+              <span class="count">{entry.count}</span>
+              <span class="meaning standing-{entry.standing}">{WORD[entry.standing]}</span>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+
       {#if walk.stipulated.length > 0}
         <!-- First, and always. An agent can make any journey pass; it cannot
              make one pass invisibly, and this is where that is enforced. -->
@@ -223,6 +267,7 @@
       <ol class="steps">
         {#each walk.steps as step, index (step.number)}
           {@const stepMark = stepVerdict(step)}
+          {@const shown = evidenceAt(standings, walk.name, step.number)}
           <li class:attention={needsAttention(stepMark)}>
             <!-- Selecting a step points the cast panel at the world that step
                  left behind. It is a scrub rather than a navigation: nothing
@@ -255,6 +300,13 @@
                 </li>
               {/each}
             </ul>
+            {#if worthShowing(shown)}
+              <Evidence
+                evidence={shown}
+                open={openFrame}
+                onopen={(image) => (openFrame = image)}
+              />
+            {/if}
           </li>
         {/each}
       </ol>
@@ -433,6 +485,15 @@
     padding: var(--gap-2) 0;
     border-top: 1px solid var(--line);
     border-bottom: 1px solid var(--line);
+  }
+
+  .evidence-tally .standing-shown {
+    color: var(--verdict-true);
+  }
+  .evidence-tally .standing-failing,
+  .evidence-tally .standing-stale,
+  .evidence-tally .standing-claimed {
+    color: var(--verdict-unknown);
   }
 
   .tally li {

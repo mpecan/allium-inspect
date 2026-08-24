@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import type { JourneyReport } from "../api/JourneyReport";
 import type { Outcome } from "../api/Outcome";
+import type { Resolution } from "../api/Resolution";
 import type { Verdict } from "../api/Verdict";
 import type { Walk } from "../api/Walk";
 import type { World } from "../api/World";
@@ -46,8 +47,13 @@ function walk(name: string, outcomes: Outcome[], stipulated: string[] = []): Wal
   };
 }
 
-function report(walks: Walk[], error: string | null = null): JourneyReport {
+function report(
+  walks: Walk[],
+  error: string | null = null,
+  evidence: Resolution = { steps: {}, unknown: [] },
+): JourneyReport {
   return {
+    evidence,
     files: [
       {
         path: "specs/journeys/lending.journey",
@@ -194,5 +200,129 @@ describe("Journeys cast panel", () => {
     // sits beside.
     render(Journeys, { report: report([walk("A", [line("specified", "then x = 1")])]), failure: null });
     expect(screen.queryByText('"Ada"')).toBeNull();
+  });
+
+  describe("evidence", () => {
+    function standing(
+      kind: "shown" | "failing" | "stale" | "claimed" | "unclaimed",
+      extra: Partial<Resolution["steps"][string]> = {},
+    ): Resolution {
+      return {
+        steps: {
+          "ACopyGoesOut.1": {
+            standing: kind,
+            frames: [],
+            claims: [],
+            says_now: null,
+            ...extra,
+          },
+        },
+        unknown: [],
+      };
+    }
+
+    const picture = {
+      step: "ACopyGoesOut.1",
+      image: "01-she-borrows-it.png",
+      caption: "the copy in her hands",
+      passed: true,
+      taken_at: "2026-08-24T09:00:00Z",
+      source: null,
+      said: "1. she borrows it",
+    };
+
+    it("shows a picture of a step somebody photographed", () => {
+      render(Journeys, {
+        report: report([walk("ACopyGoesOut", [line("specified", "ada does Borrow")])], null,
+          standing("shown", { frames: [picture] })),
+        failure: null,
+      });
+
+      const shot = screen.getByRole("img", { name: "the copy in her hands" });
+      expect(shot.getAttribute("src")).toBe("/api/evidence/01-she-borrows-it.png");
+    });
+
+    /// The state the source scan exists for, and the one a reader must be able
+    /// to tell from silence.
+    it("says when a test claims a step and showed nothing", () => {
+      render(Journeys, {
+        report: report([walk("ACopyGoesOut", [line("specified", "ada does Borrow")])], null,
+          standing("claimed", {
+            claims: [{ step: "ACopyGoesOut.1", file: "walk.ts", line: 12 }],
+          })),
+        failure: null,
+      });
+
+      // Twice: once in the count above the walk, once on the step itself.
+      expect(screen.getAllByText("claimed")).toHaveLength(2);
+      expect(screen.getByText("walk.ts:12")).toBeTruthy();
+    });
+
+    it("puts what a stale step said beside what it says now", () => {
+      render(Journeys, {
+        report: report([walk("ACopyGoesOut", [line("specified", "ada does Borrow")])], null,
+          standing("stale", {
+            frames: [{ ...picture, said: "1. she takes one off the shelf" }],
+            says_now: "1. she borrows it",
+          })),
+        failure: null,
+      });
+
+      expect(screen.getByText("1. she takes one off the shelf")).toBeTruthy();
+      expect(screen.getByText("1. she borrows it")).toBeTruthy();
+      expect(screen.getByText(/reworded after this was taken/)).toBeTruthy();
+    });
+
+    /// Most steps of most journeys have never been photographed. A strip
+    /// saying so under every one of them would be the loudest thing on the
+    /// page while carrying nothing.
+    it("says nothing at all about a step nobody has shown", () => {
+      const { container } = render(Journeys, {
+        report: report([walk("ACopyGoesOut", [line("specified", "ada does Borrow")])], null,
+          standing("unclaimed")),
+        failure: null,
+      });
+
+      expect(container.querySelector(".evidence")).toBeNull();
+      expect(screen.queryByText("not shown")).toBeNull();
+    });
+
+    it("says nothing when no evidence was loaded at all", () => {
+      const { container } = render(Journeys, {
+        report: report([walk("ACopyGoesOut", [line("specified", "ada does Borrow")])]),
+        failure: null,
+      });
+      expect(container.querySelector(".evidence")).toBeNull();
+    });
+
+    it("opens a picture and closes it again", async () => {
+      render(Journeys, {
+        report: report([walk("ACopyGoesOut", [line("specified", "ada does Borrow")])], null,
+          standing("shown", { frames: [picture] })),
+        failure: null,
+      });
+
+      const button = screen.getByRole("button", { name: "the copy in her hands" });
+      expect(button.getAttribute("aria-pressed")).toBe("false");
+
+      await fireEvent.click(button);
+      expect(button.getAttribute("aria-pressed")).toBe("true");
+
+      await fireEvent.click(button);
+      expect(button.getAttribute("aria-pressed")).toBe("false");
+    });
+
+    /// The two counts answer different questions and are drawn apart, so the
+    /// header has to carry both without either standing in for the other.
+    it("counts what was shown beside what the spec supports", () => {
+      render(Journeys, {
+        report: report([walk("ACopyGoesOut", [line("specified", "ada does Borrow")])], null,
+          standing("shown", { frames: [picture] })),
+        failure: null,
+      });
+
+      expect(screen.getByText("the spec does this")).toBeTruthy();
+      expect(screen.getAllByText("shown")).toHaveLength(2);
+    });
   });
 });
