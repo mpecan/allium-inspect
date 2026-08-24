@@ -122,6 +122,18 @@ coverage-report:
 mutants:
     @bash scripts/run-mutants.sh
 
+# === the walk ===
+#
+# A browser over the tool's own UI, photographing the journey it is walking.
+# Not in `check`: it needs a browser downloaded and costs minutes, so it is a
+# decision like `mutants` rather than a step. What it leaves behind is
+# `target/evidence/`, which `just run --evidence target/evidence/` shows under
+# the steps the pictures are of.
+
+# Walk this repository's own journey and seal what it photographed. Minutes.
+walk:
+    @bash scripts/walk.sh
+
 # Sub-second, in `check`: the code-volume metric that decides when `mutants`
 # stops being optional.
 

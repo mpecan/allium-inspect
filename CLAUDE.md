@@ -150,6 +150,37 @@ Bash reads a script incrementally by byte offset. Editing one mid-execution make
 it resume mid-token. This happened here: a 16-minute mutation run completed and
 then died in its own scoring step on `cope: command not found`.
 
+### 9. Evidence says which step, or it says nothing
+
+A journey verdict answers *does the specification support this step*. It does
+not answer *does the software do it*, and the second is what a reader assumes
+they are being told unless the two are kept apart. So they are: separate
+counts, separate marks, and separate words in `journeys/evidence.ts`.
+
+The chain is a marker in code, a log a harness appends to, and a seal:
+
+```
+// journey: SomebodyMeetsASpecTheyDidNotWrite.3
+```
+
+Three rules hold it together, and each exists because the alternative is a
+quiet lie rather than an untidiness.
+
+- **`seal` refuses.** A frame naming a step no journey has is a rename half
+  done. Dropping it would leave that step reading as never covered.
+- **A sealed frame stores the step's words, not a hash of them.** When they
+  stop matching, a reader can be shown what the step said then beside what it
+  says now. "Digest mismatch" is a fact about the tool, not about the step.
+- **The code is scanned as well as the manifest.** Without markers, a harness
+  that quietly stopped photographing and a step nobody ever covered leave the
+  same trace — none — and the first would be reported as the second. That is
+  stipulation 7 one layer out.
+
+`just walk` is the producer and is **not** in `check`: it needs a browser
+downloaded and costs minutes, so it is a decision like `mutants`. The walk
+asserts almost nothing on purpose — a journey's verdicts are the assertion, and
+a browser test re-litigating them would be a second opinion with no standing.
+
 ## Quality gates
 
 | Gate | Recipe | In `check`? |
@@ -168,6 +199,7 @@ then died in its own scoring step on `cope: command not found`.
 | Coverage measurement | `just coverage-check` | `check-all` |
 | **Mutation run** | `just mutants` | `check-all` |
 | Dependency audit | `just deny` | `check-all` |
+| **Browser walk** | `just walk` | no |
 
 Every row was checked against `justfile:16` rather than against memory. The
 `types-check` row said *yes* for a while and was in neither `check` nor

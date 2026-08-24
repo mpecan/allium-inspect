@@ -10,3 +10,7 @@ crates/inspect-server/assets/
 ui/coverage/
 *.tsbuildinfo
 .vscode/
+
+# Playwright leaves this behind on a failing walk; the pictures that matter
+# are sealed into target/evidence instead.
+/ui/test-results

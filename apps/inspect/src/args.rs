@@ -146,6 +146,9 @@ mod tests {
     }
 
     #[test]
+    // journey: SomebodyMeetsASpecTheyDidNotWrite.1 — she points at a directory
+    // and the set is what is inside it. A command-line act, so no browser walk
+    // can photograph it; this is what claims the step instead.
     fn a_directory_yields_the_specs_inside_it() {
         let dir = tree("plain", &["b.allium", "a.allium", "notes.md"]);
         let found = resolve(std::slice::from_ref(&dir));

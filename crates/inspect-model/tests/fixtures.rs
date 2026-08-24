@@ -97,6 +97,8 @@ fn the_installed_cli_still_matches_the_recordings() {
     );
 }
 
+// journey: SomebodyMeetsASpecTheyDidNotWrite.2 — it finishes reading, and says
+// how much there is. The other half of the pair a browser cannot reach.
 #[test]
 fn both_modules_are_ingested_with_their_language_version() {
     let graph = graph();
