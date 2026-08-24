@@ -18,10 +18,29 @@ pub struct Journey {
     /// What the journey is for, in the actor's terms. Never load-bearing.
     pub goal: Vec<String>,
     pub cast: Vec<Cast>,
+    /// The ways this journey should be shown. Empty means "however it is".
+    pub shows: Vec<Axis>,
     pub given: Vec<Given>,
     pub steps: Vec<Step>,
     /// The outcome, in words.
     pub ends: Vec<String>,
+    pub line: usize,
+}
+
+/// One way this journey should be shown, and the answers it expects.
+///
+/// `theme: dark, light` — a question a picture can answer, and the answers
+/// worth having. Declaring them turns evidence from something a harness
+/// happens to produce into something the journey *asks for*: the panel offers
+/// the control before any picture exists, and a tag outside the declaration is
+/// reported rather than quietly becoming a second axis nobody meant.
+///
+/// A journey that declares nothing constrains nothing, and its axes are read
+/// off whatever the pictures carry. Declaring one is opting in to being told.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Axis {
+    pub key: String,
+    pub values: Vec<String>,
     pub line: usize,
 }
 

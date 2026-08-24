@@ -96,13 +96,47 @@ export function pictureUrl(frame: Frame): string {
 export interface Axis {
   key: string;
   values: string[];
+  /** Values the journey asked for that nothing has answered yet. */
+  missing: string[];
+  /** Whether the journey said so, rather than this being read off the pictures. */
+  declared: boolean;
 }
 
-/** Every axis in the evidence, and the answers given on each, sorted. */
-export function axes(resolution: Resolution | undefined): Axis[] {
+/**
+ * The questions to offer for one journey.
+ *
+ * A journey that says `shows: theme: dark, light` gets that control **before a
+ * single picture exists** — a declaration is a demand, the same as a step, and
+ * the panel's job is to show what has been asked for beside what has been done
+ * about it. Only when a journey declares nothing does this fall back to reading
+ * the axes off whatever the pictures happen to carry.
+ *
+ * Per journey, not pooled across the set. The question belongs to the journey
+ * that asked it, and a set where one journey cares about `platform` should not
+ * offer that control on the ones that do not.
+ */
+export function axes(resolution: Resolution | undefined, journey: string): Axis[] {
+  const declared = resolution?.axes[journey] ?? [];
+  if (declared.length > 0) {
+    return declared.map((axis) => ({
+      key: axis.key,
+      values: axis.values,
+      missing: axis.missing,
+      declared: true,
+    }));
+  }
+
+  return discovered(resolution, journey);
+}
+
+/** The axes a journey's pictures happen to carry, for one that declared none. */
+function discovered(resolution: Resolution | undefined, journey: string): Axis[] {
   const found = new Map<string, Set<string>>();
 
-  for (const step of Object.values(resolution?.steps ?? {})) {
+  for (const [id, step] of Object.entries(resolution?.steps ?? {})) {
+    if (!id.startsWith(`${journey}.`)) {
+      continue;
+    }
     for (const frame of step.frames) {
       for (const [key, value] of Object.entries(frame.tags)) {
         const values = found.get(key) ?? new Set<string>();
@@ -113,9 +147,21 @@ export function axes(resolution: Resolution | undefined): Axis[] {
   }
 
   return [...found.entries()]
-    .map(([key, values]) => ({ key, values: [...values].sort() }))
-    .filter((axis) => axis.values.length > 0)
+    .map(([key, values]) => ({
+      key,
+      values: [...values].sort(),
+      missing: [],
+      declared: false,
+    }))
     .sort((a, b) => a.key.localeCompare(b.key));
+}
+
+/** The tags of a journey that its own declaration does not ask for. */
+export function undeclaredIn(
+  resolution: Resolution | undefined,
+  journey: string,
+): Resolution["undeclared"] {
+  return (resolution?.undeclared ?? []).filter((odd) => odd.step.startsWith(`${journey}.`));
 }
 
 /** What the reader has narrowed to: an axis key to one of its values. */

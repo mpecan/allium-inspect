@@ -17,7 +17,7 @@ use std::{
 };
 
 use inspect_journey::{
-    Manifest, Resolution, Shot, Standing, StepId, claims, evidence::manifest::VERSION, parse,
+    Axis, Manifest, Resolution, Shot, Standing, StepId, claims, evidence::manifest::VERSION, parse,
     resolve as stand, seal as seal_frames, step_texts,
 };
 
@@ -39,7 +39,7 @@ const MANIFEST: &str = "manifest.json";
 /// Returns a message when the log, the journeys or the pictures cannot be read,
 /// or when a frame does not resolve.
 pub fn seal<W: Write>(options: &Sealing, out: &mut W) -> Result<u8, String> {
-    let steps = steps_under(&options.paths)?;
+    let Read { steps, .. } = read_journeys(&options.paths)?;
 
     let log = options.evidence.join(LOG);
     let text =
@@ -83,25 +83,33 @@ pub fn seal<W: Write>(options: &Sealing, out: &mut W) -> Result<u8, String> {
 /// Returns a message when the journeys, the manifest or the source cannot be
 /// read.
 pub fn check<W: Write>(options: &Checking, out: &mut W) -> Result<u8, String> {
-    let steps = steps_under(&options.journeys)?;
+    let Read { steps, declared } = read_journeys(&options.journeys)?;
     let manifest = match &options.evidence {
         Some(directory) => read_manifest(&directory.join(MANIFEST))?,
         None => None,
     };
     let claimed = claims(&sources_under(&options.code));
-    let resolution = stand(&steps, manifest.as_ref(), &claimed);
+    let resolution = stand(&steps, &declared, manifest.as_ref(), &claimed);
 
     write!(out, "{}", render(&resolution)).map_err(|error| error.to_string())?;
 
     Ok(if resolution.is_failure() && !options.report { REPORTED } else { CLEAN })
 }
 
-/// Every step there is, and what it currently says.
+/// What the journeys under a path say.
+#[derive(Debug)]
+struct Read {
+    steps: BTreeMap<StepId, String>,
+    /// The ways each journey says it should be shown, for the ones that say.
+    declared: BTreeMap<String, Vec<Axis>>,
+}
+
+/// Every step there is, what it currently says, and what its journey asks for.
 ///
 /// Refuses two journeys of one name. They would silently overwrite one another
 /// here, and a picture filed under the loser would resolve against the winner —
 /// evidence quietly attributed to a journey it is not of.
-fn steps_under(paths: &[PathBuf]) -> Result<BTreeMap<StepId, String>, String> {
+fn read_journeys(paths: &[PathBuf]) -> Result<Read, String> {
     let found = resolve(paths);
     if found.journeys.is_empty() {
         return Err(format!(
@@ -111,6 +119,7 @@ fn steps_under(paths: &[PathBuf]) -> Result<BTreeMap<StepId, String>, String> {
     }
 
     let mut steps = BTreeMap::new();
+    let mut declared: BTreeMap<String, Vec<Axis>> = BTreeMap::new();
     let mut whose: BTreeMap<String, PathBuf> = BTreeMap::new();
 
     for file in &found.journeys {
@@ -128,12 +137,15 @@ fn steps_under(paths: &[PathBuf]) -> Result<BTreeMap<StepId, String>, String> {
                 ));
             }
             whose.insert(journey.name.clone(), file.clone());
+            if !journey.shows.is_empty() {
+                declared.insert(journey.name.clone(), journey.shows.clone());
+            }
         }
 
         steps.extend(step_texts(&text, &journeys));
     }
 
-    Ok(steps)
+    Ok(Read { steps, declared })
 }
 
 /// The log, one shot a line, saying which line could not be read.
@@ -253,6 +265,34 @@ fn render(resolution: &Resolution) -> String {
                 let _ = writeln!(out, "               claimed by {}:{}", claim.file, claim.line);
             }
         }
+    }
+
+    // What each journey asked to be shown and has not been. A declaration is a
+    // demand, so this is its backlog: not a failure, and not silence either.
+    for (journey, axes) in &resolution.axes {
+        for axis in axes {
+            if !axis.missing.is_empty() {
+                let _ = writeln!(
+                    out,
+                    "  not yet     {journey} — no {} picture{} tagged {}",
+                    axis.key,
+                    if axis.missing.len() == 1 { "" } else { "s" },
+                    axis.missing.join(", ")
+                );
+            }
+        }
+    }
+
+    // A tag outside what its journey declared. Usually a typo for one of them,
+    // and a typo here is a second axis nobody meant rather than an error
+    // anybody sees.
+    for odd in &resolution.undeclared {
+        let what = if odd.key_undeclared { "no such tag" } else { "no such value" };
+        let _ = writeln!(
+            out,
+            "  {what:<12}{}={} on {} — {} does not ask for it",
+            odd.key, odd.value, odd.image, odd.step.journey
+        );
     }
 
     // Markers naming nothing, last and unmissable: the test still passes while
@@ -586,6 +626,70 @@ journey Reading {
         );
     }
 
+    /// A journey that says how it should be shown, and a run that has only
+    /// half done it.
+    #[test]
+    fn a_declaration_with_nothing_answering_it_is_reported_and_is_not_a_failure() {
+        let root = scratch("declared");
+        std::fs::write(
+            root.join("reading.journey"),
+            "journey Reading {\n    goal: somebody reads a spec\n\n    shows:\n        theme: dark, light\n\n    1. she points at it\n        then set.status = reading\n}\n",
+        )
+        .expect("a journey that declares");
+        std::fs::write(
+            root.join(LOG),
+            format!("{}\n", tagged_line("Reading.1", "01-dark.png", "theme", "dark")),
+        )
+        .expect("a log");
+        std::fs::write(root.join("01-dark.png"), "a picture").expect("a picture");
+        seal(&sealing(&root), &mut Vec::new()).expect("it seals");
+
+        let options = Checking {
+            evidence: Some(root.clone()),
+            journeys: vec![root.join("reading.journey")],
+            code: Vec::new(),
+            report: false,
+        };
+        let mut out = Vec::new();
+        assert_eq!(check(&options, &mut out), Ok(CLEAN), "a demand nobody met is not a fault");
+
+        let said = String::from_utf8(out).expect("text");
+        assert!(said.contains("not yet"), "{said}");
+        assert!(said.contains("no theme picture tagged light"), "{said}");
+    }
+
+    /// The typo the declaration exists to catch.
+    #[test]
+    fn a_tag_the_journey_does_not_ask_for_is_a_failure() {
+        let root = scratch("undeclared");
+        std::fs::write(
+            root.join("reading.journey"),
+            "journey Reading {\n    goal: somebody reads a spec\n\n    shows:\n        theme: dark, light\n\n    1. she points at it\n        then set.status = reading\n}\n",
+        )
+        .expect("a journey that declares");
+        std::fs::write(
+            root.join(LOG),
+            format!("{}\n", tagged_line("Reading.1", "01.png", "them", "dark")),
+        )
+        .expect("a log with a typo in it");
+        std::fs::write(root.join("01.png"), "a picture").expect("a picture");
+        seal(&sealing(&root), &mut Vec::new()).expect("a typo still seals — it is a real picture");
+
+        let options = Checking {
+            evidence: Some(root.clone()),
+            journeys: vec![root.join("reading.journey")],
+            code: Vec::new(),
+            report: false,
+        };
+        let mut out = Vec::new();
+        assert_eq!(check(&options, &mut out), Ok(REPORTED));
+
+        let said = String::from_utf8(out).expect("text");
+        assert!(said.contains("no such tag"), "{said}");
+        assert!(said.contains("them=dark"), "{said}");
+        assert!(said.contains("Reading does not ask for it"), "{said}");
+    }
+
     /// The backstop the walk has for the same reason: a link pointing at one of
     /// its own parents. Only a real guard if something has been down there.
     #[test]
@@ -657,7 +761,7 @@ journey Reading {
         let _ = std::fs::remove_dir_all(&empty);
         std::fs::create_dir_all(&empty).expect("an empty directory");
 
-        let error = steps_under(&[empty]).expect_err("nothing to read");
+        let error = read_journeys(&[empty]).expect_err("nothing to read");
         assert!(error.contains("no .journey files"), "{error}");
     }
 }

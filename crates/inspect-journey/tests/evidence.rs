@@ -104,7 +104,7 @@ fn a_walk_of_the_real_file_seals_and_resolves() {
         "// journey: SomebodyMeetsASpecTheyDidNotWrite.4\n".to_owned(),
     )]);
 
-    let resolution = resolve(&texts, Some(&sealed), &claimed);
+    let resolution = resolve(&texts, &std::collections::BTreeMap::new(), Some(&sealed), &claimed);
 
     assert_eq!(resolution.at(&step).map(|e| e.standing), Some(Standing::Shown));
     assert_eq!(
@@ -142,7 +142,9 @@ fn rewording_a_real_step_makes_its_picture_stale() {
     .expect("the frame seals against the file as it stands");
 
     assert_eq!(
-        resolve(&before, Some(&sealed), &[]).at(&step).map(|e| e.standing),
+        resolve(&before, &std::collections::BTreeMap::new(), Some(&sealed), &[])
+            .at(&step)
+            .map(|e| e.standing),
         Some(Standing::Shown)
     );
 
@@ -151,7 +153,7 @@ fn rewording_a_real_step_makes_its_picture_stale() {
     let journeys = parse(&reworded).expect("the reworded file still parses");
     let after = step_texts(&reworded, &journeys);
 
-    let resolution = resolve(&after, Some(&sealed), &[]);
+    let resolution = resolve(&after, &std::collections::BTreeMap::new(), Some(&sealed), &[]);
     let evidence = resolution.at(&step).expect("the step is still there");
 
     assert_eq!(evidence.standing, Standing::Stale);

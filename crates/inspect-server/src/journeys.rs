@@ -15,7 +15,7 @@ use std::{
 };
 
 use inspect_journey::{
-    Resolution, StepId, Verdict, Walk, parse, resolve as stand, step_texts, walk,
+    Axis, Resolution, StepId, Verdict, Walk, parse, resolve as stand, step_texts, walk,
 };
 use inspect_model::{Program, SpecGraph};
 
@@ -82,13 +82,19 @@ impl JourneyReport {
         // Sliced from the same text the walks were read from, so a step's
         // standing and its verdict are always about the same version of it.
         let mut steps: BTreeMap<StepId, String> = BTreeMap::new();
+        let mut declared: BTreeMap<String, Vec<Axis>> = BTreeMap::new();
         for file in &files {
             if let Ok(journeys) = parse(&file.text) {
+                for journey in &journeys {
+                    if !journey.shows.is_empty() {
+                        declared.insert(journey.name.clone(), journey.shows.clone());
+                    }
+                }
                 steps.extend(step_texts(&file.text, &journeys));
             }
         }
 
-        let evidence = stand(&steps, evidence.manifest.as_ref(), &evidence.claims);
+        let evidence = stand(&steps, &declared, evidence.manifest.as_ref(), &evidence.claims);
         Self { files, holding, total, evidence }
     }
 
@@ -99,7 +105,7 @@ impl JourneyReport {
             files: Vec::new(),
             holding: 0,
             total: 0,
-            evidence: stand(&BTreeMap::new(), None, &[]),
+            evidence: stand(&BTreeMap::new(), &BTreeMap::new(), None, &[]),
         }
     }
 }

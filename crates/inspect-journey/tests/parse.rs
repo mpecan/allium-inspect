@@ -550,3 +550,97 @@ fn a_comparison_the_grammar_does_have_still_reads() {
     assert_eq!(operator, Comparison::Equal);
     assert_eq!(right, Term::Path(path_of("open")));
 }
+
+/// The ways a journey says it should be shown.
+///
+/// Declaring them is the difference between evidence a harness happened to
+/// produce and evidence the journey asked for: the panel can offer the control
+/// before a single picture exists, and a tag outside the declaration is
+/// something to report rather than a second axis nobody meant.
+mod shows {
+    use inspect_journey::parse;
+
+    fn one(body: &str) -> Result<Vec<inspect_journey::Journey>, inspect_journey::ParseError> {
+        parse(&format!(
+            "journey Reading {{\n    goal: something\n{body}\n    1. she looks\n        then a.b = c\n}}\n"
+        ))
+    }
+
+    #[test]
+    fn a_journey_declares_the_ways_it_should_be_shown() {
+        let journeys = one("    shows:\n        theme: dark, light").expect("it parses");
+        let axis = journeys[0].shows.first().expect("one axis");
+
+        assert_eq!(axis.key, "theme");
+        assert_eq!(axis.values, ["dark", "light"]);
+        assert_eq!(axis.line, 4);
+    }
+
+    #[test]
+    fn a_journey_may_declare_several() {
+        let journeys =
+            one("    shows:\n        theme: dark, light\n        platform: ios, android")
+                .expect("it parses");
+        let keys: Vec<&str> = journeys[0].shows.iter().map(|a| a.key.as_str()).collect();
+
+        // In the order they were written: the author chose which question a
+        // reader meets first, and sorting them would take that away.
+        assert_eq!(keys, ["theme", "platform"]);
+    }
+
+    #[test]
+    fn declaring_nothing_is_the_ordinary_case() {
+        let journeys = one("").expect("it parses");
+        assert!(journeys[0].shows.is_empty());
+    }
+
+    /// A control offering one option is a control that does nothing.
+    #[test]
+    fn an_axis_with_one_value_is_refused() {
+        let error = one("    shows:\n        theme: dark").expect_err("it must refuse");
+        assert!(error.to_string().contains("at least two values"), "{error}");
+    }
+
+    #[test]
+    fn an_axis_with_no_values_is_refused() {
+        assert!(one("    shows:\n        theme:").is_err());
+    }
+
+    #[test]
+    fn an_axis_with_no_name_is_refused() {
+        let error = one("    shows:\n        : dark, light").expect_err("it must refuse");
+        assert!(error.to_string().contains("needs a name"), "{error}");
+    }
+
+    #[test]
+    fn a_line_that_is_not_an_axis_at_all_is_refused() {
+        let error = one("    shows:\n        just some words").expect_err("it must refuse");
+        assert!(error.to_string().contains("<name>: <value>"), "{error}");
+    }
+
+    /// Two identical options in one dropdown is a typo, and it would be a
+    /// dropdown where one of the two entries could never be reached.
+    #[test]
+    fn an_axis_listing_a_value_twice_is_refused() {
+        let error =
+            one("    shows:\n        theme: dark, light, dark").expect_err("it must refuse");
+        assert!(error.to_string().contains("same value twice"), "{error}");
+    }
+
+    #[test]
+    fn an_error_names_the_line_it_is_on() {
+        let error = one("    shows:\n        theme: dark").expect_err("it must refuse");
+        assert_eq!(error.line, 4);
+    }
+
+    #[test]
+    fn the_block_ends_where_the_next_one_begins() {
+        let journeys = parse(
+            "journey Reading {\n    shows:\n        theme: dark, light\n\n    cast:\n        ada: Member\n\n    1. she looks\n        then a.b = c\n}\n",
+        )
+        .expect("it parses");
+
+        assert_eq!(journeys[0].shows.len(), 1);
+        assert_eq!(journeys[0].cast.len(), 1);
+    }
+}

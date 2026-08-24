@@ -29,7 +29,7 @@ pub mod text;
 
 pub use manifest::{Frame, Manifest, SealError, Shot, seal};
 pub use markers::{Claim, claims};
-pub use state::{Resolution, Standing, StepEvidence, resolve};
+pub use state::{Declared, Resolution, Standing, StepEvidence, Undeclared, resolve};
 pub use text::step_texts;
 
 /// Which step of which journey, as a marker and a manifest both spell it.

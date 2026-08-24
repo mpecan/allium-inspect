@@ -14,6 +14,7 @@ import {
   pictureUrl,
   summary,
   tally,
+  undeclaredIn,
   worthShowing,
 } from "./evidence";
 
@@ -38,8 +39,12 @@ function evidence(standing: StepEvidence["standing"], frames: Frame[] = []): Ste
   return { standing, frames, claims: [], says_now: null };
 }
 
-function resolution(steps: Record<string, StepEvidence>): Resolution {
-  return { steps, unknown: [] };
+function resolution(
+  steps: Record<string, StepEvidence>,
+  axes: Resolution["axes"] = {},
+  undeclared: Resolution["undeclared"] = [],
+): Resolution {
+  return { steps, unknown: [], axes, undeclared };
 }
 
 describe("evidence", () => {
@@ -123,16 +128,16 @@ describe("evidence", () => {
       "R.2": evidence("shown", [untagged]),
     });
 
-    it("finds a question for every tag key, and every answer given to it", () => {
-      expect(axes(found)).toEqual([
-        { key: "platform", values: ["macos"] },
-        { key: "theme", values: ["dark", "light"] },
+    it("reads the questions off the pictures when the journey declared none", () => {
+      expect(axes(found, "R")).toEqual([
+        { key: "platform", values: ["macos"], missing: [], declared: false },
+        { key: "theme", values: ["dark", "light"], missing: [], declared: false },
       ]);
     });
 
     it("has nothing to offer when nothing is tagged", () => {
-      expect(axes(resolution({ "R.1": evidence("shown", [untagged]) }))).toEqual([]);
-      expect(axes(undefined)).toEqual([]);
+      expect(axes(resolution({ "R.1": evidence("shown", [untagged]) }), "R")).toEqual([]);
+      expect(axes(undefined, "R")).toEqual([]);
     });
 
     it("keeps one entry per value however many pictures carry it", () => {
@@ -143,7 +148,71 @@ describe("evidence", () => {
           frame("02-light.png", "2. a step", { theme: "light" }),
         ]),
       });
-      expect(axes(many).find((axis) => axis.key === "theme")?.values).toEqual(["dark", "light"]);
+      expect(axes(many, "R").find((axis) => axis.key === "theme")?.values).toEqual([
+        "dark",
+        "light",
+      ]);
+    });
+
+    /** One journey's pictures are not another journey's questions. */
+    it("reads only the pictures of the journey it was asked about", () => {
+      const two = resolution({
+        "R.1": evidence("shown", [dark]),
+        "Other.1": evidence("shown", [frame("x.png", "1. x", { platform: "ios" })]),
+      });
+      expect(axes(two, "R").map((axis) => axis.key)).toEqual(["platform", "theme"]);
+      expect(axes(two, "Other").map((axis) => axis.key)).toEqual(["platform"]);
+    });
+
+    describe("declared", () => {
+      const declares = {
+        R: [
+          { key: "theme", values: ["dark", "light"], missing: ["light"], line: 4 },
+        ],
+      };
+
+      /**
+       * The point of declaring. A journey that says how it should be shown gets
+       * the control before anybody has photographed anything — a declaration is
+       * a demand, the same as a step.
+       */
+      it("offers what the journey asked for, before any picture exists", () => {
+        expect(axes(resolution({}, declares), "R")).toEqual([
+          { key: "theme", values: ["dark", "light"], missing: ["light"], declared: true },
+        ]);
+      });
+
+      it("keeps the author's order rather than sorting", () => {
+        const ordered = {
+          R: [
+            { key: "theme", values: ["dark", "light"], missing: [], line: 4 },
+            { key: "aardvark", values: ["a", "b"], missing: [], line: 5 },
+          ],
+        };
+        expect(axes(resolution({}, ordered), "R").map((a) => a.key)).toEqual([
+          "theme",
+          "aardvark",
+        ]);
+      });
+
+      /** A declaration is the whole answer: discovery does not add to it. */
+      it("does not read extra questions off the pictures", () => {
+        const withExtra = resolution({ "R.1": evidence("shown", [dark]) }, declares);
+        expect(axes(withExtra, "R").map((axis) => axis.key)).toEqual(["theme"]);
+      });
+
+      it("belongs to the journey that declared it", () => {
+        expect(axes(resolution({}, declares), "Other")).toEqual([]);
+      });
+
+      it("finds the tags a journey does not ask for, and only its own", () => {
+        const odd = resolution({}, declares, [
+          { step: "R.1", image: "a.png", key: "them", value: "dark", key_undeclared: true },
+          { step: "Other.1", image: "b.png", key: "x", value: "y", key_undeclared: true },
+        ]);
+        expect(undeclaredIn(odd, "R").map((o) => o.image)).toEqual(["a.png"]);
+        expect(undeclaredIn(undefined, "R")).toEqual([]);
+      });
     });
 
     it("shows only what answers to the question as asked", () => {

@@ -470,6 +470,51 @@ JOURNEY
     printf '// journey: Browsing.1\n' > "$ev/marked.rs"
     expect_fail "a test that claims a step and shows nothing" "claimed" \
         "$journey_bin" evidence check "$ev" --journeys "$ev" --code "$ev"
+
+    # A journey that declares how it should be shown, and a tag outside it. The
+    # typo the declaration exists to catch: nothing fails without it, and the
+    # spare axis it invents is invisible in a dropdown that grew an entry.
+    cat > "$ev/one.journey" <<'JOURNEY'
+journey Reading {
+    goal: somebody reads a specification
+
+    shows:
+        theme: dark, light
+
+    1. she points at it
+        then set.status = reading
+}
+JOURNEY
+    rm -f "$ev/marked.rs"
+    frame "Reading.1" "01.png" > "$ev/frames.jsonl"
+    "$journey_bin" evidence seal "$ev" "$ev" --at 2026-01-01T00:00:00Z >/dev/null
+
+    tagged() {
+        printf '{"step":"Reading.1","image":"01.png","caption":null,"passed":true,'
+        printf '"taken_at":"2026-01-01T00:00:00Z","source":null,"tags":{"%s":"%s"}}\n' "$1" "$2"
+    }
+
+    tagged "them" "dark" > "$ev/frames.jsonl"
+    "$journey_bin" evidence seal "$ev" "$ev" --at 2026-01-01T00:00:00Z >/dev/null
+    expect_fail "a tag the journey does not ask for" "no such tag" \
+        "$journey_bin" evidence check "$ev" --journeys "$ev"
+
+    tagged "theme" "sepia" > "$ev/frames.jsonl"
+    "$journey_bin" evidence seal "$ev" "$ev" --at 2026-01-01T00:00:00Z >/dev/null
+    expect_fail "a value the journey does not ask for" "no such value" \
+        "$journey_bin" evidence check "$ev" --journeys "$ev"
+
+    tagged "theme" "dark" > "$ev/frames.jsonl"
+    "$journey_bin" evidence seal "$ev" "$ev" --at 2026-01-01T00:00:00Z >/dev/null
+    expect_pass "a tag the journey asks for" \
+        "$journey_bin" evidence check "$ev" --journeys "$ev"
+
+    # And the direction that must NOT fail: a declared value nobody has
+    # photographed is a demand written before the thing it asks for, the same
+    # as a step, and a gate failing on those would fail on every journey the
+    # day it was written.
+    expect_pass "a declared value nothing has answered yet" \
+        "$journey_bin" evidence check "$ev" --journeys "$ev"
 fi
 
 # --- verdict --------------------------------------------------------------

@@ -25,6 +25,7 @@
     at as evidenceAt,
     axes as evidenceAxes,
     type Narrowing,
+    undeclaredIn,
     summary as evidenceSummary,
     worthShowing,
   } from "./evidence";
@@ -108,11 +109,14 @@
   /**
    * The questions the evidence can be narrowed by, and the reader's answers.
    *
-   * Across the whole report rather than the current walk, so the controls do
-   * not appear and vanish as you move between journeys — a control that comes
-   * and goes is one nobody learns is there.
+   * Per journey. This was across the whole report at first, so the controls
+   * would not come and go — but a journey can now *declare* its axes, and a
+   * declaration belongs to the journey that made it. A set where one journey
+   * cares about `platform` should not offer that control on the ones that do
+   * not, and the control appearing is now information rather than noise.
    */
-  const axes = $derived(evidenceAxes(standings));
+  const axes = $derived(current ? evidenceAxes(standings, current.walk.name) : []);
+  const odd = $derived(current ? undeclaredIn(standings, current.walk.name) : []);
   let narrowing = $state<Narrowing>({});
 
   function narrowTo(key: string, value: string) {
@@ -259,12 +263,33 @@
               >
                 <option value="">either</option>
                 {#each axis.values as value (value)}
-                  <option {value}>{value}</option>
+                  <!-- A declared value with nothing behind it is still offered.
+                       It is what the journey asked for, and hiding it would
+                       leave the demand invisible — the reader picks it and is
+                       told plainly that nothing has answered it yet. -->
+                  <option {value}>
+                    {value}{axis.missing.includes(value) ? " — none yet" : ""}
+                  </option>
                 {/each}
               </select>
             </label>
           {/each}
         </div>
+      {/if}
+
+      <!-- Tags outside what this journey asked to be shown. Usually a typo for
+           one of them, and a typo here is a second axis nobody meant rather
+           than an error anybody sees. -->
+      {#if odd.length > 0}
+        <ul class="odd-tags">
+          {#each odd as tag (tag.image + tag.key)}
+            <li>
+              <span class="what">{tag.key_undeclared ? "no such tag" : "no such value"}</span>
+              <code>{tag.key}={tag.value}</code>
+              <span class="where">{tag.image}</span>
+            </li>
+          {/each}
+        </ul>
       {/if}
 
       {#if walk.stipulated.length > 0}
@@ -526,6 +551,28 @@
     padding: var(--gap-2) 0;
     border-top: 1px solid var(--line);
     border-bottom: 1px solid var(--line);
+  }
+
+  /* Reported rather than styled as a failure: nothing here is broken, and the
+     picture it names is a real picture of a real run. */
+  .odd-tags {
+    list-style: none;
+    margin: var(--gap-2) 0 0;
+    padding: 0;
+    font-size: var(--t-small);
+  }
+  .odd-tags li {
+    display: flex;
+    gap: var(--gap-2);
+    align-items: baseline;
+  }
+  .odd-tags .what {
+    color: var(--verdict-unknown);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .odd-tags .where {
+    color: var(--ink-dim);
   }
 
   .evidence-line {

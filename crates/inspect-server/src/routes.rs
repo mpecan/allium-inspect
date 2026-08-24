@@ -499,7 +499,12 @@ mod tests {
             }],
             holding: 0,
             total: 0,
-            evidence: inspect_journey::resolve(&std::collections::BTreeMap::new(), None, &[]),
+            evidence: inspect_journey::resolve(
+                &std::collections::BTreeMap::new(),
+                &std::collections::BTreeMap::new(),
+                None,
+                &[],
+            ),
         };
         let state = AppState::new(fixture_inspection().with_journeys(report));
         let (status, body) = get(router(state), "/api/journeys").await;

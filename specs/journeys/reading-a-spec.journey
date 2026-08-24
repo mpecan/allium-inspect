@@ -15,6 +15,14 @@ journey SomebodyMeetsASpecTheyDidNotWrite {
           looks load-bearing, and reads the line the author actually wrote —
           without opening an editor or knowing which file to open.
 
+    -- The ways this journey should be shown. Declared rather than left to
+    -- whatever the harness happens to emit: a declaration is a demand, so the
+    -- panel offers the control before a picture exists and says which of these
+    -- nothing has answered yet. A tag outside it is a typo worth being told
+    -- about rather than a second axis nobody meant.
+    shows:
+        theme: dark, light
+
     cast:
         ines:      Reader
         person:    Person

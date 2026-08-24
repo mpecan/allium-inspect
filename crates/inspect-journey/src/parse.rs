@@ -24,7 +24,7 @@
 
 use inspect_sim::{Value, seed};
 
-use crate::journey::{Assertion, Cast, Clause, Comparison, Given, Journey, Path, Step, Term};
+use crate::journey::{Assertion, Axis, Cast, Clause, Comparison, Given, Journey, Path, Step, Term};
 
 /// A journey file that could not be read.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,6 +86,7 @@ fn body(name: &str, opened: usize, lines: &mut Lines<'_>) -> Result<Journey, Par
         name: name.to_owned(),
         goal: Vec::new(),
         cast: Vec::new(),
+        shows: Vec::new(),
         given: Vec::new(),
         steps: Vec::new(),
         ends: Vec::new(),
@@ -122,6 +123,10 @@ fn body(name: &str, opened: usize, lines: &mut Lines<'_>) -> Result<Journey, Par
             block = Block::Cast;
             continue;
         }
+        if trimmed == "shows:" {
+            block = Block::Shows;
+            continue;
+        }
         if trimmed == "given:" {
             block = Block::Given;
             continue;
@@ -156,6 +161,7 @@ fn body(name: &str, opened: usize, lines: &mut Lines<'_>) -> Result<Journey, Par
                 push_prose(into, trimmed);
             }
             Block::Cast => journey.cast.push(cast(trimmed, line)?),
+            Block::Shows => journey.shows.push(axis(trimmed, line)?),
             Block::Given => journey.given.push(given(trimmed, line)?),
             Block::Steps => {
                 if journey.steps.is_empty() {
@@ -220,6 +226,7 @@ enum Block {
     Goal,
     Ends,
     Cast,
+    Shows,
     Given,
     Steps,
 }
@@ -249,6 +256,42 @@ fn cast(text: &str, line: usize) -> Result<Cast, ParseError> {
         return fail(line, "a cast member needs a name and a type");
     }
     Ok(Cast { name: name.to_owned(), type_expr: type_expr.to_owned(), line })
+}
+
+/// `theme: dark, light`
+fn axis(text: &str, line: usize) -> Result<Axis, ParseError> {
+    let Some((key, values)) = text.split_once(':') else {
+        return fail(line, format!("expected `<name>: <value>, <value>`, found `{text}`"));
+    };
+    let key = key.trim();
+    if key.is_empty() {
+        return fail(line, "a way of showing a journey needs a name");
+    }
+
+    let values: Vec<String> = values
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .collect();
+
+    // One value is not a question, and the control would offer nothing to
+    // choose. Saying so beats a dropdown with a single entry that does nothing.
+    if values.len() < 2 {
+        return fail(
+            line,
+            format!("`{key}` needs at least two values to be worth choosing between"),
+        );
+    }
+
+    let mut seen = values.clone();
+    seen.sort();
+    seen.dedup();
+    if seen.len() != values.len() {
+        return fail(line, format!("`{key}` lists the same value twice"));
+    }
+
+    Ok(Axis { key: key.to_owned(), values, line })
 }
 
 /// `note: messaging/Message { … }`, or `ada.status = active`.

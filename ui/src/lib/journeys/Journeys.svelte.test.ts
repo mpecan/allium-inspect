@@ -50,7 +50,7 @@ function walk(name: string, outcomes: Outcome[], stipulated: string[] = []): Wal
 function report(
   walks: Walk[],
   error: string | null = null,
-  evidence: Resolution = { steps: {}, unknown: [] },
+  evidence: Resolution = { steps: {}, unknown: [], axes: {}, undeclared: [] },
 ): JourneyReport {
   return {
     evidence,
@@ -218,6 +218,8 @@ describe("Journeys cast panel", () => {
           },
         },
         unknown: [],
+        axes: {},
+        undeclared: [],
       };
     }
 
@@ -374,6 +376,103 @@ describe("Journeys cast panel", () => {
         expect(chips).toEqual(["theme dark", "theme light"]);
       });
 
+      /// The point of declaring: a journey that says how it should be shown
+      /// gets the control before anybody has photographed anything.
+      it("offers what the journey asked for before any picture exists", () => {
+        render(Journeys, {
+          report: report([walk("ACopyGoesOut", [line("specified", "ada does Borrow")])], null, {
+            steps: {},
+            unknown: [],
+            axes: {
+              ACopyGoesOut: [
+                { key: "theme", values: ["dark", "light"], missing: ["dark", "light"], line: 4 },
+              ],
+            },
+            undeclared: [],
+          }),
+          failure: null,
+        });
+
+        const control = screen.getByRole("combobox", { name: "theme" });
+        const options = [...control.querySelectorAll("option")].map((o) =>
+          o.textContent?.trim(),
+        );
+        expect(options).toEqual(["either", "dark — none yet", "light — none yet"]);
+      });
+
+      it("stops saying none yet once something answers", () => {
+        render(Journeys, {
+          report: report([walk("ACopyGoesOut", [line("specified", "ada does Borrow")])], null, {
+            steps: { "ACopyGoesOut.1": { standing: "shown", frames: [dark], claims: [], says_now: null } },
+            unknown: [],
+            axes: {
+              ACopyGoesOut: [
+                { key: "theme", values: ["dark", "light"], missing: ["light"], line: 4 },
+              ],
+            },
+            undeclared: [],
+          }),
+          failure: null,
+        });
+
+        const options = [
+          ...screen.getByRole("combobox", { name: "theme" }).querySelectorAll("option"),
+        ].map((o) => o.textContent?.trim());
+        expect(options).toEqual(["either", "dark", "light — none yet"]);
+      });
+
+      /// The typo the declaration exists to catch. Not styled as a failure:
+      /// the picture it names is a real picture of a real run.
+      it("reports a tag the journey does not ask for", () => {
+        render(Journeys, {
+          report: report([walk("ACopyGoesOut", [line("specified", "ada does Borrow")])], null, {
+            steps: {},
+            unknown: [],
+            axes: {
+              ACopyGoesOut: [
+                { key: "theme", values: ["dark", "light"], missing: [], line: 4 },
+              ],
+            },
+            undeclared: [
+              {
+                step: "ACopyGoesOut.1",
+                image: "01.png",
+                key: "them",
+                value: "dark",
+                key_undeclared: true,
+              },
+            ],
+          }),
+          failure: null,
+        });
+
+        expect(screen.getByText("no such tag")).toBeTruthy();
+        expect(screen.getByText("them=dark")).toBeTruthy();
+        expect(screen.getByText("01.png")).toBeTruthy();
+      });
+
+      it("says nothing about another journey's tags", () => {
+        render(Journeys, {
+          report: report([walk("ACopyGoesOut", [line("specified", "ada does Borrow")])], null, {
+            steps: {},
+            unknown: [],
+            axes: {},
+            undeclared: [
+              {
+                step: "Elsewhere.1",
+                image: "99.png",
+                key: "x",
+                value: "y",
+                key_undeclared: true,
+              },
+            ],
+          }),
+          failure: null,
+        });
+
+        expect(screen.queryByText("no such tag")).toBeNull();
+      });
+
       /// A step that was photographed, just not the way the reader asked to see
       /// it. The standing above still reads `shown` — that is a fact about the
       /// step, not about the filter — so saying nothing here would leave the
@@ -387,6 +486,8 @@ describe("Journeys cast panel", () => {
             "ACopyGoesOut.2": { standing: "shown", frames: [light], claims: [], says_now: null },
           },
           unknown: [],
+          axes: {},
+          undeclared: [],
         };
 
         render(Journeys, {
