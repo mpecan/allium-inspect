@@ -28,7 +28,14 @@ use clap::{Parser, Subcommand};
 ///   1  One or more journeys reported something
 ///   2  No paths given, or no journeys and specs among them
 #[derive(Debug, Parser)]
-#[command(name = "allium-journey", version, about, long_about = None, verbatim_doc_comment)]
+#[command(
+    name = "allium-journey",
+    version,
+    about,
+    long_about = None,
+    verbatim_doc_comment,
+    after_help = "Writing journeys? `allium-journey guide` carries the documentation."
+)]
 pub struct Args {
     #[command(subcommand)]
     pub command: Command,
@@ -47,6 +54,16 @@ pub enum Command {
     /// What a test run showed of a journey, and what it did not.
     #[command(subcommand)]
     Evidence(Evidence),
+    /// Print the documentation this binary was built with.
+    ///
+    /// An agent in somebody else's repository has this command on PATH and no
+    /// checkout of the project that made it. The instructions travel with the
+    /// binary so they cannot describe a different version of the grammar from
+    /// the one it implements.
+    Guide {
+        #[arg(value_name = "TOPIC")]
+        topic: Option<Topic>,
+    },
 }
 
 impl Command {
@@ -57,6 +74,7 @@ impl Command {
             Command::Walk(_) => "walk",
             Command::Check(_) => "check",
             Command::Evidence(_) => "evidence",
+            Command::Guide { .. } => "guide",
         }
     }
 
@@ -70,9 +88,24 @@ impl Command {
     pub fn options(&self) -> Option<&Run> {
         match self {
             Command::Walk(run) | Command::Check(run) => Some(run),
-            Command::Evidence(_) => None,
+            Command::Evidence(_) | Command::Guide { .. } => None,
         }
     }
+}
+
+/// Which document to print.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum Topic {
+    /// Adding journeys to a repository that has none.
+    Adopting,
+    /// The grammar: every form a journey can contain.
+    Reference,
+    /// Pictures of a journey actually happening.
+    Evidence,
+    /// Why it is shaped this way, and what is left out on purpose.
+    Design,
+    /// A ready-made Claude Code skill, to paste into a repository.
+    Skill,
 }
 
 /// Pictures of a journey actually happening.

@@ -22,6 +22,7 @@
 mod args;
 mod emit;
 mod evidence;
+mod guide;
 mod resolve;
 mod run;
 
@@ -37,6 +38,19 @@ fn main() -> ExitCode {
     // `evidence` asks what a *run* showed, which is a question about pictures
     // and source rather than about what the specification permits. It never
     // ingests, so it takes neither the spec set below nor `allium` on PATH.
+    // Nothing to read, nothing to ingest: the documentation is in the binary.
+    if let args::Command::Guide { topic } = &args.command {
+        let mut out = std::io::stdout().lock();
+        let mut notes = std::io::stderr().lock();
+        return match guide::print(*topic, &mut out, &mut notes) {
+            Ok(code) => ExitCode::from(code),
+            Err(message) => {
+                eprintln!("allium-journey: {message}");
+                ExitCode::from(run::UNUSABLE)
+            }
+        };
+    }
+
     if let args::Command::Evidence(what) = &args.command {
         let mut out = std::io::stdout().lock();
         let answered = match what {

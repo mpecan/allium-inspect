@@ -366,6 +366,12 @@ appears before any picture does.
 
 ### Reading further
 
+`allium-journey guide` carries all of it, compiled into the binary — so an agent
+in a repository that only has the command on `PATH` needs no checkout and no
+network, and cannot read instructions for a different version from the one it is
+holding. `allium-journey guide skill > .claude/skills/journeys/SKILL.md` makes
+the next one find it without being told.
+
 | | |
 |---|---|
 | [`reference.md`](docs/journeys/reference.md) | every form a journey can contain, one runnable example each |

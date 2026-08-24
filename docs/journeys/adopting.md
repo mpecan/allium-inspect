@@ -14,6 +14,21 @@ allium-journey --version        # if this is missing, stop and say so
 allium check specs/             # the spec set should already be in good order
 ```
 
+Everything you need is in the binary, so there is nothing to fetch:
+
+```sh
+allium-journey guide            # the topics
+allium-journey guide reference  # the grammar
+allium-journey guide evidence   # pictures of a journey happening
+```
+
+To make the next agent find it without being told:
+
+```sh
+mkdir -p .claude/skills/journeys
+allium-journey guide skill > .claude/skills/journeys/SKILL.md
+```
+
 ## 1. Read the spec before writing anything
 
 A journey may only name constructs the spec declares — actors, triggers,
