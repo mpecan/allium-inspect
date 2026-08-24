@@ -16,6 +16,7 @@
 
 mod assert;
 pub mod check;
+pub mod evidence;
 pub mod journey;
 pub mod outcome;
 pub mod parse;
@@ -24,6 +25,10 @@ pub mod run;
 mod world;
 
 pub use check::{Note, Verdict, check};
+pub use evidence::{
+    Claim, Frame, Manifest, Resolution, Shot, Standing, StepEvidence, StepId, claims, resolve,
+    seal, step_texts,
+};
 pub use journey::{Assertion, Cast, Clause, Comparison, Given, Journey, Path, Step, Term};
 pub use parse::{ParseError, parse};
 pub use report::{Strictness, as_json, passes, render};

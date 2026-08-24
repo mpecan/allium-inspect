@@ -211,7 +211,7 @@ fn flush(pending: &mut Option<Pending>, journey: &mut Journey) -> Result<(), Par
 /// count for more than it looks. Stipulation 4 in miniature: the two agree for
 /// ASCII, which is why counting bytes survived every test written against an
 /// ASCII fixture.
-fn indent_of(text: &str) -> usize {
+pub(crate) fn indent_of(text: &str) -> usize {
     text.chars().count() - text.trim_start().chars().count()
 }
 
