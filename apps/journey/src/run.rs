@@ -46,10 +46,13 @@ pub fn all<R: AlliumRunner, W: Write>(
         ingest(runner, &FileReader, &found.specs).map_err(|error| error.to_string())?;
     let sources = read_sources(&found.specs);
 
+    // Exactly one subcommand walks. Anything else answers from the graph alone.
+    let walking = matches!(command, Command::Walk(_));
+
     let mut worst = CLEAN;
     for file in &found.journeys {
         let name = file.to_string_lossy().into_owned();
-        let (walks, error) = read_one(command, file, &graph, &program, &sources);
+        let (walks, error) = read_one(walking, file, &graph, &program, &sources);
 
         let written = if run.text {
             text_report(&name, &walks, error.as_deref())
@@ -68,8 +71,13 @@ pub fn all<R: AlliumRunner, W: Write>(
 }
 
 /// One journey file: its walks, or why it could not be read.
+///
+/// Takes whether to walk rather than the whole subcommand. `evidence` never
+/// reaches here — it asks what a run *showed*, not what the spec permits — and
+/// a match over every subcommand would need an arm for it that could only be a
+/// guess about a case that cannot arrive.
 fn read_one(
-    command: &Command,
+    walking: bool,
     file: &Path,
     graph: &SpecGraph,
     program: &Program,
@@ -86,12 +94,16 @@ fn read_one(
 
     let walks = journeys
         .iter()
-        .map(|journey| match command {
-            Command::Walk(_) => inspect_journey::walk(journey, graph, program, sources),
-            // Static only: what can be answered from the graph, without a
-            // world. The checker's notes become the outcomes, so the document
-            // has the same shape either way and a caller reads one parser.
-            Command::Check(_) => statically(journey, graph),
+        .map(|journey| {
+            if walking {
+                inspect_journey::walk(journey, graph, program, sources)
+            } else {
+                // Static only: what can be answered from the graph, without a
+                // world. The checker's notes become the outcomes, so the
+                // document has the same shape either way and a caller reads one
+                // parser.
+                statically(journey, graph)
+            }
         })
         .collect();
     (walks, None)

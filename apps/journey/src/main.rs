@@ -21,6 +21,7 @@
 
 mod args;
 mod emit;
+mod evidence;
 mod resolve;
 mod run;
 
@@ -32,7 +33,29 @@ use inspect_model::ProcessRunner;
 
 fn main() -> ExitCode {
     let args = Args::parse();
-    let options = args.command.options();
+
+    // `evidence` asks what a *run* showed, which is a question about pictures
+    // and source rather than about what the specification permits. It never
+    // ingests, so it takes neither the spec set below nor `allium` on PATH.
+    if let args::Command::Evidence(what) = &args.command {
+        let mut out = std::io::stdout().lock();
+        let answered = match what {
+            args::Evidence::Seal(options) => evidence::seal(options, &mut out),
+            args::Evidence::Check(options) => evidence::check(options, &mut out),
+        };
+        return match answered {
+            Ok(code) => ExitCode::from(code),
+            Err(message) => {
+                eprintln!("allium-journey: {message}");
+                ExitCode::from(evidence::unusable())
+            }
+        };
+    }
+
+    let Some(options) = args.command.options() else {
+        eprintln!("allium-journey: nothing to do");
+        return ExitCode::from(run::UNUSABLE);
+    };
 
     let found = resolve::resolve(&options.paths);
     if !found.is_usable() {

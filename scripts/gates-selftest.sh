@@ -386,6 +386,92 @@ INSPECT_THIRD_PARTY_ALLOW="Apache-2.0" \
 expect_pass "third-party notice matching the shipped tree" \
     node "$here/third-party.mjs" --check
 
+# --- evidence -------------------------------------------------------------
+#
+# `allium-journey evidence seal` refuses a run whose pictures do not resolve,
+# which makes it a gate, which means it has to be seen refusing. The case that
+# matters is a *rename*: a journey renamed with the harness left pointing at the
+# old name leaves every picture filed under a step that no longer exists, and a
+# seal that shrugged would leave those steps reading as never covered — the one
+# thing this whole feature exists to make impossible.
+#
+# Built rather than reused: the repository's own journeys are what the walk
+# photographs, and a self-test that depended on them would fail for whoever
+# next rewords a step.
+
+# Built rather than skipped when absent. A self-test that quietly tests less
+# than it claims is the same failure as a gate that cannot fail, and "the binary
+# happened to be lying around" is not a condition to hang six checks on. It is
+# already built by `just test`, which runs first, so this costs nothing in the
+# ordinary case.
+journey_bin="target/debug/allium-journey"
+if [ ! -x "$journey_bin" ]; then
+    cargo build -q -p allium-journey >&2
+fi
+
+if [ ! -x "$journey_bin" ]; then
+    echo "FAIL: evidence gate — allium-journey could not be built"
+    failures=$((failures + 1))
+    checks=$((checks + 1))
+else
+    ev="$scratch/evidence"
+    mkdir -p "$ev"
+    cat > "$ev/one.journey" <<'JOURNEY'
+journey Reading {
+    goal: somebody reads a specification
+
+    1. she points at it
+        then set.status = reading
+}
+JOURNEY
+    printf 'a picture\n' > "$ev/01.png"
+
+    frame() {
+        printf '{"step":"%s","image":"%s","caption":null,"passed":true,' "$1" "$2"
+        printf '"taken_at":"2026-01-01T00:00:00Z","source":null}\n'
+    }
+
+    # A rename: the journey is `Reading`, the harness still says `Browsing`.
+    frame "Browsing.1" "01.png" > "$ev/frames.jsonl"
+    expect_fail "a frame naming a step no journey has" "Browsing.1" \
+        "$journey_bin" evidence seal "$ev" "$ev" --at 2026-01-01T00:00:00Z
+
+    # A picture the manifest would promise and nobody could open.
+    frame "Reading.1" "99.png" > "$ev/frames.jsonl"
+    expect_fail "a frame whose picture is not on disk" "99.png" \
+        "$journey_bin" evidence seal "$ev" "$ev" --at 2026-01-01T00:00:00Z
+
+    frame "Reading.1" "01.png" > "$ev/frames.jsonl"
+    expect_pass "a run whose frames all resolve" \
+        "$journey_bin" evidence seal "$ev" "$ev" --at 2026-01-01T00:00:00Z
+
+    # And the reporting half, which is a separate gate with its own directions:
+    # a marker naming a step that no longer exists must fail even though the
+    # test carrying it still passes.
+    printf '// journey: Renamed.1\n' > "$ev/marked.rs"
+    expect_fail "a marker naming a step no journey has" "no such step" \
+        "$journey_bin" evidence check "$ev" --journeys "$ev" --code "$ev"
+
+    printf '// journey: Reading.1\n' > "$ev/marked.rs"
+    expect_pass "a marker whose step was photographed" \
+        "$journey_bin" evidence check "$ev" --journeys "$ev" --code "$ev"
+
+    # The direction that pays for the source scan at all: a marker with no
+    # picture behind it is a finding, not silence.
+    cat >> "$ev/one.journey" <<'JOURNEY'
+
+journey Browsing {
+    goal: somebody looks at a graph
+
+    1. she opens it
+        then session.stale = false
+}
+JOURNEY
+    printf '// journey: Browsing.1\n' > "$ev/marked.rs"
+    expect_fail "a test that claims a step and shows nothing" "claimed" \
+        "$journey_bin" evidence check "$ev" --journeys "$ev" --code "$ev"
+fi
+
 # --- verdict --------------------------------------------------------------
 echo
 note=""
