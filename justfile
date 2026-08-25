@@ -230,6 +230,41 @@ build: ui-build
 build-release: ui-build
     cargo build --workspace --release
 
+# === install ===
+#
+# The one recipe that must build the frontend first, and the reason it exists
+# rather than leaving people to `cargo install`.
+#
+# `allium-inspect` embeds the built interface with `rust-embed`, from
+# `crates/inspect-server/assets/`. `cargo install` on its own bakes in whatever
+# that directory happens to hold, which after a UI change is the *previous*
+# bundle — so the binary comes out serving stale JavaScript, and nothing on
+# screen says so. It looks exactly like the change not working. Twice now.
+#
+# Both binaries, because the pair is the product. `allium-inspect` and
+# `allium-journey` share `inspect-journey` and `inspect-sim`, so installing one
+# after a change to either leaves the other answering differently about the
+# same specification — the drift `tests/agreement.rs` exists to prevent one
+# layer further down.
+#
+# `--locked` on purpose: `allium-parser` is pinned to the tag the fixtures were
+# recorded from, and an install that quietly resolved a different one would
+# make the installed binary disagree with everything `just check` proved.
+#
+# rustup prints a note that the toolchain file overrode the default. That is
+# the pin in `rust-toolchain.toml` doing its job; `+stable` would undo it.
+
+# Build the frontend, then install both binaries onto PATH.
+install: ui-guard ui-build
+    cargo install --path apps/inspect --locked
+    cargo install --path apps/journey --locked
+    @echo
+    @echo "installed:"
+    @command -v allium-inspect && allium-inspect --version
+    @command -v allium-journey && allium-journey --version
+
+# === run ===
+
 # Point it at a spec directory and it opens a browser.
 run *ARGS:
     cargo run -p inspect -- {{ARGS}}

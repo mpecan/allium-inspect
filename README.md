@@ -37,16 +37,20 @@ There are no binary releases yet — build it from source. You will need
 ```sh
 git clone https://github.com/mpecan/allium-inspect
 cd allium-inspect
-just ui-install && just build-release
+just ui-install && just install
 ```
 
-That leaves two binaries in `target/release/` — `allium-inspect` and
-`allium-journey`. Copy them onto your `PATH`, or run them from there.
+That puts both binaries — `allium-inspect` and `allium-journey` — on your
+`PATH`. `just build-release` instead leaves them in `target/release/` to copy
+or run from there.
 
-Build the interface before the binaries, which is what `just build-release`
-does: the browser bundle is baked into the executable at compile time, so a bare
-`cargo build` produces a binary that serves a page telling you to run
-`just build`.
+**Use the recipe rather than `cargo install`.** The browser bundle is baked into
+the executable at compile time, so the interface has to be built first; a bare
+`cargo install` bakes in whatever was built last, which after a change to the
+interface is the previous bundle. The binary then serves stale JavaScript and
+nothing on screen says so — it looks exactly like the change not working.
+`just install` builds the frontend, installs both binaries, and prints what
+landed where.
 
 You also need the **`allium` CLI** on `PATH`:
 
@@ -247,6 +251,7 @@ allium-inspect --print-graph specs/ | jq '[.edges[] | select((.from|split("::")[
 
 ```sh
 just build     # the frontend, then the workspace
+just install   # the frontend, then both binaries onto PATH
 just run specs/
 just check     # every fast gate
 ```
