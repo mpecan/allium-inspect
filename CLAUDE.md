@@ -12,7 +12,7 @@ crates/inspect-model   allium output → one linked SpecGraph, plus view project
 crates/inspect-sim     three-valued evaluator, world, step engine
 crates/inspect-journey journeys: grammar, static check, and the walk
 crates/inspect-server  axum routes; the built UI embedded via rust-embed
-apps/inspect           args, a free port, a browser, a file watcher
+apps/inspect           args, `.allium-inspect.toml`, a free port, a browser, a watcher
 apps/journey           `allium-journey`: the same walk without a browser
 ui                     Svelte 5; wire types generated from the Rust by ts-rs
 ```

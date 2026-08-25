@@ -1,0 +1,19 @@
+# What `allium-inspect` does in this repository when given nothing to do.
+#
+# The flags are all still there and all still win; this is only the part
+# nobody wants to type twice. Paths are relative to this file, so the command
+# means the same thing from `crates/inspect-sim` as it does from here.
+
+# The tool's own specification. It describes what you are looking at.
+specs = "specs"
+
+# And what somebody set out to do with it.
+journeys = "specs/journeys"
+
+# What `just walk` photographed of them, when it has been run. Absent is the
+# ordinary state and reads as "nobody has shown this yet" rather than an error.
+evidence = "target/evidence"
+
+# Where a `journey:` marker may be claiming a step. The Rust tests claim the
+# two CLI steps no browser can photograph.
+code = ["crates", "apps", "ui/src", "ui/e2e"]

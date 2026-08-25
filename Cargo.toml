@@ -61,6 +61,9 @@ rust-embed = { version = "8", features = ["mime-guess"] }
 # --- binary ---
 # Argument parsing. Rent: apps/inspect/src/args.rs.
 clap = { version = "4", features = ["derive"] }
+# Reads `.allium-inspect.toml`, so the flags a project always passes are
+# written down once. Rent: apps/inspect/src/config.rs.
+toml = { version = "0.9", default-features = false, features = ["parse", "serde"] }
 # Opens the browser at the bound port. Rent: apps/inspect/src/main.rs.
 open = "5"
 # Watches the spec files and bumps the revision the browser polls for. There is

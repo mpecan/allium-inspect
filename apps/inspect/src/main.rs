@@ -10,12 +10,14 @@
 #![forbid(unsafe_code)]
 
 mod args;
+mod config;
 mod watch;
 
 use std::{net::SocketAddr, path::PathBuf, process::ExitCode};
 
 use args::Args;
 use clap::Parser;
+use config::Settings;
 use inspect_model::ProcessRunner;
 use inspect_server::{AppState, Evidence, Inspection, serve};
 use tokio::net::TcpListener;
@@ -41,18 +43,53 @@ async fn main() -> ExitCode {
 }
 
 async fn run(args: Args) -> Result<(), String> {
-    let paths = args::resolve(&args.paths);
+    let settings = Settings::resolve(&args, found_config(&args)?);
+    if let Some(path) = &settings.config {
+        // Said rather than assumed. A run behaving unexpectedly should name the
+        // file that told it to, and a file found two directories up is exactly
+        // the one nobody remembers writing.
+        //
+        // On stderr, because stdout here is a document: `--print-graph` and
+        // `--json` are piped into other things, and a tool that greets its own
+        // pipeline is a tool whose output has to be filtered before use.
+        eprintln!("config {}", path.display());
+    }
+
+    let paths = args::resolve(&settings.paths);
     if paths.is_empty() {
         return Err(format!(
             "no .allium files found in {}.\n\
              Point allium-inspect at a spec file, or at a directory holding some.",
-            args.paths.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
+            settings.paths.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
+        ));
+    }
+
+    // Five things are about journeys and need some. `clap` used to enforce
+    // that with `requires`, which asks the *command line* — and once a
+    // configuration file can say `journeys = "specs/journeys"`, asking the
+    // command line answers no to a question the file already settled. So it is
+    // asked here, where both have been heard, and the message names both ways
+    // of answering it.
+    let about_journeys = [
+        ("--check", args.check),
+        ("--strict", args.strict),
+        ("--json", args.json),
+        ("--evidence", settings.evidence.is_some()),
+        ("--code", !settings.code.is_empty()),
+    ];
+    if settings.journeys.is_none()
+        && let Some((flag, _)) = about_journeys.iter().find(|(_, given)| *given)
+    {
+        return Err(format!(
+            "{flag} is about journeys, and none were given.\n\
+             Pass --journeys <PATH>, or set `journeys` in {}.",
+            config::FILE
         ));
     }
 
     // A journey path that names nothing is a typo, and a browser opening on an
     // empty Journeys view is a slower way to find that out than being told.
-    let journeys = match &args.journeys {
+    let journeys = match &settings.journeys {
         Some(path) => {
             let files = args::journeys(path);
             if files.is_empty() {
@@ -63,8 +100,8 @@ async fn run(args: Args) -> Result<(), String> {
         None => Vec::new(),
     };
 
-    let runner = ProcessRunner::new(&args.allium);
-    let evidence = Evidence::read(args.evidence.as_deref(), &args.code);
+    let runner = ProcessRunner::new(&settings.allium);
+    let evidence = Evidence::read(settings.evidence.as_deref(), &settings.code);
     let inspection = Inspection::build(&runner, &paths, &journeys, &evidence)
         .map_err(|error| error.to_string())?;
 
@@ -88,14 +125,14 @@ async fn run(args: Args) -> Result<(), String> {
     // Watching is on by default: the normal way to use this is with the spec
     // open in an editor beside it, and a reload that needs a restart turns a
     // two-second loop into a ten-second one.
-    if !args.no_watch {
+    if settings.watch {
         let inputs = watch::Inputs {
             paths: paths.clone(),
-            journeys: args.journeys.clone(),
-            evidence: args.evidence.clone(),
-            code: args.code.clone(),
+            journeys: settings.journeys.clone(),
+            evidence: settings.evidence.clone(),
+            code: settings.code.clone(),
         };
-        match watch::watch(inputs, args.allium.clone(), state.clone()) {
+        match watch::watch(inputs, settings.allium.clone(), state.clone()) {
             Ok(_handle) => println!("watching for changes"),
             // Not fatal. A machine whose watcher limit is exhausted, or a
             // filesystem that does not support notifications, is a reason to
@@ -106,7 +143,7 @@ async fn run(args: Args) -> Result<(), String> {
     // Port 0 asks the operating system for a free one, which is the point: a
     // tool people run in several checkouts at once should never fail to start
     // because another copy of it is already up.
-    let address = SocketAddr::from(([127, 0, 0, 1], args.port.unwrap_or(0)));
+    let address = SocketAddr::from(([127, 0, 0, 1], settings.port.unwrap_or(0)));
     let listener = TcpListener::bind(address)
         .await
         .map_err(|error| format!("could not bind {address}: {error}"))?;
@@ -116,7 +153,7 @@ async fn run(args: Args) -> Result<(), String> {
 
     let url = format!("http://{bound}");
     println!("allium-inspect  {url}");
-    if !args.no_open
+    if settings.open
         && let Err(error) = open::that_detached(&url)
     {
         // Not fatal. The address is printed above, and a headless machine
@@ -125,6 +162,23 @@ async fn run(args: Args) -> Result<(), String> {
     }
 
     serve(listener, state).await.map_err(|error| format!("server stopped: {error}"))
+}
+
+/// The configuration file, if one is wanted and one is there.
+///
+/// A file named with `--config` that is not readable is an error: somebody
+/// asked for it by name. A search that finds nothing is not: having no file is
+/// the ordinary state, and the flags still say everything.
+fn found_config(args: &Args) -> Result<Option<(PathBuf, config::Config)>, String> {
+    if args.no_config {
+        return Ok(None);
+    }
+    if let Some(path) = &args.config {
+        return config::Config::read(path).map(|config| Some((path.clone(), config)));
+    }
+    let here = std::env::current_dir()
+        .map_err(|error| format!("could not read the working directory: {error}"))?;
+    config::discover(&here)
 }
 
 /// Walk every journey under `path` against the spec, and say what happened.

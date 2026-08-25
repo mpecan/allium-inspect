@@ -7,6 +7,9 @@ run its rules.
 allium-inspect specs/
 ```
 
+Or write the paths down once in a [`.allium-inspect.toml`](#a-file-so-nobody-types-that-twice)
+and run `allium-inspect` on its own.
+
 ![The five views, the journey report and the source strip](docs/media/demo.gif)
 
 Reads a spec set, binds a free port, and opens a browser onto five views of it
@@ -184,12 +187,55 @@ allium-inspect [PATHS]...
   --no-open              do not open a browser
   --no-watch             do not reload when a spec changes
   --journeys <PATH>      journeys to walk, shown in the Journeys view
+  --evidence <PATH>      a sealed manifest and its pictures, under the steps
+  --code <PATH>          where to look for `journey:` markers in source
   --check                print the journey report and exit, without serving
   --strict               implies --check: fail on what the spec cannot support
   --json                 implies --check: print the report as JSON
   --print-graph          print the whole graph as JSON and exit
   --allium <PATH>        the allium binary to run
+  --config <PATH>        read this configuration file instead of looking
+  --no-config            ignore any .allium-inspect.toml
 ```
+
+### A file, so nobody types that twice
+
+A repository that uses all of the above has a real command that nobody wants to
+retype. Put a `.allium-inspect.toml` beside the specs and it becomes
+`allium-inspect`:
+
+```toml
+specs     = "specs"
+journeys  = "specs/journeys"
+evidence  = "target/evidence"
+code      = ["crates", "apps", "ui/src"]
+
+# port  = 7777
+# open  = false
+# watch = false
+# allium = "/opt/allium"
+```
+
+Three things about it are worth knowing before you rely on it.
+
+**The command line wins.** Every key has a flag, and a flag that was given beats
+the file. `--open` and `--watch` exist for exactly this: a file that turned the
+browser off has to be overrulable for one run. `--no-config` ignores the file
+entirely.
+
+**Paths are relative to the file, not to the shell** — which is most of the
+reason to have it. The search starts in the working directory and goes up as far
+as the repository root and no further, so a file in `$HOME` cannot quietly
+govern every project below it. The file that was read is named on stderr.
+
+**A key it does not know is an error**, naming the line and listing the keys
+there are. `journies = "specs/journeys"` is a typo, and a file that shrugs at one
+is a file that silently does something other than what it says.
+
+The modes are deliberately not settable: `--check`, `--strict`, `--json` and
+`--print-graph` each answer at the terminal and exit, and a file that quietly
+turned the browser tool into a JSON printer would be a surprise nobody could
+attribute to anything they typed.
 
 `--print-graph` makes the whole pipeline scriptable:
 

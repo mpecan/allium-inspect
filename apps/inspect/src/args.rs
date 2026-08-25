@@ -9,7 +9,11 @@ use clap::Parser;
 #[command(name = "allium-inspect", version, about, long_about = None)]
 pub struct Args {
     /// Spec files, or directories to search for them.
-    #[arg(default_value = ".")]
+    ///
+    /// No clap default: empty has to mean *nothing was given*, so that a
+    /// `.allium-inspect.toml` can say `specs = "specs/"` and be heard. The
+    /// fallback to `.` is applied once, in [`crate::config::Settings`], where
+    /// every other default is.
     pub paths: Vec<PathBuf>,
 
     /// Bind this port instead of an arbitrary free one.
@@ -20,9 +24,31 @@ pub struct Args {
     #[arg(long)]
     pub no_open: bool,
 
+    /// Open a browser, whatever the configuration file says.
+    #[arg(long, conflicts_with = "no_open")]
+    pub open: bool,
+
     /// Do not reload when a spec file changes.
     #[arg(long)]
     pub no_watch: bool,
+
+    /// Reload when a spec file changes, whatever the configuration file says.
+    #[arg(long, conflicts_with = "no_watch")]
+    pub watch: bool,
+
+    /// Read this configuration file instead of looking for one.
+    ///
+    /// Named explicitly, so a file that does not exist is an error rather than
+    /// silence — the opposite of the search, where finding nothing is ordinary.
+    #[arg(long, value_name = "PATH", conflicts_with = "no_config")]
+    pub config: Option<PathBuf>,
+
+    /// Ignore any `.allium-inspect.toml`.
+    ///
+    /// The escape hatch for a file two directories up doing something
+    /// unexpected: run once without it and compare.
+    #[arg(long)]
+    pub no_config: bool,
 
     /// Print the whole graph as JSON and exit.
     #[arg(long)]
@@ -37,25 +63,25 @@ pub struct Args {
     pub journeys: Option<PathBuf>,
 
     /// Print the journey report at the terminal and exit, instead of serving.
-    #[arg(long, requires = "journeys")]
+    #[arg(long)]
     pub check: bool,
 
     /// Fail when a journey names something the spec does not have.
     ///
     /// Off by default, because report is the mode a journey is *written* in.
     /// This is the mode a finished one is defended in. Implies `--check`.
-    #[arg(long, requires = "journeys")]
+    #[arg(long)]
     pub strict: bool,
 
     /// Print the journey report as JSON and exit. Implies `--check`.
-    #[arg(long, requires = "journeys")]
+    #[arg(long)]
     pub json: bool,
 
     /// A directory holding a sealed `manifest.json` and its pictures.
     ///
     /// What a test run *showed* of a journey, beside what the specification
     /// says about it. Written by `allium-journey evidence seal`.
-    #[arg(long, value_name = "PATH", requires = "journeys")]
+    #[arg(long, value_name = "PATH")]
     pub evidence: Option<PathBuf>,
 
     /// Where to look for `journey:` markers in source.
@@ -63,12 +89,39 @@ pub struct Args {
     /// Separate from `--evidence` because the case worth reporting is a test
     /// that claims a step and produced no picture — and in exactly that case
     /// the run wrote nothing, so the claim cannot be derived from the manifest.
-    #[arg(long, value_name = "PATH", requires = "journeys")]
+    #[arg(long, value_name = "PATH")]
     pub code: Vec<PathBuf>,
 
     /// The allium binary to run.
-    #[arg(long, default_value = "allium")]
-    pub allium: PathBuf,
+    #[arg(long, value_name = "PATH")]
+    pub allium: Option<PathBuf>,
+}
+
+impl Args {
+    /// Whether a browser was asked for, or asked against, or neither.
+    ///
+    /// `None` is the answer the configuration file gets to fill in, and it is
+    /// the reason there is an `--open` at all: without it a file saying
+    /// `open = false` could not be overruled for a single run.
+    #[must_use]
+    pub fn opening(&self) -> Option<bool> {
+        either(self.open, self.no_open)
+    }
+
+    /// The same, for watching.
+    #[must_use]
+    pub fn watching(&self) -> Option<bool> {
+        either(self.watch, self.no_watch)
+    }
+}
+
+/// A pair of opposed flags as one answer. Both set is refused by clap.
+fn either(yes: bool, no: bool) -> Option<bool> {
+    match (yes, no) {
+        (true, _) => Some(true),
+        (_, true) => Some(false),
+        _ => None,
+    }
 }
 
 /// Every `.journey` file under `path`, sorted.
@@ -213,13 +266,20 @@ mod tests {
     }
 
     #[test]
-    fn the_arguments_parse_with_their_defaults() {
+    fn nothing_given_is_nothing_given() {
+        // Every one of these has to be distinguishable from a value, because a
+        // `.allium-inspect.toml` fills in exactly what the command line did
+        // not say. `paths` used to default to `.` here, which made "no specs
+        // named" and "specs named as the current directory" the same thing —
+        // and a file saying `specs = "specs/"` unheard.
         let args = Args::try_parse_from(["allium-inspect"]).expect("defaults parse");
-        assert_eq!(args.paths, [PathBuf::from(".")]);
+        assert!(args.paths.is_empty());
         assert_eq!(args.port, None);
-        assert!(!args.no_open);
+        assert_eq!(args.allium, None);
+        assert_eq!(args.opening(), None);
+        assert_eq!(args.watching(), None);
         assert!(!args.print_graph);
-        assert_eq!(args.allium, PathBuf::from("allium"));
+        assert!(!args.no_config);
     }
 
     #[test]
@@ -238,7 +298,57 @@ mod tests {
         .expect("flags parse");
         assert_eq!(args.paths, [PathBuf::from("specs/")]);
         assert_eq!(args.port, Some(8080));
-        assert!(args.no_open && args.no_watch && args.print_graph);
-        assert_eq!(args.allium, PathBuf::from("/opt/allium"));
+        assert!(args.print_graph);
+        assert_eq!(args.opening(), Some(false));
+        assert_eq!(args.watching(), Some(false));
+        assert_eq!(args.allium, Some(PathBuf::from("/opt/allium")));
+    }
+
+    /// The positive halves, which exist so a file saying `open = false` can be
+    /// overruled for one run. Without them the file would be the last word.
+    #[test]
+    fn the_positive_flags_say_the_opposite() {
+        let args =
+            Args::try_parse_from(["allium-inspect", "--open", "--watch"]).expect("flags parse");
+        assert_eq!(args.opening(), Some(true));
+        assert_eq!(args.watching(), Some(true));
+    }
+
+    /// The five flags that are about journeys no longer demand `--journeys` at
+    /// the command line, because a `.allium-inspect.toml` may have said it.
+    /// The relationship is checked once both have been heard; here it must
+    /// only parse.
+    #[test]
+    fn a_journey_flag_alone_parses_and_is_answered_later() {
+        for flag in ["--check", "--strict", "--json"] {
+            assert!(
+                Args::try_parse_from(["allium-inspect", flag]).is_ok(),
+                "{flag} must reach the merge to be judged"
+            );
+        }
+        assert!(Args::try_parse_from(["allium-inspect", "--evidence", "e"]).is_ok());
+        assert!(Args::try_parse_from(["allium-inspect", "--code", "."]).is_ok());
+    }
+
+    /// Both at once is refused rather than resolved. Which one wins would be a
+    /// rule nobody could guess, and guessing is what this repository does not.
+    #[test]
+    fn a_flag_and_its_opposite_together_are_refused() {
+        assert!(Args::try_parse_from(["allium-inspect", "--open", "--no-open"]).is_err());
+        assert!(Args::try_parse_from(["allium-inspect", "--watch", "--no-watch"]).is_err());
+        assert!(
+            Args::try_parse_from(["allium-inspect", "--config", "a.toml", "--no-config"]).is_err()
+        );
+    }
+
+    #[test]
+    fn nothing_given_is_the_current_directory_by_the_time_it_matters() {
+        // The default did not go away; it moved to the one place every other
+        // default lives, so that "not given" survives long enough to be heard.
+        let args = Args::try_parse_from(["allium-inspect"]).expect("defaults parse");
+        let settings = crate::config::Settings::resolve(&args, None);
+        assert_eq!(settings.paths, [PathBuf::from(".")]);
+        assert_eq!(settings.allium, PathBuf::from("allium"));
+        assert!(settings.open && settings.watch);
     }
 }
