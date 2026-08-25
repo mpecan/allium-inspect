@@ -193,19 +193,42 @@ mod tests {
             }
         }
 
+        fn entity(module: &str, name: &str, fields: Vec<EntityField>) -> Node {
+            let mut node = Node::new(module, NodeKind::Entity, name);
+            node.detail = NodeDetail::Entity(EntityDetail {
+                kind: EntityKind::Internal,
+                fields,
+                transitions: Vec::new(),
+                parent: None,
+            });
+            node
+        }
+
         let mut graph = SpecGraph::new("test");
-        let mut node = Node::new("lending", NodeKind::Entity, "Member");
-        node.detail = NodeDetail::Entity(EntityDetail {
-            kind: EntityKind::Internal,
-            fields: vec![
+        // Two decoys, and both are here to be *not* found. One shares the
+        // module and one shares the name, each with the same fields declared
+        // stored — so a lookup that matched on either half alone would take a
+        // decoy's word for it and record nothing, which is a wrong answer that
+        // looks exactly like a spec with no computed fields.
+        graph.nodes.push(entity(
+            "lending",
+            "Copy",
+            vec![field("loans", false, false), field("open_loans", false, false)],
+        ));
+        graph.nodes.push(entity(
+            "catalogue",
+            "Member",
+            vec![field("loans", false, false), field("open_loans", false, false)],
+        ));
+        graph.nodes.push(entity(
+            "lending",
+            "Member",
+            vec![
                 field("name", false, false),
                 field("loans", false, true),
                 field("open_loans", true, false),
             ],
-            transitions: Vec::new(),
-            parent: None,
-        });
-        graph.nodes.push(node);
+        ));
         graph
     }
 
