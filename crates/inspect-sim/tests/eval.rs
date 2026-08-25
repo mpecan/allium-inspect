@@ -1241,3 +1241,108 @@ fn a_join_lookup_over_a_type_with_no_instances_is_null() {
     let lookup = join(ident("Membership"), &[("group", ident("g"))]);
     assert_eq!(value_of(&lookup, &env.bind("g", Value::Int(1))), Value::Null);
 }
+
+// --- the qualified lookup upstream hands over as a division ---------------
+//
+// `exists membership/Membership{…}` parses as a division — see
+// `tests/upstream.rs`, which asserts it still does. These say the recovery
+// fires on exactly that shape and on nothing else: a recovery that was too
+// eager would silently reinterpret real arithmetic, which is worse than the
+// misparse it is for.
+
+fn misparsed(module: &str, entity: &str, fields: &[(&str, Expr)]) -> Expr {
+    Expr::BinaryOp {
+        span: NOWHERE,
+        left: Box::new(Expr::Exists { span: NOWHERE, operand: Box::new(ident(module)) }),
+        op: BinaryOp::Div,
+        right: Box::new(join(ident(entity), fields)),
+    }
+}
+
+#[test]
+fn the_misparsed_qualified_lookup_is_read_as_the_lookup_it_is() {
+    let (world, group, member, _) = joined();
+    let env =
+        env(&world, "messaging").bind("g", Value::Ref(group.clone())).bind("m", Value::Ref(member));
+
+    let found =
+        misparsed("membership", "Membership", &[("group", ident("g")), ("member", ident("m"))]);
+    assert_eq!(truth_of(&found, &env), Truth::True);
+
+    // And answers false rather than undecided when nothing matches, which is
+    // the whole difference from reporting `nothing is bound to membership`.
+    let env = env.bind("nobody", Value::Ref(EntityId::new("Member", 9)));
+    let missing = misparsed(
+        "membership",
+        "Membership",
+        &[("group", ident("g")), ("member", ident("nobody"))],
+    );
+    assert_eq!(truth_of(&missing, &env), Truth::False);
+}
+
+/// The recovery must not reinterpret arithmetic that means what it says.
+#[test]
+fn ordinary_division_is_left_alone() {
+    let world = library();
+    let env = env(&world, "lending");
+
+    let divided = Expr::BinaryOp {
+        span: NOWHERE,
+        left: Box::new(number("10")),
+        op: BinaryOp::Div,
+        right: Box::new(number("2")),
+    };
+    assert_eq!(value_of(&divided, &env), Value::Int(5));
+}
+
+/// Each half of the shape, withheld one at a time.
+#[test]
+fn nothing_else_is_mistaken_for_a_qualified_lookup() {
+    let (world, group, _, _) = joined();
+    let env = env(&world, "messaging").bind("g", Value::Ref(group));
+    let lookup = join(ident("Membership"), &[("group", ident("g"))]);
+
+    // An operator that is not division: `exists x + Y{…}` is nonsense, and
+    // answering it as a lookup would be inventing a reading nobody wrote.
+    let added = Expr::BinaryOp {
+        span: NOWHERE,
+        left: Box::new(Expr::Exists { span: NOWHERE, operand: Box::new(ident("membership")) }),
+        op: BinaryOp::Add,
+        right: Box::new(lookup.clone()),
+    };
+    assert_eq!(truth_of(&added, &env), Truth::Unknown);
+
+    // A left side that is not an `exists`.
+    let bare = Expr::BinaryOp {
+        span: NOWHERE,
+        left: Box::new(ident("membership")),
+        op: BinaryOp::Div,
+        right: Box::new(lookup.clone()),
+    };
+    assert_eq!(truth_of(&bare, &env), Truth::Unknown);
+
+    // A right side that is not a lookup: real division by a field.
+    let over_field = Expr::BinaryOp {
+        span: NOWHERE,
+        left: Box::new(Expr::Exists { span: NOWHERE, operand: Box::new(ident("membership")) }),
+        op: BinaryOp::Div,
+        right: Box::new(number("2")),
+    };
+    assert_eq!(truth_of(&over_field, &env), Truth::Unknown);
+}
+
+/// A module name is lower case. `exists Thing / Other{…}` is not a qualified
+/// name however it was written, and reading it as one would be a guess.
+#[test]
+fn a_capitalised_left_hand_name_is_not_a_module() {
+    let (world, group, member, _) = joined();
+    let env = env(&world, "messaging").bind("g", Value::Ref(group)).bind("m", Value::Ref(member));
+
+    let capitalised =
+        misparsed("Membership", "Membership", &[("group", ident("g")), ("member", ident("m"))]);
+    assert_eq!(
+        truth_of(&capitalised, &env),
+        Truth::Unknown,
+        "an upper-case left side was read as a module qualifier"
+    );
+}

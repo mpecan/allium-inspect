@@ -1106,3 +1106,89 @@ fn an_undecided_rule_names_the_sub_expression_that_could_not_be_settled() {
     assert!(detail.contains("has no `is_at_limit` set"), "{detail}");
     assert!(detail.contains("in `member.is_at_limit`"), "and which clause asked: {detail}");
 }
+
+// --- naming a moment -----------------------------------------------------
+
+/// The clock arithmetic, asserted where it lands rather than where it parses.
+///
+/// The clock starts at zero, so a journey that says `now + 1.day` at the very
+/// beginning cannot tell an offset that is added from one that is multiplied.
+/// Every case here moves the clock first, for that reason.
+#[test]
+fn a_moment_is_measured_from_the_clock_where_the_line_stands() {
+    let result = walked(
+        "\
+journey AMomentLater {
+    goal: a deadline set an hour in, and reached two days later
+
+    cast:
+        copy: catalogue/Copy
+
+    1. an hour passes
+        after 1.hour
+        stipulate copy.due_at = now + 1.day
+        then copy.due_at > now
+
+    2. and then two days
+        after 2.days
+        then copy.due_at < now
+}
+",
+    );
+
+    let bad: Vec<_> = outcomes(&result)
+        .into_iter()
+        .filter(|(verdict, ..)| *verdict != Verdict::Specified)
+        .collect();
+    assert!(bad.is_empty(), "{bad:#?}");
+}
+
+/// The other direction, so a sign flip is not a passing test.
+#[test]
+fn a_moment_before_now_is_already_past() {
+    let result = walked(
+        "\
+journey AMomentAgo {
+    goal: a deadline that was already behind us
+
+    cast:
+        copy: catalogue/Copy
+
+    1. an hour passes
+        after 1.hour
+        stipulate copy.due_at = now - 1.minute
+        then copy.due_at < now
+}
+",
+    );
+
+    let bad: Vec<_> = outcomes(&result)
+        .into_iter()
+        .filter(|(verdict, ..)| *verdict != Verdict::Specified)
+        .collect();
+    assert!(bad.is_empty(), "{bad:#?}");
+}
+
+/// Bare `now` is the clock itself: neither before nor after it.
+#[test]
+fn bare_now_is_neither_before_nor_after_the_clock() {
+    let result = walked(
+        "\
+journey RightNow {
+    goal: a moment that is exactly the clock
+
+    cast:
+        copy: catalogue/Copy
+
+    1. an hour passes
+        after 1.hour
+        stipulate copy.due_at = now
+        then copy.due_at > now
+}
+",
+    );
+
+    // `>` is false, not undecided: the comparison was made and answered.
+    let verdicts: Vec<Verdict> = outcomes(&result).into_iter().map(|(v, ..)| v).collect();
+    assert!(verdicts.contains(&Verdict::Refused), "{:#?}", outcomes(&result));
+}
