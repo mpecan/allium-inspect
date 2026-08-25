@@ -159,11 +159,20 @@ impl Walker<'_> {
                     format!("`{surface}` shows `{written}` to {actor}")
                 },
             ),
-            // Carried by the surface and not by this actor's instance of it.
-            // Somebody else's row, which is the whole point of a filter.
+            // Nothing this surface shows reaches it from where this actor
+            // stands: somebody else's row, which is the whole point of a
+            // filter, or a walk off a noun this boundary does not carry.
+            //
+            // Which of the two is not said, because it is not known here. The
+            // clause text got as far as "something ending that way is on this
+            // surface", and `MyLoans` answering "exposes `loan.shelfmark`"
+            // about a boundary that exposes `loan.copy.shelfmark` would be a
+            // false sentence about the specification — the thing this tool
+            // exists not to produce — put in a reader's way while they look
+            // for a filter that is not the problem.
             Admission::No => say(
                 if negated { Verdict::Specified } else { Verdict::Unexposed },
-                format!("`{surface}` exposes `{written}`, and not to {actor}"),
+                format!("nothing `{surface}` shows to {actor} is `{written}`"),
             ),
             Admission::Undecided(why) => {
                 say(Verdict::Undecided, format!("`{surface}` exposes `{written}` — {why}"))

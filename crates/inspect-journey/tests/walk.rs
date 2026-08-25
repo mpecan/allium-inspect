@@ -485,7 +485,14 @@ fn a_scoped_surface_does_not_show_a_reader_somebody_else_s_row() {
     );
     let seen = &result.steps[0].outcomes[1];
     assert_eq!(seen.verdict, Verdict::Specified, "{seen:?}");
-    assert!(seen.detail.as_deref().is_some_and(|why| why.contains("not to ada")), "{seen:?}");
+    // And it says so about *ada* — the surface carries loans, and this walk
+    // does not reach one from where she stands.
+    assert!(
+        seen.detail
+            .as_deref()
+            .is_some_and(|why| why == "nothing `MyLoans` shows to ada is `loan.status`"),
+        "{seen:?}"
+    );
 }
 
 /// The same journey against the *unscoped* surface, which does show it —
