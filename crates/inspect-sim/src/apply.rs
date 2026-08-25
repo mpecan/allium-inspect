@@ -426,6 +426,14 @@ impl<'a> Application<'a> {
     /// Checked against the declared states rather than accepted on sight: a
     /// misspelled state should stay undecided and be reported, not become a
     /// state nothing in the lifecycle mentions.
+    ///
+    /// A field's states are written in one of two places, and both count.
+    /// `status: open | returned` carries its own; `kind: ReceiptKind` carries
+    /// none and names an enumeration that does. Reading only the first left
+    /// `Receipt.created(kind: read)` storing an unknown — so the rule that
+    /// asks `not exists Receipt{…, kind: read}` before creating one could
+    /// never tell whether it already had, and a person reading the same
+    /// message twice was undecidable from the second time on.
     fn declared_state(&self, entity: &str, field: &str, name: &str) -> Option<Value> {
         let node = self
             .against
@@ -434,7 +442,28 @@ impl<'a> Application<'a> {
             .iter()
             .find(|node| node.kind == NodeKind::Entity && node.name == entity)?;
         let declared = node.detail.as_entity()?.field(field)?;
-        declared.enum_values.iter().any(|state| state == name).then(|| Value::Enum(name.to_owned()))
+        let known = declared.enum_values.iter().any(|state| state == name)
+            || self
+                .enumeration(&declared.type_expr)
+                .is_some_and(|values| values.iter().any(|state| state == name));
+        known.then(|| Value::Enum(name.to_owned()))
+    }
+
+    /// The values of the enumeration a field is typed by, when it is one.
+    ///
+    /// The qualifier is dropped: `catalogue/Medium` and `Medium` are one
+    /// declaration written from two distances, and the graph files it under
+    /// its bare name in the module that declares it.
+    fn enumeration(&self, type_expr: &str) -> Option<&'a [String]> {
+        let named = type_expr.trim().trim_end_matches('?');
+        let named = named.rsplit('/').next()?;
+        self.against
+            .spec
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::Enum && node.name == named)
+            .and_then(|node| node.detail.as_enum())
+            .map(|detail| detail.values.as_slice())
     }
 
     /// The transition graph governing `field`, if the spec declares one.

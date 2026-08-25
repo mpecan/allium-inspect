@@ -331,6 +331,15 @@ impl NodeDetail {
         }
     }
 
+    /// The enumeration payload, when this is one.
+    #[must_use]
+    pub fn as_enum(&self) -> Option<&EnumDetail> {
+        match self {
+            NodeDetail::Enum(detail) => Some(detail),
+            _ => None,
+        }
+    }
+
     /// The rule payload, when this is one.
     #[must_use]
     pub fn as_rule(&self) -> Option<&RuleDetail> {

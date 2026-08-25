@@ -546,6 +546,57 @@ fn a_surface_scoped_to_something_else_is_undecided_and_says_so() {
     assert!(seen.detail.as_deref().is_some_and(|why| why.contains("in <the Member>")), "{seen:?}");
 }
 
+/// A field typed by an enumeration declared elsewhere, set by a rule.
+///
+/// `wanted_as: catalogue/Medium` carries no states of its own — they are on
+/// the enumeration it names — so `Reservation.created(wanted_as: print)` was
+/// storing an unknown. In `friend-mesh` that field was `Receipt.kind`, and
+/// the cost was `not exists Receipt{…, kind: read}`: the rule that checks
+/// whether it has already recorded a read could not tell, so a person reading
+/// the same message twice was undecidable from the second time on.
+#[test]
+fn a_field_typed_by_a_named_enum_is_set_to_the_state_the_rule_names() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada:  Member
+        book: catalogue/Book
+    given:
+        book.status = listed
+    1. she reserves it
+        ada does MemberReserves(ada, book) on MemberShelf creating held: Reservation
+        then held.wanted_as = print
+        then held.status = waiting
+}",
+    );
+    let bad: Vec<_> = outcomes(&result)
+        .into_iter()
+        .filter(|(verdict, ..)| *verdict != Verdict::Specified)
+        .collect();
+    assert!(bad.is_empty(), "{bad:#?}");
+}
+
+/// And still checked rather than accepted on sight. A state the enumeration
+/// does not have must stay unknown and be reported, or a misspelling becomes
+/// a state nothing in the spec mentions.
+#[test]
+fn a_state_no_enumeration_declares_is_still_unknown() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada:  Member
+        book: catalogue/Book
+    given:
+        book.status = listed
+    1. she reserves it, and it is not a state anything declares
+        ada does MemberReserves(ada, book) on MemberShelf creating held: Reservation
+        then held.wanted_as = papyrus
+}",
+    );
+    let seen = &result.steps[0].outcomes[1];
+    assert_eq!(seen.verdict, Verdict::Refused, "{seen:?}");
+}
+
 /// An exposure that walks further than one hop, which is the ordinary shape
 /// once a spec has more than one noun.
 ///
@@ -1528,16 +1579,16 @@ journey AMomentLater {
     goal: a deadline set an hour in, and reached two days later
 
     cast:
-        copy: catalogue/Copy
+        held: Reservation
 
     1. an hour passes
         after 1.hour
-        stipulate copy.due_at = now + 1.day
-        then copy.due_at > now
+        stipulate held.placed_at = now + 1.day
+        then held.placed_at > now
 
     2. and then two days
         after 2.days
-        then copy.due_at < now
+        then held.placed_at < now
 }
 ",
     );
@@ -1558,12 +1609,12 @@ journey AMomentAgo {
     goal: a deadline that was already behind us
 
     cast:
-        copy: catalogue/Copy
+        held: Reservation
 
     1. an hour passes
         after 1.hour
-        stipulate copy.due_at = now - 1.minute
-        then copy.due_at < now
+        stipulate held.placed_at = now - 1.minute
+        then held.placed_at < now
 }
 ",
     );
@@ -1584,12 +1635,12 @@ journey RightNow {
     goal: a moment that is exactly the clock
 
     cast:
-        copy: catalogue/Copy
+        held: Reservation
 
     1. an hour passes
         after 1.hour
-        stipulate copy.due_at = now
-        then copy.due_at > now
+        stipulate held.placed_at = now
+        then held.placed_at > now
 }
 ",
     );

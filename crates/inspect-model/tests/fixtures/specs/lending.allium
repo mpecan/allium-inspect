@@ -54,6 +54,11 @@ entity Reservation {
     member: Member
     placed_at: Timestamp
 
+    -- Typed by an enumeration declared elsewhere rather than by states of its
+    -- own, which is the ordinary shape once two constructs share a vocabulary
+    -- — and the shape whose states used to be invisible to the simulator.
+    wanted_as: catalogue/Medium
+
     status: waiting | fulfilled | cancelled
 
     transitions status {
@@ -136,6 +141,7 @@ rule PlaceReservation {
         book: book,
         member: member,
         placed_at: now,
+        wanted_as: print,
         status: waiting
     )
 }
