@@ -352,6 +352,14 @@ fn mentions(clause: &str, needle: &str) -> bool {
     clause.split_whitespace().any(|word| word == needle || word.ends_with(needle))
 }
 
+/// The node id and module of the surface called `name`.
+pub(crate) fn surface_id(graph: &SpecGraph, name: &str) -> Option<(String, String)> {
+    graph
+        .nodes_of(NodeKind::Surface)
+        .find(|node| node.name == name)
+        .map(|node| (node.id.to_string(), node.module.clone()))
+}
+
 pub(crate) fn surface_named<'a>(graph: &'a SpecGraph, name: &str) -> Option<&'a SurfaceDetail> {
     graph
         .nodes_of(NodeKind::Surface)

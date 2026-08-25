@@ -333,8 +333,8 @@ impl Walker<'_> {
             }
             Clause::After { duration, line, .. } => self.advance(duration, *line, about),
             Clause::Then { assertion, line } => self.assert(assertion, *line, about),
-            Clause::Sees { path, surface, negated, line, .. } => {
-                self.observe(&Sight { path, surface, negated: *negated, line: *line }, about)
+            Clause::Sees { actor, path, surface, negated, line } => {
+                self.observe(&Sight { actor, path, surface, negated: *negated, line: *line }, about)
             }
             Clause::Stipulate { path, value, line } => {
                 let value = self.value_of(value);

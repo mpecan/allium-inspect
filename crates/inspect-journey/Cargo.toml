@@ -8,6 +8,10 @@ rust-version.workspace = true
 description = "Journeys written against an Allium spec: parsed, checked and walked"
 
 [dependencies]
+# allium-parser: a surface's `exposes` clause is walked to answer whether it
+# shows a particular thing to a particular person, and that is a question about
+# a collection and a filter rather than about a string.
+allium-parser = { workspace = true }
 inspect-model = { workspace = true }
 inspect-sim = { workspace = true }
 serde = { workspace = true }

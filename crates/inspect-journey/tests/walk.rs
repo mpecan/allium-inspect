@@ -392,27 +392,61 @@ fn a_line_the_spec_cannot_support_is_not_run() {
 }
 
 #[test]
-fn seeing_a_value_that_exists_is_undecided_until_the_filter_is_read() {
-    // The honest half-answer. The surface carries it — the checker said so —
-    // and whether *this* actor is admitted needs the `exposes` clause as an
-    // expression, which is not read yet. Coming back true here would be the
-    // tool claiming to have checked something it did not.
+fn seeing_a_value_the_surface_shows_this_actor_holds() {
+    // The `exposes` clause is walked now, not merely matched: `MemberShelf`
+    // exposes `Member.open_loan_count` and the loans on this member's shelf,
+    // and Ada is the member. This was the honest half-answer for a while —
+    // undecided, because whether the filter admitted *her* was unread — and a
+    // half-answer is what it stopped being.
     let result = walked(
         "journey J {
     cast:
         ada:  Member
         copy: catalogue/Copy
     given:
-        ada.is_at_limit = false
         copy.status = available
     1. she borrows it and looks at her shelf
         ada does MemberBorrows(ada, copy) on MemberShelf creating loan: Loan
-        ada sees loan.status on MemberShelf
+        ada sees ada.open_loan_count on MemberShelf
 }",
     );
     let seen = &result.steps[0].outcomes[1];
-    assert_eq!(seen.verdict, Verdict::Undecided, "{seen:?}");
-    assert!(seen.detail.as_ref().expect("a reason").contains("not read yet"), "{seen:?}");
+    assert_eq!(seen.verdict, Verdict::Specified, "{seen:?}");
+}
+
+/// An exposure written over a *type* shows every instance of it, and this
+/// fixture is the argument for being able to say so.
+///
+/// `MemberShelf` exposes `Loan.status` with no `context`, so it shows every
+/// loan to everyone it faces — including Bob's, to Ada. Written on the same
+/// surface, four lines below:
+///
+/// ```text
+/// @guarantee ALoanIsVisibleToItsHolderOnly
+///     -- A shelf shows the reader their own loans. Whose copy is out is a
+///     -- fact about another member, and this boundary does not carry it.
+/// ```
+///
+/// The clause and the guarantee disagree, and only one of them is checkable.
+/// Before the clause was walked, a journey could not have told anybody.
+#[test]
+fn an_exposure_over_a_type_shows_every_instance_of_it() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada:  Member
+        bob:  Member
+        copy: catalogue/Copy
+    given:
+        copy.status = available
+    1. bob borrows it and ada looks at her own shelf
+        bob does MemberBorrows(bob, copy) on MemberShelf creating loan: Loan
+        ada cannot see loan.status on MemberShelf
+}",
+    );
+    let seen = &result.steps[0].outcomes[1];
+    assert_eq!(seen.verdict, Verdict::Refused, "{seen:?}");
+    assert!(seen.detail.as_deref().is_some_and(|why| why.contains("does show")), "{seen:?}");
 }
 
 #[test]
@@ -601,11 +635,16 @@ fn a_negated_sight_holds_because_the_boundary_does_not_carry_it() {
 }
 
 #[test]
-fn a_privacy_claim_about_an_exposed_field_is_not_satisfied() {
-    // The other direction, and the one that matters. `MemberShelf` exposes
-    // `Member.open_loan_count`; the value is derived and nothing sets it. The
-    // old rule read the value, found it unset, and called the claim safe — so
-    // `cannot see` held against a boundary that plainly carries the field.
+fn a_privacy_claim_about_an_exposed_field_is_refused() {
+    // The one that matters. `MemberShelf` exposes `Member.open_loan_count` and
+    // Ada is the member, so she can see it and the claim that she cannot is
+    // the specification saying otherwise.
+    //
+    // This has been three answers. It *held* once, because the walker read the
+    // value, found it unset and called the claim safe — a privacy claim passing
+    // because nothing checked it, which is the worst answer here. Then it was
+    // undecided, which was honest and unhelpful. Now the clause is walked and
+    // the answer is a refusal, which is what it always was.
     let walk = walked(
         "journey J {
     cast:
@@ -620,10 +659,10 @@ fn a_privacy_claim_about_an_exposed_field_is_not_satisfied() {
         .iter()
         .find(|outcome| outcome.about.contains("cannot see"))
         .expect("the claim is reported");
-    assert_eq!(outcome.verdict, Verdict::Undecided, "{outcome:?}");
+    assert_eq!(outcome.verdict, Verdict::Refused, "{outcome:?}");
     assert!(
-        outcome.detail.as_deref().is_some_and(|detail| detail.contains("not read yet")),
-        "the reason says which half is unread: {:?}",
+        outcome.detail.as_deref().is_some_and(|detail| detail.contains("does show")),
+        "and says so plainly: {:?}",
         outcome.detail
     );
 }

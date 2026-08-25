@@ -15,7 +15,7 @@ use allium_parser::ast::{BlockItemKind, BlockKind, Decl, Expr, Module as Ast};
 use crate::{
     NodeKind, SpecGraph,
     graph::NodeId,
-    program::{Program, RuleAst},
+    program::{Boundary, Program, RuleAst},
 };
 
 #[cfg(test)]
@@ -33,10 +33,20 @@ use crate::{Node, NodeDetail, program::derived_key};
 pub fn ingest(ast: &Ast, module: &str, graph: &SpecGraph, program: &mut Program) {
     for declaration in &ast.declarations {
         if let Decl::Block(block) = declaration
-            && matches!(block.kind, BlockKind::Entity | BlockKind::Value)
             && let Some(name) = &block.name
         {
-            derived(block, module, &name.name, graph, program);
+            match block.kind {
+                BlockKind::Entity | BlockKind::Value => {
+                    derived(block, module, &name.name, graph, program);
+                }
+                BlockKind::Surface => {
+                    program.add_boundary(
+                        NodeId::new(module, NodeKind::Surface, &name.name).as_str(),
+                        boundary(block),
+                    );
+                }
+                _ => {}
+            }
         }
 
         match declaration {
@@ -69,6 +79,35 @@ pub fn ingest(ast: &Ast, module: &str, graph: &SpecGraph, program: &mut Program)
             _ => {}
         }
     }
+}
+
+/// What one surface shows, as expressions.
+///
+/// Two clauses out of the block and nothing else: `context`, because the
+/// `exposes` items refer to it by name, and `exposes` itself. `provides` and
+/// `@guarantee` are the graph's business — a panel draws them and nothing
+/// evaluates them.
+fn boundary(block: &allium_parser::ast::BlockDecl) -> Boundary {
+    let mut boundary = Boundary::default();
+
+    for item in &block.items {
+        let BlockItemKind::Clause { keyword, value } = &item.kind else { continue };
+        match keyword.as_str() {
+            // `context identity: Identity` is a binding: the name the exposes
+            // clause uses, and the type an actor has to be to stand in it.
+            "context" => {
+                if let Expr::Binding { name, value, .. } = value
+                    && let Expr::Ident(entity) = value.as_ref()
+                {
+                    boundary.context = Some((name.name.clone(), entity.name.clone()));
+                }
+            }
+            "exposes" => boundary.exposes = Some(value.clone()),
+            _ => {}
+        }
+    }
+
+    boundary
 }
 
 /// The computed fields of one entity.

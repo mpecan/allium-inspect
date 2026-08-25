@@ -4,8 +4,15 @@
 //! asks what happens next; this asks what is so afterwards, and it never
 //! changes the world — every method here takes `&self`.
 
-use inspect_model::NodeKind;
-use inspect_sim::{Truth, Value};
+use std::collections::BTreeMap;
+
+use allium_parser::ast::{Expr, ForBinding};
+use inspect_model::{Boundary, NodeKind};
+use inspect_sim::{
+    Truth, Value,
+    eval::{Env, eval},
+    value::EntityId,
+};
 
 use crate::{
     check::Verdict,
@@ -123,28 +130,298 @@ impl Walker<'_> {
     /// surface that exposes it on the line above. A privacy claim that passes
     /// because nothing checked it is the worst answer this tool could give.
     pub(crate) fn observe(&self, sight: &Sight<'_>, about: String) -> Outcome {
-        let Sight { path, surface, negated, line } = *sight;
+        let Sight { actor, path, surface, negated, line } = *sight;
         let written = path.as_written();
+        let say = |verdict, detail: String| Outcome {
+            line,
+            verdict,
+            about: about.clone(),
+            detail: Some(detail),
+        };
+
         let carried = crate::check::surface_named(self.spec, surface)
             .is_some_and(|detail| crate::check::exposes(detail, &written));
         if !carried {
-            return Outcome {
-                line,
-                verdict: if negated { Verdict::Specified } else { Verdict::Unexposed },
-                about,
-                detail: Some(format!("`{surface}` exposes nothing like `{written}`")),
-            };
+            // Settled from the clause text, and settled in both directions. A
+            // surface that carries nothing like the field shows it to nobody.
+            return say(
+                if negated { Verdict::Specified } else { Verdict::Unexposed },
+                format!("`{surface}` exposes nothing like `{written}`"),
+            );
         }
-        Outcome {
-            line,
-            verdict: Verdict::Undecided,
-            about,
-            detail: Some(format!(
-                "`{surface}` exposes `{written}` — whether its filter admits this actor is not \
-                 read yet"
-            )),
+
+        match self.admits(sight) {
+            Admission::Yes => say(
+                if negated { Verdict::Refused } else { Verdict::Specified },
+                if negated {
+                    format!("`{surface}` does show `{written}` to {actor}")
+                } else {
+                    format!("`{surface}` shows `{written}` to {actor}")
+                },
+            ),
+            // Carried by the surface and not by this actor's instance of it.
+            // Somebody else's row, which is the whole point of a filter.
+            Admission::No => say(
+                if negated { Verdict::Specified } else { Verdict::Unexposed },
+                format!("`{surface}` exposes `{written}`, and not to {actor}"),
+            ),
+            Admission::Undecided(why) => {
+                say(Verdict::Undecided, format!("`{surface}` exposes `{written}` — {why}"))
+            }
         }
     }
+}
+
+/// Whether a surface shows a particular thing to a particular person.
+enum Admission {
+    Yes,
+    No,
+    /// With the reason, which is the half a reader can act on.
+    Undecided(String),
+}
+
+impl Walker<'_> {
+    /// Whether this surface, scoped to this actor, shows this path.
+    ///
+    /// The surface says *what* it exposes; the question a journey asks is
+    /// whether it exposes it **to them**. `for device in
+    /// identity.listed_devices: device.label` shows a label — one of the labels
+    /// on one identity's list — and answering "yes, labels are exposed" to
+    /// somebody asking about a device that is not on it would be a privacy
+    /// claim that passed because nothing checked it.
+    fn admits(&self, sight: &Sight<'_>) -> Admission {
+        let Sight { actor, path, surface, .. } = *sight;
+        let Some((id, module)) = crate::check::surface_id(self.spec, surface) else {
+            return Admission::Undecided(format!("no surface called `{surface}`"));
+        };
+        let Some(boundary) = self.program.boundary(&id) else {
+            return Admission::Undecided("its boundary was not read".to_owned());
+        };
+        let Some(Expr::Block { items, .. }) = &boundary.exposes else {
+            return Admission::Undecided("its `exposes` clause is not a list".to_owned());
+        };
+
+        // Who is looking, and which instance of the surface they are at.
+        let Some(looking) = self.bound.get(actor) else {
+            return Admission::Undecided(format!("`{actor}` is nobody in this journey"));
+        };
+        let context = match self.context_for(boundary, looking) {
+            Ok(bound) => bound,
+            Err(why) => return Admission::Undecided(why),
+        };
+
+        // What is being looked at: the instance the path starts from, and the
+        // field it ends on.
+        let Some(subject) = self.bound.get(&path.root) else {
+            return Admission::Undecided(format!("`{}` is nobody in this journey", path.root));
+        };
+        let Some(field) = path.segments.last() else {
+            return Admission::Undecided("nothing is being read".to_owned());
+        };
+
+        let mut undecided = None;
+        for item in items {
+            match self
+                .exposed_by(item, &Asking { field, subject, context: &context, module: &module })
+            {
+                Admission::Yes => return Admission::Yes,
+                Admission::Undecided(why) => undecided = undecided.or(Some(why)),
+                Admission::No => {}
+            }
+        }
+
+        undecided.map_or(Admission::No, Admission::Undecided)
+    }
+
+    /// The surface's `context`, bound to the instance this actor stands at.
+    ///
+    /// The actor *is* the context when they are an instance of its type, which
+    /// is the ordinary case and not a guess: `surface DeviceManagement` is
+    /// scoped to an `Identity`, the journey says Ada is looking, and Ada is an
+    /// Identity. Anything else is undecided rather than inferred — walking from
+    /// a device to its owner would be this tool deciding which identity a
+    /// person is at, which is exactly what a surface's context declares and not
+    /// something to guess on its behalf.
+    fn context_for(
+        &self,
+        boundary: &Boundary,
+        looking: &EntityId,
+    ) -> Result<BTreeMap<String, Value>, String> {
+        let Some((name, entity)) = &boundary.context else {
+            // No context: the surface is not scoped, and what it exposes it
+            // exposes to whoever it faces.
+            return Ok(BTreeMap::new());
+        };
+
+        let Some(instance) = self.world.instance(looking) else {
+            return Err("whoever is looking is not in this world".to_owned());
+        };
+        if &instance.entity != entity {
+            return Err(format!(
+                "it is scoped to `{entity}`, and `{}` is `{}` instead — a journey \
+                 cannot yet say which one it is looking at",
+                looking, instance.entity
+            ));
+        }
+
+        Ok(BTreeMap::from([(name.clone(), Value::Ref(looking.clone()))]))
+    }
+
+    /// Whether one item of an `exposes` block shows what is being asked about.
+    fn exposed_by(&self, item: &Expr, asking: &Asking<'_>) -> Admission {
+        let Asking { field, subject, context, module } = *asking;
+        match item {
+            // `identity.name` — a field of the context itself — or
+            // `SpecSet.module_count`, which is the same clause written over a
+            // type rather than over a binding and means every instance of it.
+            Expr::MemberAccess { object, field: named, .. } => {
+                if named.name != field {
+                    return Admission::No;
+                }
+                match self.evaluate(object, context, module) {
+                    Ok((Value::Ref(id), _)) => Admission::from(&id == subject),
+                    Ok((Value::Set(items), unsettled)) => holds(&items, subject, unsettled),
+                    Ok(_) => Admission::No,
+                    Err(why) => Admission::Undecided(why),
+                }
+            }
+            // `for device in identity.listed_devices: device.label` — a field
+            // of one of a collection, and the question is whether the subject
+            // is in it.
+            Expr::For { binding, collection, filter, body, .. } => {
+                let ForBinding::Single(name) = binding else {
+                    return Admission::Undecided(
+                        "its iteration binds more than one name".to_owned(),
+                    );
+                };
+                if !self.body_names(body, field, &name.name) {
+                    return Admission::No;
+                }
+
+                let (members, unsettled) = match self.evaluate(collection, context, module) {
+                    Ok((Value::Set(items), unsettled)) => (items, unsettled),
+                    Ok((other, _)) => {
+                        return Admission::Undecided(format!(
+                            "it ranges over {}, which has no elements",
+                            other.described()
+                        ));
+                    }
+                    Err(why) => return Admission::Undecided(why),
+                };
+
+                match holds(&members, subject, unsettled) {
+                    Admission::Yes => {}
+                    other => return other,
+                }
+
+                // In the collection, and the filter is a second gate on it.
+                let Some(filter) = filter else { return Admission::Yes };
+
+                // The candidate's own fields are in scope bare, which is how
+                // `where status = pending` reads — it is the element's status,
+                // not anybody else's.
+                let mut scope = context.clone();
+                scope.insert(name.name.clone(), Value::Ref(subject.clone()));
+                if let Some(instance) = self.world.instance(subject) {
+                    for (field, value) in &instance.fields {
+                        scope.insert(field.clone(), value.clone());
+                    }
+                }
+
+                match self.evaluate(filter, &scope, module) {
+                    Ok((Value::Bool(true), _)) => Admission::Yes,
+                    Ok((Value::Bool(false), _)) => Admission::No,
+                    Ok(_) => Admission::Undecided(
+                        "its filter did not come back true or false".to_owned(),
+                    ),
+                    Err(why) => Admission::Undecided(why),
+                }
+            }
+            _ => Admission::No,
+        }
+    }
+
+    /// Whether an iteration's body reads `field` off its own binding.
+    fn body_names(&self, body: &Expr, field: &str, binding: &str) -> bool {
+        match body {
+            Expr::Block { items, .. } => {
+                items.iter().any(|item| self.body_names(item, field, binding))
+            }
+            Expr::MemberAccess { object, field: named, .. } => {
+                named.name == field && is_ident(object, binding)
+            }
+            _ => false,
+        }
+    }
+
+    /// Evaluate one expression of an `exposes` clause.
+    /// Evaluate one expression of an `exposes` clause.
+    ///
+    /// Returns what was left unsettled along with the value, and the caller has
+    /// to care. A filtered collection keeps only its definite members and
+    /// *notes* the ones nothing could decide, so a subject that is missing from
+    /// the result may have been dropped for being undecided rather than for not
+    /// belonging — and answering "this surface does not show you that" on those
+    /// grounds is a privacy claim nothing checked, in the other direction.
+    fn evaluate(
+        &self,
+        expr: &Expr,
+        bindings: &BTreeMap<String, Value>,
+        module: &str,
+    ) -> Result<(Value, Option<String>), String> {
+        let source = self.sources.get(module).map_or("", String::as_str);
+        let mut env = Env::new(&self.world, module, source).deriving(self.program.derivations());
+        for (name, value) in bindings {
+            env = env.bind(name.clone(), value.clone());
+        }
+
+        let evaluated = eval(expr, &env);
+        let unsettled = evaluated.unresolved.first().map(|note| note.reason.clone());
+        if evaluated.value.is_unknown() {
+            return Err(unsettled.unwrap_or_else(|| "it could not be settled".to_owned()));
+        }
+        Ok((evaluated.value, unsettled))
+    }
+}
+
+/// What one `exposes` item is being asked about.
+///
+/// The four travel together through every branch and none of them changes on
+/// the way, which is what a struct is for — and six positional arguments of
+/// four shapes is a call nobody can read at the site.
+struct Asking<'a> {
+    /// The field at the end of the path being seen: `label`.
+    field: &'a str,
+    /// The instance the path starts from: whose label.
+    subject: &'a EntityId,
+    /// The surface's context, bound to the instance this actor stands at.
+    context: &'a BTreeMap<String, Value>,
+    /// The module the surface is declared in, for `config` and for the source.
+    module: &'a str,
+}
+
+/// Whether `subject` is among `items`, given what could not be settled.
+///
+/// Absence only means *no* when everything was settled. A filtered collection
+/// drops what it could not decide, so a subject missing from one that left
+/// notes behind might have belonged — and saying no there is the same mistake
+/// as saying yes, pointed the other way.
+fn holds(items: &[Value], subject: &EntityId, unsettled: Option<String>) -> Admission {
+    if items.iter().any(|item| matches!(item, Value::Ref(id) if id == subject)) {
+        return Admission::Yes;
+    }
+    unsettled.map_or(Admission::No, Admission::Undecided)
+}
+
+impl From<bool> for Admission {
+    fn from(yes: bool) -> Self {
+        if yes { Admission::Yes } else { Admission::No }
+    }
+}
+
+/// Whether `expr` is exactly the name `wanted`.
+fn is_ident(expr: &Expr, wanted: &str) -> bool {
+    matches!(expr, Expr::Ident(ident) if ident.name == wanted)
 }
 
 /// One `sees` or `cannot see` line, as the walker asks it.
@@ -152,6 +429,8 @@ impl Walker<'_> {
 /// Grouped rather than passed loose because the four travel together and the
 /// checker already asks the same question under the same shape.
 pub(crate) struct Sight<'a> {
+    /// Who is looking. The surface's `context` is resolved from them.
+    pub(crate) actor: &'a str,
     pub(crate) path: &'a Path,
     pub(crate) surface: &'a str,
     pub(crate) negated: bool,

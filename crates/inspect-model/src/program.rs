@@ -79,6 +79,8 @@ pub struct Program {
     rules: BTreeMap<String, RuleAst>,
     /// Invariant node id to its condition.
     invariants: BTreeMap<String, Expr>,
+    /// Each surface's boundary, by node id.
+    boundaries: BTreeMap<String, Boundary>,
     /// What a spec computes rather than stores, by [`derived_key`].
     ///
     /// Derived values and relationships together, because the simulator does
@@ -87,6 +89,23 @@ pub struct Program {
     /// `active_devices: devices where status = active` differ in what they say
     /// and not in how they are reached.
     derived: BTreeMap<String, Expr>,
+}
+
+/// What a surface shows, as expressions rather than as text.
+///
+/// The graph keeps the `exposes` clause as the author's words, which is what a
+/// panel wants. This is what an *evaluator* wants: whether a surface shows
+/// `tablet.label` to Ada is a question about a collection and a filter, and
+/// neither can be answered from a string.
+#[derive(Debug, Clone, Default)]
+pub struct Boundary {
+    /// `context identity: Identity` — the binding name and the type it names.
+    ///
+    /// Both halves matter. The name is what the `exposes` clause refers to, and
+    /// the type is what decides whether a given actor can be that context.
+    pub context: Option<(String, String)>,
+    /// The `exposes:` block, whose items are paths and `for` iterations.
+    pub exposes: Option<Expr>,
 }
 
 /// Where a computed field is filed.
@@ -109,6 +128,17 @@ impl Program {
     /// Record `ast` as the clauses of the rule with `id`.
     pub fn add_rule(&mut self, id: impl Into<String>, ast: RuleAst) {
         self.rules.insert(id.into(), ast);
+    }
+
+    /// Record what the surface with `id` shows.
+    pub fn add_boundary(&mut self, id: impl Into<String>, boundary: Boundary) {
+        self.boundaries.insert(id.into(), boundary);
+    }
+
+    /// What the surface with `id` shows.
+    #[must_use]
+    pub fn boundary(&self, id: &str) -> Option<&Boundary> {
+        self.boundaries.get(id)
     }
 
     /// Record `expr` as how `field` on `entity` is computed.
