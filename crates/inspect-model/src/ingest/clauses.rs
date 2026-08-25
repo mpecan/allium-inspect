@@ -476,6 +476,43 @@ rule BorrowCopy {
         assert_eq!(ast.ensures.len(), 3, "{:#?}", ast.ensures);
     }
 
+    /// A rule's own name for something its arguments determine.
+    ///
+    /// `Let` is its own item kind rather than a clause, so it fell through the
+    /// keyword match and out of the program entirely — and `requires: exists
+    /// existing` then evaluated a name nothing had bound, leaving the act
+    /// undecided. Three of `friend-mesh`'s four contact-naming rules are that
+    /// shape, so a whole surface's worth of acts was undecidable.
+    #[test]
+    fn a_rules_own_let_is_kept_with_its_clauses() {
+        let ast = rule_of(
+            "\nrule BorrowCopy {\n    when: MemberBorrows(member, copy)\n\n    let standing = \
+             Reservation{member: member, copy: copy}\n\n    requires: exists standing\n}\n",
+        );
+        assert_eq!(ast.lets.len(), 1, "{:#?}", ast.lets);
+        assert_eq!(ast.lets[0].0, "standing");
+    }
+
+    /// In declaration order, because a later one may read an earlier one — the
+    /// same reason `ensures` clauses keep theirs.
+    #[test]
+    fn two_lets_keep_the_order_they_were_written_in() {
+        let ast = rule_of(
+            "\nrule BorrowCopy {\n    when: MemberBorrows(member, copy)\n\n    let held = \
+             Reservation{member: member}\n    let owner = held.member\n\n    requires: exists \
+             owner\n}\n",
+        );
+        let names: Vec<&str> = ast.lets.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(names, ["held", "owner"]);
+    }
+
+    /// And a rule without one has none, so the absence is a fact rather than a
+    /// default that would hide a dropped binding.
+    #[test]
+    fn a_rule_with_no_let_has_none() {
+        assert!(rule_of(BORROW).lets.is_empty());
+    }
+
     #[test]
     fn the_clauses_keep_the_order_they_were_declared_in() {
         // Load-bearing for `ensures`: `Loan.created(…)` binds `loan`, and the
