@@ -292,6 +292,30 @@
         </ul>
       {/if}
 
+      {#if walk.inherited.length > 0}
+        <!-- Before the journey's own, because it was there before the journey
+             said anything. A step holding on account of a line elsewhere in
+             the file is the same passing invisibly, one level out — so the
+             whole of what the file laid out is here, without opening it. -->
+        <div class="stipulated inherited">
+          <h3>Laid out by the file</h3>
+          <p class="prose">
+            This journey's file sets these up before any of its journeys begin.
+            An <em>overridden</em> line was set here and then set again by this
+            journey, which is the one worth reading twice.
+          </p>
+          <ul>
+            {#each walk.inherited as line (line.said)}
+              <li>
+                {#if line.overridden}<span class="overridden">overridden</span>{/if}
+                <code>{line.said}</code>
+                <span class="whereabouts">line {line.line}</span>
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
+
       {#if walk.stipulated.length > 0}
         <!-- First, and always. An agent can make any journey pass; it cannot
              make one pass invisibly, and this is where that is enforced. -->
@@ -659,6 +683,31 @@
     list-style: none;
     margin: var(--gap-2) 0 0;
     padding: 0;
+  }
+
+  /* The same device, a step quieter: what a file laid out is context, and what
+     this journey was *told* is the thing a reader is being asked to weigh. */
+  .inherited {
+    border-color: var(--line-strong);
+    background: var(--ground-raised);
+  }
+
+  .inherited h3 {
+    color: var(--ink-dim);
+  }
+
+  .overridden {
+    font-family: var(--font-mono);
+    font-size: var(--t-micro);
+    letter-spacing: var(--track-wide);
+    text-transform: uppercase;
+    color: var(--verdict-unknown);
+  }
+
+  .whereabouts {
+    font-family: var(--font-mono);
+    font-size: var(--t-micro);
+    color: var(--ink-faint);
   }
 
   .steps {

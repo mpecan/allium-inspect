@@ -40,6 +40,7 @@ function walk(worlds: World[]): Walk {
     ends: [],
     line: 1,
     stipulated: [],
+    inherited: [],
     notes: [],
     steps: worlds.map((each, at) => ({
       number: at + 1,

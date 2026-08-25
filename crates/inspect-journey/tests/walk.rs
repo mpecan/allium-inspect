@@ -52,9 +52,14 @@ fn library() -> (SpecGraph, Program, Sources) {
 
 /// Walk the one journey in `source`.
 fn walked(source: &str) -> Walk {
+    walked_nth(source, 0)
+}
+
+/// The nth journey in a file, for the cases about what a *file* says.
+fn walked_nth(source: &str, at: usize) -> Walk {
     let journeys = parse(source).expect("the journey parses");
     let (graph, program, sources) = library();
-    walk(&journeys[0], &graph, &program, &sources)
+    walk(&journeys[at], &graph, &program, &sources)
 }
 
 /// Every outcome, flattened, for asserting about a whole walk.
@@ -595,6 +600,112 @@ fn a_state_no_enumeration_declares_is_still_unknown() {
     );
     let seen = &result.steps[0].outcomes[1];
     assert_eq!(seen.verdict, Verdict::Refused, "{seen:?}");
+}
+
+// --- the world a file lays out --------------------------------------------
+
+/// 39 journeys wrote 166 `given` lines between them, 125 of which were repeats
+/// of seventeen. A file can say those once.
+const SHARED: &str = "\
+world {
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+    given:
+        copy.status = available
+}
+
+journey SheBorrowsIt {
+    1. she borrows it
+        ada does MemberBorrows(ada, copy) on MemberShelf
+        then BorrowCopy fires
+}
+
+journey TheCopyIsAlreadyGone {
+    given:
+        copy.status = lost
+    1. she cannot borrow it
+        ada cannot do MemberBorrows(ada, copy) on MemberShelf
+}
+
+journey SheStartsFromNothing {
+    world: none
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+    1. she borrows a copy nobody described
+        ada does MemberBorrows(ada, copy) on MemberShelf
+}
+";
+
+#[test]
+fn a_journey_walks_the_world_its_file_laid_out() {
+    let result = walked_nth(SHARED, 0);
+    let bad: Vec<_> = outcomes(&result)
+        .into_iter()
+        .filter(|(verdict, ..)| *verdict != Verdict::Specified)
+        .collect();
+    assert!(bad.is_empty(), "{bad:#?}");
+}
+
+/// The constraint that outranks the feature. A step holding because of a line
+/// somewhere else in the file *is* passing invisibly, and this is where it
+/// stops being invisible: everything the world was told, without opening
+/// anything else.
+#[test]
+fn the_report_says_what_it_inherited_and_from_which_line() {
+    let result = walked_nth(SHARED, 0);
+    let said: Vec<&str> = result.inherited.iter().map(|line| line.said.as_str()).collect();
+    assert_eq!(said, ["ada: Member", "copy: catalogue/Copy", "copy.status = available"]);
+    assert!(result.inherited.iter().all(|line| line.line > 0), "each says where it was written");
+    assert!(result.inherited.iter().all(|line| !line.overridden));
+}
+
+/// The third case, and the dangerous one: inherited, and then quietly made to
+/// mean something else. Allowed — eight journeys wanting the same membership
+/// and one wanting it `departed` is ordinary — and reported.
+#[test]
+fn a_journey_that_changes_what_it_inherited_says_so() {
+    let result = walked_nth(SHARED, 1);
+    let changed: Vec<&str> = result
+        .inherited
+        .iter()
+        .filter(|line| line.overridden)
+        .map(|line| line.said.as_str())
+        .collect();
+    assert_eq!(changed, ["copy.status = available"]);
+    // And the journey's own line is the one that took effect.
+    let seen = &result.steps[0].outcomes[0];
+    assert_eq!(seen.verdict, Verdict::Specified, "{seen:?}");
+}
+
+/// A journey that declined it inherits nothing, and its report says nothing
+/// about a world it is not in.
+#[test]
+fn a_journey_that_declined_the_world_reports_no_inheritance() {
+    let result = walked_nth(SHARED, 2);
+    assert!(result.inherited.is_empty());
+    // And it really did start from nothing: the copy's status was never set.
+    let seen = &result.steps[0].outcomes[0];
+    assert_eq!(seen.verdict, Verdict::Undecided, "{seen:?}");
+}
+
+/// A journey in a file with no world reports no inheritance either — printing
+/// its own `given` block back at it would say nothing.
+#[test]
+fn a_journey_with_no_world_to_inherit_reports_none() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+    given:
+        copy.status = available
+    1. she borrows it
+        ada does MemberBorrows(ada, copy) on MemberShelf
+}",
+    );
+    assert!(result.inherited.is_empty());
 }
 
 /// A journey asserting a refusal it *wants*.

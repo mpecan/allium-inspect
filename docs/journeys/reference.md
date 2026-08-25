@@ -117,6 +117,77 @@ Values may be a number (`5`, `2_000_000`), a duration (`21.days`), a string
 (`"Ada"`), `true`, `false`, `null`, a set (`{a, b}`), a name the journey cast, or
 a bare word, which is read as a state the spec declares.
 
+## `world` — what a whole file starts from
+
+Thirty-nine journeys in one set wrote 166 `given` lines between them, 58 of them
+distinct — and 125 of the 166 were repeats of seventeen. A file can say those
+once, above the journeys that take them:
+
+```
+world {
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+    given:
+        copy.status = available
+}
+```
+
+Every journey below it starts there. `cast:` and `given:` and nothing else — a
+world says who is there and how things stand; a step is something somebody
+*does*, and a world that could act would be a journey nobody named.
+
+**A journey can decline it**, which the design needs: one about somebody who has
+no identity yet cannot start from a world where she has one, and belongs in the
+file with the others about her.
+
+```
+journey SheHasNoCopyYet {
+    world: none
+
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+
+    1. she borrows a copy nobody has described
+        ada does MemberBorrows(ada, copy) on MemberShelf
+}
+```
+
+**A journey can override a line**, and is reported doing it. Eight journeys
+wanting the same two-member membership and one wanting it `departed` is the
+ordinary case; forbidding the override splits the file, and allowing it silently
+is the thing that must not happen. The journey's own `cast` and `given` are laid
+down after the world's, so a line about the same thing wins.
+
+One world per file, declared before the journeys that take it, and no
+inheritance across files. A world reaching in from somewhere else, or a world
+built on another world, and *where did this come from* stops having a short
+answer.
+
+### What it costs, and why the report grows
+
+This is the one feature that can break the rule everything else here rests on:
+
+> Every stipulation is reported, first and always. An agent can make any journey
+> pass; it cannot make one pass invisibly.
+
+A step holding because of a line in another part of the file **is** passing
+invisibly. So a journey that inherits a world reports every line it inherited,
+where each was written, and which of them it went on to change — above its own
+stipulations, because the world was there first:
+
+```text
+TheCopyIsAlreadyGone  —  1 of 1 steps hold
+    from the file  ada: Member
+    from the file  copy: catalogue/Copy
+    from the file  overridden copy.status = available
+   1. she cannot borrow it                             holds
+```
+
+A journey that inherits nothing reports nothing here — printing its own `given`
+block back at it would say nothing at all.
+
 ## Steps
 
 A step is a line beginning `<number>.` followed by a sentence:

@@ -29,21 +29,39 @@ function world(): World {
   };
 }
 
-function line(verdict: Verdict, about: string, detail: string | null = null): Outcome {
+function line(
+  verdict: Verdict,
+  about: string,
+  detail: string | null = null,
+): Outcome {
   return { line: 4, verdict, about, detail };
 }
 
-function walk(name: string, outcomes: Outcome[], stipulated: string[] = []): Walk {
+function walk(
+  name: string,
+  outcomes: Outcome[],
+  stipulated: string[] = [],
+  inherited: Walk["inherited"] = [],
+): Walk {
   return {
     name,
     cast: [
-      { name: "ada", type_expr: "Member", entity: "Member#1", origin: "cast", line: 4 },
+      {
+        name: "ada",
+        type_expr: "Member",
+        entity: "Member#1",
+        origin: "cast",
+        line: 4,
+      },
     ],
     goal: ["she borrows a copy and brings it back"],
     ends: ["the copy is back on the shelf"],
     line: 6,
-    steps: [{ number: 1, title: "she borrows it", line: 8, outcomes, world: world() }],
+    steps: [
+      { number: 1, title: "she borrows it", line: 8, outcomes, world: world() },
+    ],
     stipulated,
+    inherited,
     notes: [],
   };
 }
@@ -83,15 +101,23 @@ describe("Journeys", () => {
     // A journey is the demand written first, so most of it not being supported
     // yet is the ordinary case. Leading with a failure count would frame
     // ordinary progress as a broken build.
-    render(Journeys, { report: report([walk("A", [line("specified", "then x = 1")])]), failure: null });
+    render(Journeys, {
+      report: report([walk("A", [line("specified", "then x = 1")])]),
+      failure: null,
+    });
     expect(screen.getByText(/1 of 1 hold end to end/)).toBeTruthy();
   });
 
   it("shows the journey's own goal and ending, not just its verdicts", () => {
     // A list of verdicts with the intent stripped off cannot be read against
     // anything — the reader's question is whether the spec delivers *this*.
-    render(Journeys, { report: report([walk("A", [line("specified", "then x = 1")])]), failure: null });
-    expect(screen.getByText(/she borrows a copy and brings it back/)).toBeTruthy();
+    render(Journeys, {
+      report: report([walk("A", [line("specified", "then x = 1")])]),
+      failure: null,
+    });
+    expect(
+      screen.getByText(/she borrows a copy and brings it back/),
+    ).toBeTruthy();
     expect(screen.getByText(/the copy is back on the shelf/)).toBeTruthy();
   });
 
@@ -101,7 +127,10 @@ describe("Journeys", () => {
     // claimed is half of reading the verdict.
     render(Journeys, {
       report: report([
-        walk("A", [line("specified", "then loan.status = open"), line("refused", "then x = 1", "x is 2")]),
+        walk("A", [
+          line("specified", "then loan.status = open"),
+          line("refused", "then x = 1", "x is 2"),
+        ]),
       ]),
       failure: null,
     });
@@ -114,22 +143,87 @@ describe("Journeys", () => {
     // The guardrail. An agent can make any journey pass; it cannot make one
     // pass invisibly.
     render(Journeys, {
-      report: report([walk("A", [line("specified", "then x = 1")], ["ada.is_at_limit = false"])]),
+      report: report([
+        walk(
+          "A",
+          [line("specified", "then x = 1")],
+          ["ada.is_at_limit = false"],
+        ),
+      ]),
       failure: null,
     });
     expect(screen.getByText(/Told rather than shown/)).toBeTruthy();
     expect(screen.getByText("ada.is_at_limit = false")).toBeTruthy();
   });
 
+  it("shows what the file laid out before this journey said anything", () => {
+    // The same guardrail one level out. A step holding because of a line
+    // somewhere else in the file is passing invisibly until this says so.
+    render(Journeys, {
+      report: report([
+        walk(
+          "A",
+          [line("specified", "then x = 1")],
+          [],
+          [{ said: "ada.status = active", line: 4, overridden: false }],
+        ),
+      ]),
+      failure: null,
+    });
+    expect(screen.getByText(/Laid out by the file/)).toBeTruthy();
+    expect(screen.getByText("ada.status = active")).toBeTruthy();
+    expect(screen.getByText(/line 4/)).toBeTruthy();
+  });
+
+  // The third case, and the dangerous one: inherited, and then quietly made to
+  // mean something else.
+  it("marks a line the journey inherited and then changed", () => {
+    const { container } = render(Journeys, {
+      report: report([
+        walk(
+          "A",
+          [line("specified", "then x = 1")],
+          [],
+          [
+            { said: "copy.status = available", line: 5, overridden: true },
+            { said: "ada.status = active", line: 4, overridden: false },
+          ],
+        ),
+      ]),
+      failure: null,
+    });
+    // By the mark rather than by the word: the paragraph above explains what
+    // "overridden" means and so contains it too.
+    const marked = [...container.querySelectorAll(".overridden")];
+    expect(marked).toHaveLength(1);
+    expect(marked[0]?.closest("li")?.textContent).toContain(
+      "copy.status = available",
+    );
+  });
+
+  it("says nothing about a world when the journey inherits none", () => {
+    render(Journeys, {
+      report: report([walk("A", [line("specified", "then x = 1")])]),
+      failure: null,
+    });
+    expect(screen.queryByText(/Laid out by the file/)).toBeNull();
+  });
+
   it("says nothing about stipulations when a journey made none", () => {
-    render(Journeys, { report: report([walk("A", [line("specified", "then x = 1")])]), failure: null });
+    render(Journeys, {
+      report: report([walk("A", [line("specified", "then x = 1")])]),
+      failure: null,
+    });
     expect(screen.queryByText(/Told rather than shown/)).toBeNull();
   });
 
   it("names a file that would not parse instead of dropping it", () => {
     // A journey silently vanishing from the list reads as "it passed", which is
     // the worst answer available.
-    render(Journeys, { report: report([], "line 12: expected `<name>: <Type>`"), failure: null });
+    render(Journeys, {
+      report: report([], "line 12: expected `<name>: <Type>`"),
+      failure: null,
+    });
     expect(screen.getByText(/Would not parse/)).toBeTruthy();
     expect(screen.getByText(/line 12/)).toBeTruthy();
   });
@@ -140,7 +234,11 @@ describe("Journeys", () => {
         walk("A", [
           line("specified", "then a = 1"),
           line("specified", "then b = 2"),
-          line("unspecified", "ada does Nope on Desk", "no trigger called `Nope`"),
+          line(
+            "unspecified",
+            "ada does Nope on Desk",
+            "no trigger called `Nope`",
+          ),
         ]),
       ]),
       failure: null,
@@ -153,7 +251,10 @@ describe("Journeys", () => {
     // A journey is a document somebody wrote, the same as the spec it is
     // written against — and it was the one thing in this tool you could not
     // read. The strip carries the address, so the header no longer repeats it.
-    render(Journeys, { report: report([walk("A", [line("specified", "then x = 1")])]), failure: null });
+    render(Journeys, {
+      report: report([walk("A", [line("specified", "then x = 1")])]),
+      failure: null,
+    });
     expect(screen.getByText("specs/journeys/lending.journey:6")).toBeTruthy();
     expect(screen.getByLabelText("Journey source")).toBeTruthy();
   });
@@ -169,26 +270,38 @@ describe("Journeys cast panel", () => {
   it("names everybody the journey named, with their type", () => {
     // A journey names instances rather than roles, so this is a list of people
     // and things — and the type is what tells a reader where to look them up.
-    render(Journeys, { report: report([walk("A", [line("specified", "then x = 1")])]), failure: null });
+    render(Journeys, {
+      report: report([walk("A", [line("specified", "then x = 1")])]),
+      failure: null,
+    });
     expect(screen.getByText("ada")).toBeTruthy();
     expect(screen.getByText("Member")).toBeTruthy();
   });
 
   it("says where each name came from", () => {
-    render(Journeys, { report: report([walk("A", [line("specified", "then x = 1")])]), failure: null });
+    render(Journeys, {
+      report: report([walk("A", [line("specified", "then x = 1")])]),
+      failure: null,
+    });
     expect(screen.getByText("cast")).toBeTruthy();
   });
 
   it("shows the configuration the journey ran against", () => {
     // The other half of why a step came out the way it did. A panel showing
     // Ada's fields but not the limit leaves the deciding value invisible.
-    render(Journeys, { report: report([walk("A", [line("specified", "then x = 1")])]), failure: null });
+    render(Journeys, {
+      report: report([walk("A", [line("specified", "then x = 1")])]),
+      failure: null,
+    });
     expect(screen.getByText("loan_limit")).toBeTruthy();
     expect(screen.getByText("5")).toBeTruthy();
   });
 
   it("opens a cast member to show what the world held", async () => {
-    render(Journeys, { report: report([walk("A", [line("specified", "then x = 1")])]), failure: null });
+    render(Journeys, {
+      report: report([walk("A", [line("specified", "then x = 1")])]),
+      failure: null,
+    });
     await fireEvent.click(screen.getByRole("button", { name: /ada/ }));
     expect(screen.getByText("name")).toBeTruthy();
     // Quoted, because the simulator's renderer quotes strings — `"5"` and `5`
@@ -199,7 +312,10 @@ describe("Journeys cast panel", () => {
   it("keeps a member closed until it is asked for", () => {
     // Eight fields under every one of six members buries the journey the panel
     // sits beside.
-    render(Journeys, { report: report([walk("A", [line("specified", "then x = 1")])]), failure: null });
+    render(Journeys, {
+      report: report([walk("A", [line("specified", "then x = 1")])]),
+      failure: null,
+    });
     expect(screen.queryByText('"Ada"')).toBeNull();
   });
 
@@ -237,23 +353,31 @@ describe("Journeys cast panel", () => {
 
     it("shows a picture of a step somebody photographed", () => {
       render(Journeys, {
-        report: report([walk("ACopyGoesOut", [line("specified", "ada does Borrow")])], null,
-          standing("shown", { frames: [picture] })),
+        report: report(
+          [walk("ACopyGoesOut", [line("specified", "ada does Borrow")])],
+          null,
+          standing("shown", { frames: [picture] }),
+        ),
         failure: null,
       });
 
       const shot = screen.getByRole("img", { name: "the copy in her hands" });
-      expect(shot.getAttribute("src")).toBe("/api/evidence/01-she-borrows-it.png");
+      expect(shot.getAttribute("src")).toBe(
+        "/api/evidence/01-she-borrows-it.png",
+      );
     });
 
     /// The state the source scan exists for, and the one a reader must be able
     /// to tell from silence.
     it("says when a test claims a step and showed nothing", () => {
       render(Journeys, {
-        report: report([walk("ACopyGoesOut", [line("specified", "ada does Borrow")])], null,
+        report: report(
+          [walk("ACopyGoesOut", [line("specified", "ada does Borrow")])],
+          null,
           standing("claimed", {
             claims: [{ step: "ACopyGoesOut.1", file: "walk.ts", line: 12 }],
-          })),
+          }),
+        ),
         failure: null,
       });
 
@@ -264,11 +388,14 @@ describe("Journeys cast panel", () => {
 
     it("puts what a stale step said beside what it says now", () => {
       render(Journeys, {
-        report: report([walk("ACopyGoesOut", [line("specified", "ada does Borrow")])], null,
+        report: report(
+          [walk("ACopyGoesOut", [line("specified", "ada does Borrow")])],
+          null,
           standing("stale", {
             frames: [{ ...picture, said: "1. she takes one off the shelf" }],
             says_now: "1. she borrows it",
-          })),
+          }),
+        ),
         failure: null,
       });
 
@@ -282,8 +409,11 @@ describe("Journeys cast panel", () => {
     /// page while carrying nothing.
     it("says nothing at all about a step nobody has shown", () => {
       const { container } = render(Journeys, {
-        report: report([walk("ACopyGoesOut", [line("specified", "ada does Borrow")])], null,
-          standing("unclaimed")),
+        report: report(
+          [walk("ACopyGoesOut", [line("specified", "ada does Borrow")])],
+          null,
+          standing("unclaimed"),
+        ),
         failure: null,
       });
 
@@ -293,7 +423,9 @@ describe("Journeys cast panel", () => {
 
     it("says nothing when no evidence was loaded at all", () => {
       const { container } = render(Journeys, {
-        report: report([walk("ACopyGoesOut", [line("specified", "ada does Borrow")])]),
+        report: report([
+          walk("ACopyGoesOut", [line("specified", "ada does Borrow")]),
+        ]),
         failure: null,
       });
       expect(container.querySelector(".evidence")).toBeNull();
@@ -301,12 +433,17 @@ describe("Journeys cast panel", () => {
 
     it("opens a picture and closes it again", async () => {
       render(Journeys, {
-        report: report([walk("ACopyGoesOut", [line("specified", "ada does Borrow")])], null,
-          standing("shown", { frames: [picture] })),
+        report: report(
+          [walk("ACopyGoesOut", [line("specified", "ada does Borrow")])],
+          null,
+          standing("shown", { frames: [picture] }),
+        ),
         failure: null,
       });
 
-      const button = screen.getByRole("button", { name: "the copy in her hands" });
+      const button = screen.getByRole("button", {
+        name: "the copy in her hands",
+      });
       expect(button.getAttribute("aria-pressed")).toBe("false");
 
       await fireEvent.click(button);
@@ -317,30 +454,48 @@ describe("Journeys cast panel", () => {
     });
 
     describe("tags", () => {
-      const dark = { ...picture, image: "01-dark.png", tags: { theme: "dark" } };
-      const light = { ...picture, image: "01-light.png", tags: { theme: "light" } };
+      const dark = {
+        ...picture,
+        image: "01-dark.png",
+        tags: { theme: "dark" },
+      };
+      const light = {
+        ...picture,
+        image: "01-light.png",
+        tags: { theme: "light" },
+      };
 
       function tagged() {
-        return report([walk("ACopyGoesOut", [line("specified", "ada does Borrow")])], null,
-          standing("shown", { frames: [dark, light] }));
+        return report(
+          [walk("ACopyGoesOut", [line("specified", "ada does Borrow")])],
+          null,
+          standing("shown", { frames: [dark, light] }),
+        );
       }
 
       it("shows every picture of a step until the reader narrows", () => {
         render(Journeys, { report: tagged(), failure: null });
-        expect(screen.getAllByRole("img", { name: "the copy in her hands" })).toHaveLength(2);
+        expect(
+          screen.getAllByRole("img", { name: "the copy in her hands" }),
+        ).toHaveLength(2);
       });
 
       it("offers one control per question the pictures answer", () => {
         render(Journeys, { report: tagged(), failure: null });
         const control = screen.getByRole("combobox", { name: "theme" });
-        const options = [...control.querySelectorAll("option")].map((o) => o.textContent);
+        const options = [...control.querySelectorAll("option")].map(
+          (o) => o.textContent,
+        );
         expect(options).toEqual(["either", "dark", "light"]);
       });
 
       it("offers nothing to narrow by when nothing is tagged", () => {
         render(Journeys, {
-          report: report([walk("ACopyGoesOut", [line("specified", "ada does Borrow")])], null,
-            standing("shown", { frames: [picture] })),
+          report: report(
+            [walk("ACopyGoesOut", [line("specified", "ada does Borrow")])],
+            null,
+            standing("shown", { frames: [picture] }),
+          ),
           failure: null,
         });
         expect(screen.queryByRole("combobox")).toBeNull();
@@ -349,13 +504,20 @@ describe("Journeys cast panel", () => {
       it("switches the pictures when the reader picks one", async () => {
         render(Journeys, { report: tagged(), failure: null });
 
-        await fireEvent.change(screen.getByRole("combobox", { name: "theme" }), {
-          target: { value: "light" },
-        });
+        await fireEvent.change(
+          screen.getByRole("combobox", { name: "theme" }),
+          {
+            target: { value: "light" },
+          },
+        );
 
-        const shown = screen.getAllByRole("img", { name: "the copy in her hands" });
+        const shown = screen.getAllByRole("img", {
+          name: "the copy in her hands",
+        });
         expect(shown).toHaveLength(1);
-        expect(shown[0]?.getAttribute("src")).toBe("/api/evidence/01-light.png");
+        expect(shown[0]?.getAttribute("src")).toBe(
+          "/api/evidence/01-light.png",
+        );
       });
 
       it("goes back to both when the reader picks either", async () => {
@@ -363,17 +525,26 @@ describe("Journeys cast panel", () => {
         const control = screen.getByRole("combobox", { name: "theme" });
 
         await fireEvent.change(control, { target: { value: "dark" } });
-        expect(screen.getAllByRole("img", { name: "the copy in her hands" })).toHaveLength(1);
+        expect(
+          screen.getAllByRole("img", { name: "the copy in her hands" }),
+        ).toHaveLength(1);
 
         await fireEvent.change(control, { target: { value: "" } });
-        expect(screen.getAllByRole("img", { name: "the copy in her hands" })).toHaveLength(2);
+        expect(
+          screen.getAllByRole("img", { name: "the copy in her hands" }),
+        ).toHaveLength(2);
       });
 
       it("labels each picture with what it is of", () => {
-        const { container } = render(Journeys, { report: tagged(), failure: null });
+        const { container } = render(Journeys, {
+          report: tagged(),
+          failure: null,
+        });
         // Scoped to the strip: the words are also in the dropdown, which is a
         // different thing saying a different thing.
-        const chips = [...container.querySelectorAll(".tags li")].map((li) => li.textContent);
+        const chips = [...container.querySelectorAll(".tags li")].map(
+          (li) => li.textContent,
+        );
         expect(chips).toEqual(["theme dark", "theme light"]);
       });
 
@@ -381,16 +552,25 @@ describe("Journeys cast panel", () => {
       /// gets the control before anybody has photographed anything.
       it("offers what the journey asked for before any picture exists", () => {
         render(Journeys, {
-          report: report([walk("ACopyGoesOut", [line("specified", "ada does Borrow")])], null, {
-            steps: {},
-            unknown: [],
-            axes: {
-              ACopyGoesOut: [
-                { key: "theme", values: ["dark", "light"], missing: ["dark", "light"], line: 4 },
-              ],
+          report: report(
+            [walk("ACopyGoesOut", [line("specified", "ada does Borrow")])],
+            null,
+            {
+              steps: {},
+              unknown: [],
+              axes: {
+                ACopyGoesOut: [
+                  {
+                    key: "theme",
+                    values: ["dark", "light"],
+                    missing: ["dark", "light"],
+                    line: 4,
+                  },
+                ],
+              },
+              undeclared: [],
             },
-            undeclared: [],
-          }),
+          ),
           failure: null,
         });
 
@@ -398,26 +578,48 @@ describe("Journeys cast panel", () => {
         const options = [...control.querySelectorAll("option")].map((o) =>
           o.textContent?.trim(),
         );
-        expect(options).toEqual(["either", "dark — none yet", "light — none yet"]);
+        expect(options).toEqual([
+          "either",
+          "dark — none yet",
+          "light — none yet",
+        ]);
       });
 
       it("stops saying none yet once something answers", () => {
         render(Journeys, {
-          report: report([walk("ACopyGoesOut", [line("specified", "ada does Borrow")])], null, {
-            steps: { "ACopyGoesOut.1": { standing: "shown", frames: [dark], claims: [], says_now: null } },
-            unknown: [],
-            axes: {
-              ACopyGoesOut: [
-                { key: "theme", values: ["dark", "light"], missing: ["light"], line: 4 },
-              ],
+          report: report(
+            [walk("ACopyGoesOut", [line("specified", "ada does Borrow")])],
+            null,
+            {
+              steps: {
+                "ACopyGoesOut.1": {
+                  standing: "shown",
+                  frames: [dark],
+                  claims: [],
+                  says_now: null,
+                },
+              },
+              unknown: [],
+              axes: {
+                ACopyGoesOut: [
+                  {
+                    key: "theme",
+                    values: ["dark", "light"],
+                    missing: ["light"],
+                    line: 4,
+                  },
+                ],
+              },
+              undeclared: [],
             },
-            undeclared: [],
-          }),
+          ),
           failure: null,
         });
 
         const options = [
-          ...screen.getByRole("combobox", { name: "theme" }).querySelectorAll("option"),
+          ...screen
+            .getByRole("combobox", { name: "theme" })
+            .querySelectorAll("option"),
         ].map((o) => o.textContent?.trim());
         expect(options).toEqual(["either", "dark", "light — none yet"]);
       });
@@ -426,24 +628,33 @@ describe("Journeys cast panel", () => {
       /// the picture it names is a real picture of a real run.
       it("reports a tag the journey does not ask for", () => {
         render(Journeys, {
-          report: report([walk("ACopyGoesOut", [line("specified", "ada does Borrow")])], null, {
-            steps: {},
-            unknown: [],
-            axes: {
-              ACopyGoesOut: [
-                { key: "theme", values: ["dark", "light"], missing: [], line: 4 },
+          report: report(
+            [walk("ACopyGoesOut", [line("specified", "ada does Borrow")])],
+            null,
+            {
+              steps: {},
+              unknown: [],
+              axes: {
+                ACopyGoesOut: [
+                  {
+                    key: "theme",
+                    values: ["dark", "light"],
+                    missing: [],
+                    line: 4,
+                  },
+                ],
+              },
+              undeclared: [
+                {
+                  step: "ACopyGoesOut.1",
+                  image: "01.png",
+                  key: "them",
+                  value: "dark",
+                  key_undeclared: true,
+                },
               ],
             },
-            undeclared: [
-              {
-                step: "ACopyGoesOut.1",
-                image: "01.png",
-                key: "them",
-                value: "dark",
-                key_undeclared: true,
-              },
-            ],
-          }),
+          ),
           failure: null,
         });
 
@@ -454,20 +665,24 @@ describe("Journeys cast panel", () => {
 
       it("says nothing about another journey's tags", () => {
         render(Journeys, {
-          report: report([walk("ACopyGoesOut", [line("specified", "ada does Borrow")])], null, {
-            steps: {},
-            unknown: [],
-            axes: {},
-            undeclared: [
-              {
-                step: "Elsewhere.1",
-                image: "99.png",
-                key: "x",
-                value: "y",
-                key_undeclared: true,
-              },
-            ],
-          }),
+          report: report(
+            [walk("ACopyGoesOut", [line("specified", "ada does Borrow")])],
+            null,
+            {
+              steps: {},
+              unknown: [],
+              axes: {},
+              undeclared: [
+                {
+                  step: "Elsewhere.1",
+                  image: "99.png",
+                  key: "x",
+                  value: "y",
+                  key_undeclared: true,
+                },
+              ],
+            },
+          ),
           failure: null,
         });
 
@@ -483,8 +698,18 @@ describe("Journeys cast panel", () => {
         // because another step of the walk was photographed that way.
         const lopsided: Resolution = {
           steps: {
-            "ACopyGoesOut.1": { standing: "shown", frames: [dark], claims: [], says_now: null },
-            "ACopyGoesOut.2": { standing: "shown", frames: [light], claims: [], says_now: null },
+            "ACopyGoesOut.1": {
+              standing: "shown",
+              frames: [dark],
+              claims: [],
+              says_now: null,
+            },
+            "ACopyGoesOut.2": {
+              standing: "shown",
+              frames: [light],
+              claims: [],
+              says_now: null,
+            },
           },
           unknown: [],
           axes: {},
@@ -492,19 +717,31 @@ describe("Journeys cast panel", () => {
         };
 
         render(Journeys, {
-          report: report([walk("ACopyGoesOut", [line("specified", "ada does Borrow")])], null,
-            lopsided),
+          report: report(
+            [walk("ACopyGoesOut", [line("specified", "ada does Borrow")])],
+            null,
+            lopsided,
+          ),
           failure: null,
         });
 
-        expect(screen.getAllByRole("img", { name: "the copy in her hands" })).toHaveLength(1);
+        expect(
+          screen.getAllByRole("img", { name: "the copy in her hands" }),
+        ).toHaveLength(1);
 
-        await fireEvent.change(screen.getByRole("combobox", { name: "theme" }), {
-          target: { value: "light" },
-        });
+        await fireEvent.change(
+          screen.getByRole("combobox", { name: "theme" }),
+          {
+            target: { value: "light" },
+          },
+        );
 
-        expect(screen.queryByRole("img", { name: "the copy in her hands" })).toBeNull();
-        expect(screen.getByText(/not the way you have asked to see it/)).toBeTruthy();
+        expect(
+          screen.queryByRole("img", { name: "the copy in her hands" }),
+        ).toBeNull();
+        expect(
+          screen.getByText(/not the way you have asked to see it/),
+        ).toBeTruthy();
         // And the standing is unchanged, because the step has not changed.
         expect(screen.getAllByText("shown").length).toBeGreaterThan(0);
       });
@@ -514,8 +751,11 @@ describe("Journeys cast panel", () => {
     /// header has to carry both without either standing in for the other.
     it("counts what was shown beside what the spec supports", () => {
       render(Journeys, {
-        report: report([walk("ACopyGoesOut", [line("specified", "ada does Borrow")])], null,
-          standing("shown", { frames: [picture] })),
+        report: report(
+          [walk("ACopyGoesOut", [line("specified", "ada does Borrow")])],
+          null,
+          standing("shown", { frames: [picture] }),
+        ),
         failure: null,
       });
 

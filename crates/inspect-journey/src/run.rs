@@ -62,6 +62,27 @@ pub enum Origin {
     Caught,
 }
 
+/// One line the file's world laid out, and what this journey did with it.
+///
+/// The three cases a reader has to be able to tell apart, and the third is the
+/// dangerous one: what the journey said, what it inherited, and what it
+/// inherited **and then changed**.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../ui/src/lib/api/")]
+pub struct Inherited {
+    /// The line as the world wrote it: `ada.status = active`.
+    pub said: String,
+    /// Where in the file it was written.
+    pub line: usize,
+    /// Whether this journey went on to set the same thing itself.
+    ///
+    /// Allowed and reported, not forbidden. Eight journeys wanting the same
+    /// two-member membership and one wanting it `departed` is the ordinary
+    /// case; forbidding the override splits the file, and allowing it silently
+    /// is the thing that must not happen.
+    pub overridden: bool,
+}
+
 /// Somebody or something the journey named, and what it resolved to.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../ui/src/lib/api/")]
@@ -127,6 +148,14 @@ pub struct Walk {
     pub steps: Vec<Walked>,
     /// What the journey was told rather than shown, always reported.
     pub stipulated: Vec<String>,
+    /// Every line the file's `world` laid out, and what became of it.
+    ///
+    /// Empty unless the journey inherits one, because otherwise this would
+    /// print a journey's own `given` block back at it and say nothing. When it
+    /// does inherit, this is the whole of what makes that safe: a step holding
+    /// because of a line somewhere else in the file is passing invisibly, and
+    /// this is where it stops being invisible.
+    pub inherited: Vec<Inherited>,
     /// What was wrong with the journey outside its steps.
     ///
     /// Counted in the verdict, because the flagship case of this whole design
@@ -222,6 +251,7 @@ pub fn walk(journey: &Journey, spec: &SpecGraph, program: &Program, sources: &So
         world: inspect_sim::seed::seed(spec),
         bound: BTreeMap::new(),
         stipulated: Vec::new(),
+        inherited: Vec::new(),
         cast: Vec::new(),
         fired: Vec::new(),
         undecided: Vec::new(),
@@ -244,6 +274,7 @@ pub fn walk(journey: &Journey, spec: &SpecGraph, program: &Program, sources: &So
         line: journey.line,
         steps,
         stipulated: walker.stipulated,
+        inherited: walker.inherited,
         notes,
     }
 }
@@ -256,6 +287,7 @@ pub(crate) struct Walker<'a> {
     /// Every name the journey has bound to something in the world.
     pub(crate) bound: BTreeMap<String, EntityId>,
     pub(crate) stipulated: Vec<String>,
+    pub(crate) inherited: Vec<Inherited>,
     /// Everybody the journey has named, in the order they were bound.
     pub(crate) cast: Vec<CastMember>,
     /// Rules that ran since the last clause, for `then … fires`.

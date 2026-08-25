@@ -144,6 +144,10 @@ fn statically(journey: &inspect_journey::Journey, graph: &SpecGraph) -> Walk {
         line: journey.line,
         steps,
         stipulated: Vec::new(),
+        // `check` answers from the graph and never lays a world out, so there
+        // is nothing inherited to report — the question it asks is about names
+        // the spec declares, not about the world they would be in.
+        inherited: Vec::new(),
         // The same notes the walk carries. Without them `check` reported a
         // cast the spec cannot supply as specified, with no diagnostics and
         // exit 0 — the one answer this tool must never give.

@@ -28,14 +28,30 @@ use crate::{
 
 impl Walker<'_> {
     /// Build the world the journey says exists.
+    ///
+    /// The file's world first, when the journey takes one, then the journey's
+    /// own on top — so a line the journey writes about something the world
+    /// already set wins, which is what an override is. Every inherited line is
+    /// recorded on the way through, with whether the journey went on to change
+    /// it, because a step holding on account of a line elsewhere in the file
+    /// is passing invisibly until the report says otherwise.
     pub(crate) fn lay_out(&mut self, journey: &Journey) {
+        if let Some(shared) = &journey.inherits {
+            self.inherited = ledger(shared, journey);
+            self.place(&shared.cast, &shared.given);
+        }
+        self.place(&journey.cast, &journey.given);
+    }
+
+    /// Lay out one set of names and one set of facts, in that order.
+    fn place(&mut self, cast: &[Cast], given: &[Given]) {
         // Cast first, so `given` can assign to any of them. A cast member is an
         // instance of its type: two people of one kind is the ordinary case.
-        for member in &journey.cast {
+        for member in cast {
             let created = self.create(&member.type_expr);
             self.bind(member, Some(created), Origin::Cast);
         }
-        for given in &journey.given {
+        for given in given {
             match given {
                 Given::Instance { name, type_expr, fields, line } => {
                     let id = self.create(type_expr);
@@ -248,6 +264,63 @@ fn declaring_module(spec: &SpecGraph, bare: &str) -> String {
         .iter()
         .find(|node| node.name == bare && node.kind != NodeKind::Trigger)
         .map_or_else(|| bare.to_owned(), |node| node.module.clone())
+}
+
+/// Everything the file's world laid out, and which of it this journey changed.
+///
+/// An override is recognised by *what a line is about* rather than by its
+/// text: `ada.status = active` inherited and `ada.status = retired` written
+/// here are the same fact set twice, and that is the case worth marking. A
+/// name is the thing for a cast member or a `given` instance; a path is the
+/// thing for an assignment.
+fn ledger(shared: &crate::journey::Shared, journey: &Journey) -> Vec<crate::run::Inherited> {
+    let mine: Vec<String> = journey
+        .cast
+        .iter()
+        .map(|member| member.name.clone())
+        .chain(journey.given.iter().map(about))
+        .collect();
+
+    let entry = |said: String, line: usize, subject: &str| crate::run::Inherited {
+        said,
+        line,
+        overridden: mine.iter().any(|theirs| theirs == subject),
+    };
+
+    let cast =
+        shared.cast.iter().map(|member| entry(written_cast(member), member.line, &member.name));
+    let given =
+        shared.given.iter().map(|given| entry(written_given(given), given.line(), &about(given)));
+    cast.chain(given).collect()
+}
+
+/// What a line is *about*, which is what two lines have to share to collide.
+fn about(given: &Given) -> String {
+    match given {
+        Given::Instance { name, .. } => name.clone(),
+        Given::Assign { path, .. } => path.as_written(),
+    }
+}
+
+/// `ada: identity/Identity`
+fn written_cast(member: &Cast) -> String {
+    format!("{}: {}", member.name, member.type_expr)
+}
+
+/// The line as the world wrote it.
+fn written_given(given: &Given) -> String {
+    match given {
+        Given::Instance { name, type_expr, fields, .. } => {
+            let inside: Vec<String> = fields
+                .iter()
+                .map(|(field, value)| format!("{field}: {}", value.as_written()))
+                .collect();
+            format!("{name}: {type_expr} {{ {} }}", inside.join(", "))
+        }
+        Given::Assign { path, value, .. } => {
+            format!("{} = {}", path.as_written(), value.as_written())
+        }
+    }
 }
 
 #[cfg(test)]

@@ -25,7 +25,9 @@
 use inspect_sim::{Value, seed};
 
 use crate::{
-    journey::{Assertion, Axis, Cast, Clause, Comparison, Given, Journey, Step, Subject, Term},
+    journey::{
+        Assertion, Axis, Cast, Clause, Comparison, Given, Journey, Shared, Step, Subject, Term,
+    },
     terms::{path, term},
 };
 
@@ -54,7 +56,8 @@ pub(crate) fn fail<T>(line: usize, message: impl Into<String>) -> Result<T, Pars
 ///
 /// Returns the first line that could not be read, and why.
 pub fn parse(source: &str) -> Result<Vec<Journey>, ParseError> {
-    let mut journeys = Vec::new();
+    let mut journeys: Vec<Journey> = Vec::new();
+    let mut shared: Option<Shared> = None;
     fn numbered((at, text): (usize, &str)) -> (usize, &str) {
         (at + 1, text)
     }
@@ -65,6 +68,27 @@ pub fn parse(source: &str) -> Result<Vec<Journey>, ParseError> {
         if trimmed.is_empty() {
             continue;
         }
+
+        if trimmed == "world {" {
+            // One per file. Two would leave a reader working out which one a
+            // journey took by counting lines.
+            if shared.is_some() {
+                return fail(line, "a file lays out one world, and this is the second");
+            }
+            // Before the journeys that take it, because a world declared below
+            // them would change what they mean from further down the page —
+            // and reading order is the only order there is here.
+            if !journeys.is_empty() {
+                return fail(
+                    line,
+                    "a world is laid out before the journeys that take it, and this file \
+                     already has one above",
+                );
+            }
+            shared = Some(world(line, &mut lines)?);
+            continue;
+        }
+
         let Some(rest) = trimmed.strip_prefix("journey ") else {
             return fail(line, format!("expected `journey <Name> {{`, found `{trimmed}`"));
         };
@@ -74,9 +98,54 @@ pub fn parse(source: &str) -> Result<Vec<Journey>, ParseError> {
         if name.is_empty() {
             return fail(line, "a journey needs a name");
         }
-        journeys.push(body(name, line, &mut lines)?);
+        let mut journey = body(name, line, &mut lines)?;
+        // `inherits` is `Some` only where there is something to inherit *and*
+        // the journey did not decline it. `body` sets it to a marker world with
+        // line 0 to mean "did not decline"; here is where it becomes real.
+        journey.inherits = journey.inherits.and(shared.clone());
+        journeys.push(journey);
     }
     Ok(journeys)
+}
+
+/// Everything between the braces of a file's `world`.
+///
+/// `cast:` and `given:` and nothing else. A world says who is there and how
+/// things stand; a step is something somebody *does*, and a world that could
+/// act would be a journey nobody named.
+fn world(opened: usize, lines: &mut Lines<'_>) -> Result<Shared, ParseError> {
+    let mut shared = Shared { cast: Vec::new(), given: Vec::new(), line: opened };
+    let mut block = Block::None;
+
+    for (line, text) in lines.by_ref() {
+        let trimmed = strip_comment(text);
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed == "}" {
+            return Ok(shared);
+        }
+        if trimmed == "cast:" {
+            block = Block::Cast;
+            continue;
+        }
+        if trimmed == "given:" {
+            block = Block::Given;
+            continue;
+        }
+        match block {
+            Block::Cast => shared.cast.push(cast(trimmed, line)?),
+            Block::Given => shared.given.push(given(trimmed, line)?),
+            _ => {
+                return fail(
+                    line,
+                    format!("a world holds `cast:` and `given:`, and found `{trimmed}`"),
+                );
+            }
+        }
+    }
+
+    fail(opened, "the world is never closed")
 }
 
 type Numbering<'a> = fn((usize, &'a str)) -> (usize, &'a str);
@@ -91,6 +160,12 @@ fn body(name: &str, opened: usize, lines: &mut Lines<'_>) -> Result<Journey, Par
         cast: Vec::new(),
         shows: Vec::new(),
         given: Vec::new(),
+        // A marker, replaced in `parse` by the file's world if there is one.
+        // `Some` here means "did not decline"; `world: none` clears it, and
+        // that is the only way to tell a journey that opted out from one whose
+        // file simply has no world — which matters, because the second is
+        // silence and the first is a decision.
+        inherits: Some(Shared { cast: Vec::new(), given: Vec::new(), line: 0 }),
         steps: Vec::new(),
         ends: Vec::new(),
         line: opened,
@@ -120,6 +195,21 @@ fn body(name: &str, opened: usize, lines: &mut Lines<'_>) -> Result<Journey, Par
         if let Some(rest) = trimmed.strip_prefix("ends:") {
             block = Block::Ends;
             push_prose(&mut journey.ends, rest);
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("world:") {
+            // The one thing a journey can say about the file's world, because
+            // it is the only thing it needs to: take it, or start from nothing.
+            // Anything else here would be a second grammar for laying a world
+            // out, in the place a journey declines one.
+            if rest.trim() != "none" {
+                return fail(
+                    line,
+                    "a journey takes the file's world or says `world: none`, and nothing else",
+                );
+            }
+            journey.inherits = None;
+            block = Block::None;
             continue;
         }
         if trimmed == "cast:" {

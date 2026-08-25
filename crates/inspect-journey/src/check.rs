@@ -99,10 +99,18 @@ struct Names {
 impl Names {
     fn new(journey: &Journey) -> Self {
         let mut types = BTreeMap::new();
-        for member in &journey.cast {
+        // The file's world first, so a journey's own line of the same name
+        // wins — which is what an override is, and is the order the walk lays
+        // them out in. Read here at all because a name the *file* cast is a
+        // name this journey has, and a checker that said otherwise would
+        // report every inherited actor as nobody.
+        let inherited = journey.inherits.as_ref();
+        let cast = inherited.map(|shared| shared.cast.as_slice()).unwrap_or_default();
+        let given = inherited.map(|shared| shared.given.as_slice()).unwrap_or_default();
+        for member in cast.iter().chain(&journey.cast) {
             types.insert(member.name.clone(), member.type_expr.clone());
         }
-        for given in &journey.given {
+        for given in given.iter().chain(&journey.given) {
             if let crate::journey::Given::Instance { name, type_expr, .. } = given {
                 types.insert(name.clone(), type_expr.clone());
             }

@@ -64,6 +64,17 @@ pub fn render(walks: &[Walk]) -> String {
 
         // What it was told rather than shown, first and always. An agent can
         // make any journey pass; it cannot make one pass invisibly.
+        //
+        // The world the *file* laid out comes first of all, because it was
+        // there before the journey said anything — and a step holding on
+        // account of a line elsewhere in the file is the same passing
+        // invisibly, one level further out. Marked where the journey went on
+        // to change it, which is the case worth catching: inherited and then
+        // quietly made to mean something else.
+        for line in &walk.inherited {
+            let mark = if line.overridden { "overridden " } else { "" };
+            out.push_str(&format!("    from the file  {mark}{}\n", line.said));
+        }
         for stipulation in &walk.stipulated {
             out.push_str(&format!("    stipulated  {stipulation}\n"));
         }
@@ -119,6 +130,11 @@ pub fn as_json(walks: &[Walk]) -> serde_json::Value {
                     "journey": walk.name,
                     "verdict": walk.verdict().as_str(),
                     "stipulated": walk.stipulated,
+                    "inherited": walk.inherited.iter().map(|line| serde_json::json!({
+                        "said": line.said,
+                        "line": line.line,
+                        "overridden": line.overridden,
+                    })).collect::<Vec<_>>(),
                     "notes": walk.notes.iter().map(|note| serde_json::json!({
                         "line": note.line,
                         "verdict": note.verdict.as_str(),
@@ -160,6 +176,7 @@ mod tests {
             line: 1,
             steps,
             stipulated,
+            inherited: Vec::new(),
             notes: Vec::new(),
         }
     }

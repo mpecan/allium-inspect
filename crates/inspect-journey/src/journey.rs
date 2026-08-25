@@ -11,6 +11,31 @@
 
 use inspect_sim::Value;
 
+/// The world a file lays out before any journey in it.
+///
+/// 39 journeys over five modules wrote 166 `given` lines between them, 58 of
+/// them distinct — and 125 of the 166 were repeats of seventeen. That is not
+/// verbosity. Which fields a rule reads is discoverable only by walking a
+/// journey and reading its complaints, so journey 40 rediscovers what journey 4
+/// already learned; and nothing notices `ada.status = active` in thirty-eight
+/// files and `ada.status = retired` in the thirty-ninth.
+///
+/// The constraint this must not break is the one everything else rests on:
+/// **every stipulation is reported, first and always.** An agent can make any
+/// journey pass; it cannot make one pass invisibly. A step holding because of a
+/// line in another part of the file *is* passing invisibly — so a journey that
+/// takes one of these reports every line it inherited, where each came from,
+/// and which of them it went on to change.
+///
+/// One level, and file-scoped. Inheritance between worlds, or a world reaching
+/// across files, and "where did this come from" stops having a short answer.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Shared {
+    pub cast: Vec<Cast>,
+    pub given: Vec<Given>,
+    pub line: usize,
+}
+
 /// One journey, as written.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Journey {
@@ -21,6 +46,17 @@ pub struct Journey {
     /// The ways this journey should be shown. Empty means "however it is".
     pub shows: Vec<Axis>,
     pub given: Vec<Given>,
+    /// The file's `world`, when this journey takes it.
+    ///
+    /// A copy rather than a borrow: a journey is walked alone and reported
+    /// alone, and the whole point is that its report says what the world was
+    /// told without anybody opening another part of the file.
+    ///
+    /// `None` when the file declares none, and when the journey said `world:
+    /// none` — a journey about somebody who has no identity yet cannot start
+    /// from a world where she has one, and belongs in the file with the others
+    /// about her.
+    pub inherits: Option<Shared>,
     pub steps: Vec<Step>,
     /// The outcome, in words.
     pub ends: Vec<String>,

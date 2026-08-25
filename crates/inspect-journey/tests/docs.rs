@@ -132,6 +132,16 @@ fn whole(body: &str) -> String {
         return body.to_owned();
     }
 
+    // A `world` block stands on its own, like a journey — it *is* a top-level
+    // declaration — but a file of nothing but a world has no journey to check,
+    // so one is put below it. That also exercises the thing the block is for.
+    if first == "world {" {
+        return format!(
+            "{body}\njourney Documented {{\n    goal: an example\n\n    1. something \
+             happens\n        then copy.status = available\n}}\n"
+        );
+    }
+
     let indent = |by: &str| {
         body.lines()
             .map(|line| if line.trim().is_empty() { String::new() } else { format!("{by}{line}") })

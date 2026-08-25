@@ -160,6 +160,85 @@ fn seeing_names_one_value_on_one_surface() {
     assert!(!negated);
 }
 
+// --- the world a file lays out ------------------------------------------
+
+const WITH_A_WORLD: &str = "\
+world {
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+    given:
+        copy.status = available
+}
+
+journey SheBorrows {
+    1. she borrows it
+        ada does MemberBorrows(ada, copy) on MemberShelf
+}
+
+journey SheHasNothing {
+    world: none
+    1. she borrows it
+        ada does MemberBorrows(ada, copy) on MemberShelf
+}
+";
+
+#[test]
+fn every_journey_in_the_file_takes_its_world() {
+    let journeys = parse(WITH_A_WORLD).expect("parses");
+    let shared = journeys[0].inherits.as_ref().expect("inherits");
+    assert_eq!(shared.cast.len(), 2);
+    assert_eq!(shared.given.len(), 1);
+}
+
+/// The opt-out, which the design needs: a journey about somebody who has no
+/// identity yet cannot start from a world where she has one, and belongs in
+/// the file with the others about her.
+#[test]
+fn a_journey_can_decline_it() {
+    let journeys = parse(WITH_A_WORLD).expect("parses");
+    assert!(journeys[1].inherits.is_none(), "`world: none` starts from nothing");
+}
+
+/// Declining and there being nothing to decline are the same at the walk and
+/// must not be the same in the file: the first is a decision.
+#[test]
+fn a_file_with_no_world_leaves_every_journey_with_none() {
+    let journeys =
+        parse("journey J {\n    1. she acts\n        ada does A() on S\n}\n").expect("parses");
+    assert!(journeys[0].inherits.is_none());
+}
+
+#[test]
+fn a_world_says_nothing_but_who_is_there_and_how_things_stand() {
+    let error = parse("world {\n    1. she acts\n}\n").expect_err("no steps in a world");
+    assert!(error.message.contains("`cast:` and `given:`"), "{error:?}");
+}
+
+/// One per file. Two would leave a reader working out which a journey took by
+/// counting lines.
+#[test]
+fn a_file_lays_out_one_world() {
+    let error = parse("world {\n}\nworld {\n}\n").expect_err("only one");
+    assert!(error.message.contains("this is the second"), "{error:?}");
+}
+
+/// Before the journeys that take it. One declared below them would change what
+/// they mean from further down the page, and reading order is the only order
+/// there is here.
+#[test]
+fn a_world_comes_before_the_journeys_that_take_it() {
+    let error = parse("journey J {\n    1. she acts\n        ada does A() on S\n}\nworld {\n}\n")
+        .expect_err("too late");
+    assert!(error.message.contains("already has one above"), "{error:?}");
+}
+
+#[test]
+fn a_journey_takes_the_world_or_declines_it_and_nothing_else() {
+    let error = parse("journey J {\n    world: some\n}\n").expect_err("no third option");
+    assert!(error.message.contains("`world: none`"), "{error:?}");
+}
+
 /// `cannot do`, the mirror of `cannot see`. A journey has no other way to say
 /// that a block working is the point of the step.
 #[test]
