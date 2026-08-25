@@ -1220,6 +1220,62 @@ fn a_lookup_on_a_value_nothing_settled_is_undecided_with_its_reason() {
     assert!(reasons(&lookup, &env).iter().any(|why| why.contains("nothing is bound to `m`")));
 }
 
+/// `Receipt{message: m, reporter: r, kind: read}` is how a spec asks whether a
+/// read receipt is already recorded, and `read` is a *state* of the field it
+/// sits beside. Reading it as a name nothing bound made every such lookup
+/// undecided, which in `friend-mesh` was `MarkRead` — a rule nobody could walk.
+#[test]
+fn a_bare_name_beside_a_field_holding_a_state_is_that_state() {
+    let mut world = World::new().at(1_000);
+    let message = world.create("Message", "messaging");
+    let receipt = world.create("Receipt", "messaging");
+    world.set_field(&receipt, "message", Value::Ref(message.clone()));
+    world.set_field(&receipt, "kind", Value::Enum("read".to_owned()));
+
+    let env = env(&world, "messaging").bind("m", Value::Ref(message));
+    let lookup = join(ident("Receipt"), &[("message", ident("m")), ("kind", ident("read"))]);
+    assert_eq!(value_of(&lookup, &env), Value::Ref(receipt));
+
+    // And it is the state that was named, not any state at all.
+    let other = join(ident("Receipt"), &[("message", ident("m")), ("kind", ident("delivered"))]);
+    assert_eq!(value_of(&other, &env), Value::Null);
+}
+
+/// Only against a field that holds one. `Membership{member: m}` with `m` bound
+/// to nothing is a name nothing bound, and the field beside it holds a
+/// reference — so the state reading has nothing to work from and must not be
+/// reached for. Losing that distinction would turn every unbound name into a
+/// silent no.
+#[test]
+fn a_bare_name_beside_a_field_holding_anything_else_stays_undecided() {
+    let (world, group, _, _) = joined();
+    let env = env(&world, "membership").bind("g", Value::Ref(group));
+
+    let lookup = join(ident("Membership"), &[("group", ident("g")), ("member", ident("m"))]);
+    assert_eq!(truth_of(&exists(lookup.clone()), &env), Truth::Unknown);
+    // And the reason it could not be decided is the one a reader can act on,
+    // not a sentence about candidates.
+    assert!(
+        reasons(&lookup, &env).iter().any(|why| why.contains("nothing is bound to `m`")),
+        "{:?}",
+        reasons(&lookup, &env)
+    );
+}
+
+/// A world with no candidates at all answers *no match* however the name would
+/// have read: there is no receipt to be one. Carrying the held-back reason
+/// into that answer would attach a doubt to a settled fact.
+#[test]
+fn a_name_held_back_is_forgotten_when_nothing_could_have_matched() {
+    let mut world = World::new().at(1_000);
+    let message = world.create("Message", "messaging");
+    let env = env(&world, "messaging").bind("m", Value::Ref(message));
+
+    let lookup = join(ident("Receipt"), &[("message", ident("m")), ("kind", ident("read"))]);
+    assert_eq!(value_of(&lookup, &env), Value::Null);
+    assert!(reasons(&lookup, &env).is_empty(), "{:?}", reasons(&lookup, &env));
+}
+
 #[test]
 fn a_qualified_join_lookup_reads_the_same_as_a_bare_one() {
     let (world, group, member, _) = joined();

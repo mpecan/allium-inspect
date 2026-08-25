@@ -15,7 +15,9 @@ use std::ops::Not;
 
 use allium_parser::ast::{BinaryOp, Expr, ForBinding, JoinField};
 
-use super::{Env, Evaluation, Unresolved, ast::truth_value, eval, span_of, unresolved_at};
+use super::{
+    Env, Evaluation, Unresolved, ast::truth_value, bare_name, eval, span_of, unresolved_at,
+};
 use crate::{truth::Truth, value::Value};
 
 /// `exists X` and `not exists X`.
@@ -29,6 +31,37 @@ pub(super) fn existence(operand: &Expr, env: &Env<'_>, negated: bool) -> Evaluat
     };
     let truth = if negated { present.not() } else { present };
     Evaluation { value: truth_value(truth), unresolved: evaluated.unresolved }
+}
+
+/// What one field of a join lookup is being matched against.
+///
+/// The two are not interchangeable, and the difference is the whole of why a
+/// bare name is kept as one. `Receipt{message: m, reporter: r, kind: read}` is
+/// how a spec asks whether a read receipt is already recorded, and `read` is a
+/// state of the field it sits beside — not a binding, not a typo, and nothing
+/// in this expression says which. Reading it as an unbound name made every
+/// such lookup undecided, and `MarkRead` with it.
+///
+/// So the decision is deferred to the candidate: a name is read as a state
+/// only against a field that *holds* one, which is the rule `compare` already
+/// applies to `status = applied`. Against anything else it stays undecided,
+/// because there it really is a name nothing bound.
+enum Wanted<'a> {
+    Settled(Value),
+    Named(&'a str),
+}
+
+impl Wanted<'_> {
+    /// Whether a candidate's field is what was asked for.
+    fn against(&self, held: &Value) -> Truth {
+        match self {
+            Wanted::Settled(value) => Truth::from_bool(held == value),
+            Wanted::Named(name) => match held {
+                Value::Enum(state) => Truth::from_bool(state == name),
+                _ => Truth::Unknown,
+            },
+        }
+    }
 }
 
 /// `Membership{group: g, member: m}` — the instance whose fields all match.
@@ -57,18 +90,36 @@ pub(super) fn join_lookup(
     // Every field first: one unknown among them decides the whole lookup, and
     // evaluating them per candidate would repeat the work and the reasons.
     let mut unresolved = Vec::new();
-    let mut wanted: Vec<(&str, Value)> = Vec::new();
+    let mut deferred = Vec::new();
+    let mut wanted: Vec<(&str, Wanted)> = Vec::new();
     for field in fields {
         // `Membership{group}` with no value means a binding of the same name.
-        let evaluated = match &field.value {
-            Some(value) => eval(value, env),
-            None => eval_ident_named(&field.field.name, field, env),
+        let (evaluated, written) = match &field.value {
+            Some(value) => (eval(value, env), bare_name(value)),
+            None => {
+                (eval_ident_named(&field.field.name, field, env), Some(field.field.name.as_str()))
+            }
         };
-        unresolved.extend(evaluated.unresolved);
-        wanted.push((&field.field.name, evaluated.value));
+        // A bare name nothing bound is held back rather than reported: what it
+        // means depends on the field it is matched against, and the candidates
+        // have not been looked at yet. Its reason is held back with it, and
+        // put back the moment the candidates fail to answer the question —
+        // "nothing is bound to `m`" is the sentence a reader can act on, and
+        // losing it to reach a state reading would be a worse answer given
+        // more confidently.
+        match (evaluated.value, written) {
+            (Value::Unknown, Some(name)) => {
+                deferred.extend(evaluated.unresolved);
+                wanted.push((&field.field.name, Wanted::Named(name)));
+            }
+            (value, _) => {
+                unresolved.extend(evaluated.unresolved);
+                wanted.push((&field.field.name, Wanted::Settled(value)));
+            }
+        }
     }
 
-    if wanted.iter().any(|(_, value)| matches!(value, Value::Unknown)) {
+    if wanted.iter().any(|(_, wanted)| matches!(wanted, Wanted::Settled(Value::Unknown))) {
         return Evaluation::unknown(
             format!("`{name}` cannot be looked up on a value nothing settled"),
             whole,
@@ -83,7 +134,7 @@ pub(super) fn join_lookup(
         for (field, value) in &wanted {
             match instance.fields.get(*field) {
                 Some(Value::Unknown) | None => matches = matches.and(Truth::Unknown),
-                Some(held) => matches = matches.and(Truth::from_bool(held == value)),
+                Some(held) => matches = matches.and(value.against(held)),
             }
         }
         match matches {
@@ -96,6 +147,7 @@ pub(super) fn join_lookup(
     }
 
     if undecided {
+        unresolved.extend(deferred);
         return Evaluation::unknown(
             format!("a `{name}` might match, and one of its fields is unknown"),
             whole,
@@ -104,6 +156,10 @@ pub(super) fn join_lookup(
         .carrying(unresolved);
     }
 
+    // Nothing matched, and nothing was left open — including any name that was
+    // held back. A world with no `Receipt` in it has none whatever `read`
+    // meant, so the deferred reasons are dropped rather than reported against
+    // an answer they had no part in.
     Evaluation { value: Value::Null, unresolved }
 }
 
