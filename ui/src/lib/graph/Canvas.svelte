@@ -145,9 +145,6 @@
           held: box.held,
           width: box.width,
           height: box.height,
-          // Containers do not overlap, so every name can sit in its own
-          // corner. The stagger the overlay needed is gone with the overlap.
-          depth: 0,
         },
         selectable: false,
         draggable: false,

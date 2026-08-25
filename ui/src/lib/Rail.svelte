@@ -194,9 +194,9 @@
         <span>Ring each file</span>
       </label>
       <p class="prose caveat">
-        Drawn around wherever a module's constructs already landed, rather than
-        pushing them together. Boxes that overlap are files the layout did not
-        group on its own.
+        A constraint on the layout rather than an outline over it, so turning it
+        on moves things: each file's constructs are placed together, and the
+        plate is what holds them.
       </p>
     {/if}
   </section>
