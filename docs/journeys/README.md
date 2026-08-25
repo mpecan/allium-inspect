@@ -301,8 +301,8 @@ the specification, and what keeps it honest is that it is executed.
 
 ## Stipulations, and why they matter for agents
 
-The simulator cannot compute derived values, `JoinLookup`s, or calls into an
-implementation. A journey over a real spec will hit those constantly.
+The simulator cannot make calls into an implementation, and there are fields
+somebody simply has to state. A journey over a real spec will hit both.
 
 ```
 stipulate ada.active_devices.count = 2
@@ -409,10 +409,12 @@ says so rather than a rule in the checker that guesses.
   first. Not one of the seven is the bare `entity.field` case that could be
   decided today by reading the clause as an expression.
 
-  So the work `sees` is waiting on is **derived values**, not exposure parsing,
-  and that is a general capability rather than a `sees` feature: the same nine
-  or so undecided lines in that walk include `claim.attestations.count is
-  unknown`, which is the same gap seen from the other side.
+  Derived values have since been built, which was the prerequisite and not the
+  answer: `observe` still reports the filter unread, because it never evaluates
+  the `exposes` clause at all. What remains is that evaluation — resolving the
+  surface's `context` for an actor, and testing whether the thing being seen is
+  in the collection the clause ranges over. That is now a bounded piece of work
+  rather than a blocked one.
 
   What this does *not* change is the verdict when a surface carries nothing
   like the field — that is read from the clause text and settled, including

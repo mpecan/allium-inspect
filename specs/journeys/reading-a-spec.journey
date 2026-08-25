@@ -38,10 +38,12 @@ journey SomebodyMeetsASpecTheyDidNotWrite {
         then set.status = reading
 
     2. it finishes reading, and says how much there is
-        -- `module_count` is derived from the modules themselves, and this
-        -- simulator does not compute derived values — so the rule waiting on it
-        -- can never be woken without saying what it is. Said here, once, and
-        -- printed in the ledger above the walk.
+        -- `module_count` is derived from the modules themselves. The simulator
+        -- computes those now, and would answer nought — the journey creates no
+        -- Module instances, because a spec set having four files is a fact
+        -- about the disk rather than about this world. Said here, once, and
+        -- printed in the ledger above the walk, which is what `stipulate` is
+        -- for: a value stated outright is never overruled by a definition.
         stipulate set.module_count = 4
         stipulate set.parsed = true
         -- A state-condition rule is not fired by anybody; it becomes true or it

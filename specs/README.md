@@ -76,9 +76,11 @@ worth reading, because most of them are the tool describing its own limits:
 - **A positive `sees` is always undecided.** Whether a surface's filter admits
   *this* actor needs the `exposes` clause as an expression, and it is stored as
   text. `cannot see` against a surface that does not carry the field is decided.
-- **Derived values are not computed.** `module_count` is `modules.count`, so a
-  rule waiting on it stays undecided until a journey says otherwise —
-  deliberately, and on the record, which is what `stipulate` is for.
+- **Derived values are computed, and answer about *this* world.**
+  `module_count` is `modules.count`, and the walk holds no `Module` instances —
+  a spec set having four files is a fact about the disk rather than about the
+  simulated world. So the journey states it, on the record, which is what
+  `stipulate` is for.
 - **A field typed by a named enum** comes back unknown when a rule creates it
   with a bare value; the simulator resolves bare names against a field's own
   declared states.

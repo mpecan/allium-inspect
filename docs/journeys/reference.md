@@ -192,7 +192,7 @@ then loan in Loans
 
 Two things to expect. A **derived** field — `open_loan_count` is
 `open_loans.count` — comes back `undecided` rather than computed, because the
-simulator does not evaluate derived values; `stipulate` is how a journey gets
+simulator cannot settle; `stipulate` is how a journey gets
 past that deliberately. And an assertion about a path nothing has set is
 `undecided` **both ways round**: `exists` does not refuse it and `does not
 exist` does not hold, because neither is something the world said.
@@ -250,7 +250,7 @@ send you to three different places, and a report that called all of them
 *failed* would send you to change a specification that is not wrong.
 
 **undecided is not a polite no.** An expression this simulator cannot evaluate —
-a derived value the spec computes, a name nobody bound — comes back undecided
+a field nobody stated, a name nobody bound — comes back undecided
 with the sub-expression that could not be settled, never as false.
 
 ## Running them

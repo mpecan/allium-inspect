@@ -155,7 +155,7 @@ preconditions against it, applies its postconditions, checks every invariant, an
 reports which state-condition rules the change just made possible.
 
 **It never guesses.** An Allium expression can be true, false, or something a
-simulator has no way to decide — a derived value the spec computes and this does
+simulator has no way to decide — a field nobody has stated and this does
 not, a name nobody bound, a comparison between kinds that do not compare.
 Choosing a default for that third case is the failure worth avoiding: treat it as
 true and rules fire that should not have, treat it as false and rules are

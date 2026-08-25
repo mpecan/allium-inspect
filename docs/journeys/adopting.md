@@ -91,7 +91,7 @@ an assertion to delete.
 allium-journey walk specs/ journeys/ --text
 ```
 
-`undecided` means the simulator could not tell — usually a derived value, or a
+`undecided` means the simulator could not tell — usually a field nobody stated, or a
 `sees` whose surface filter is stored as text. Two honest ways forward:
 
 - `stipulate <path> = <value>` says it outright. Every stipulation is printed
