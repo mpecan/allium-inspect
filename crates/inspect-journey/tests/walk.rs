@@ -1674,3 +1674,22 @@ fn a_call_a_surface_does_not_expose_is_unexposed() {
         "{seen:?}"
     );
 }
+
+/// The same call name with the wrong number of arguments is a different call.
+/// The clause text matches on the name alone, so this is the only thing that
+/// stops `in_good_standing(ada, bob)` reading as the exposure it is not.
+#[test]
+fn a_call_with_the_wrong_number_of_arguments_is_not_the_one_exposed() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada: Member
+        bob: Member
+    1. she asks a question the surface does not answer
+        ada sees in_good_standing(ada, bob) on MemberShelf
+}",
+    );
+
+    let seen = &result.steps[0].outcomes[0];
+    assert_eq!(seen.verdict, Verdict::Unexposed, "{seen:?}");
+}

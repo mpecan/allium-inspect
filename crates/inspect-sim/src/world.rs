@@ -212,6 +212,56 @@ impl World {
 }
 
 #[cfg(test)]
+mod answer_tests {
+    use super::*;
+
+    fn world() -> World {
+        let mut world = World::new();
+        world.answers.push(Answer {
+            call: "may_invite".to_owned(),
+            arguments: vec![Value::Int(1), Value::Int(2)],
+            value: Value::Bool(true),
+        });
+        world
+    }
+
+    #[test]
+    fn an_answer_is_found_by_name_and_arguments() {
+        assert_eq!(
+            world().answer("may_invite", &[Value::Int(1), Value::Int(2)]),
+            Some(&Value::Bool(true))
+        );
+    }
+
+    #[test]
+    fn a_different_call_is_not_this_answer() {
+        assert_eq!(world().answer("may_adopt_hub", &[Value::Int(1), Value::Int(2)]), None);
+    }
+
+    /// An answer is about the arguments it names. Saying Ada may invite says
+    /// nothing about Bob, and returning it for him would be the tool inventing
+    /// a policy nobody stated.
+    #[test]
+    fn different_arguments_are_not_this_answer() {
+        assert_eq!(world().answer("may_invite", &[Value::Int(1), Value::Int(9)]), None);
+        assert_eq!(world().answer("may_invite", &[Value::Int(1)]), None);
+    }
+
+    /// A stipulation about a value nobody knows is not about anything, and
+    /// matching it would answer a question nobody actually asked.
+    #[test]
+    fn an_argument_nothing_settled_matches_nothing() {
+        assert_eq!(world().answer("may_invite", &[Value::Int(1), Value::Unknown]), None);
+        assert_eq!(world().answer("may_invite", &[Value::Unknown, Value::Unknown]), None);
+    }
+
+    #[test]
+    fn a_world_nobody_told_anything_answers_nothing() {
+        assert_eq!(World::new().answer("may_invite", &[Value::Int(1)]), None);
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
