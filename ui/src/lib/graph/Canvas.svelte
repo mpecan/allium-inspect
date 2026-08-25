@@ -30,8 +30,9 @@
   import { hullId } from "./hulls";
   import RoutedEdge from "./RoutedEdge.svelte";
   import Settle from "./Settle.svelte";
-  import { familyOf, layout } from "./layout";
+  import { layout } from "./layout";
   import type { Point } from "./route";
+  import { minimapColour } from "./minimap";
   import { paint } from "./paint";
   import type { Trace } from "./trace";
 
@@ -127,7 +128,8 @@
     let cancelled = false;
     placing = true;
 
-    void layout(elk, view, nodes, edges, grouped && view !== "modules").then((result) => {
+    const settling = layout(elk, view, nodes, edges, grouped && view !== "modules");
+    void settling.then((result) => {
       if (cancelled) {
         return;
       }
@@ -163,6 +165,22 @@
       });
       placed = [...boxes, ...placed];
       placing = false;
+    });
+    settling.catch((error: unknown) => {
+      // A rejected layout used to leave `placing` set for good, and `placing`
+      // is what holds the canvas at 35% opacity while ELK thinks. So the
+      // failure showed up not as an error but as a graph that had gone ghostly
+      // and stayed that way — "the canvas locked up", with nothing on screen
+      // saying why.
+      //
+      // Clearing it leaves the last layout that *did* work, fully visible and
+      // usable, which is the most this can honestly offer: a view that could
+      // not be laid out has no positions to draw.
+      if (cancelled) {
+        return;
+      }
+      placing = false;
+      console.error(`could not lay out the ${view} view`, error);
     });
 
     return () => {
@@ -236,10 +254,6 @@
     flowEdges = paintedEdges;
   });
 
-  function minimapColour(node: FlowNode): string {
-    const construct = (node.data as { node: Node }).node;
-    return `var(--${familyOf(construct.kind)})`;
-  }
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
