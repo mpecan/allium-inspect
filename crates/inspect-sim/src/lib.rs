@@ -24,7 +24,7 @@ pub mod truth;
 pub mod value;
 pub mod world;
 
-pub use apply::{Application, Applied, Effect};
+pub use apply::{Against, Application, Applied, Effect};
 pub use eval::{Env, Evaluation, Unresolved, eval};
 pub use seed::seed;
 pub use step::{

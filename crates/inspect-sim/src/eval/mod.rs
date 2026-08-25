@@ -33,7 +33,10 @@ mod collections;
 mod literals;
 mod ops;
 
-use std::collections::BTreeMap;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::LazyLock,
+};
 
 use allium_parser::ast::{CondBranch, Expr, Ident, QualifiedName};
 // Re-exported for `apply`, which walks the same tree to decide what a
@@ -46,7 +49,11 @@ use std::ops::Not;
 
 use ts_rs::TS;
 
-use crate::{truth::Truth, value::Value, world::World};
+use crate::{
+    truth::Truth,
+    value::{Instance, Value},
+    world::World,
+};
 
 /// A sub-expression the evaluator could not decide, and why.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -113,13 +120,53 @@ pub struct Env<'a> {
     pub bindings: BTreeMap<String, Value>,
     /// The module's spec text, so an undecided note can quote the source.
     pub source: &'a str,
+    /// What the spec computes rather than stores, by `inspect_model::derived_key`.
+    ///
+    /// Empty by default, which is the honest default: an environment nobody
+    /// gave the definitions to answers "nothing set it" rather than inventing
+    /// a value, the same as before any of this existed.
+    pub derived: &'a BTreeMap<String, Expr>,
+    /// The computed fields being computed right now.
+    ///
+    /// `is_stranded: active_devices.count = 0` reaches `active_devices`, which
+    /// reaches `devices`, and a spec is free to write a definition that comes
+    /// back to itself. Without this that is a stack overflow — a crash rather
+    /// than an answer, over a specification that is merely wrong.
+    resolving: BTreeSet<String>,
 }
+
+/// The empty set of definitions, for an environment given none.
+static NOTHING_DERIVED: LazyLock<BTreeMap<String, Expr>> = LazyLock::new(BTreeMap::new);
 
 impl<'a> Env<'a> {
     /// An environment over `world` with nothing bound.
     #[must_use]
     pub fn new(world: &'a World, module: &'a str, source: &'a str) -> Self {
-        Self { world, module, bindings: BTreeMap::new(), source }
+        Self {
+            world,
+            module,
+            bindings: BTreeMap::new(),
+            source,
+            derived: &NOTHING_DERIVED,
+            resolving: BTreeSet::new(),
+        }
+    }
+
+    /// The same environment, able to compute what the spec computes.
+    #[must_use]
+    pub fn deriving(mut self, derived: &'a BTreeMap<String, Expr>) -> Self {
+        self.derived = derived;
+        self
+    }
+
+    /// How `field` on `instance` is computed, when it is and we are not already
+    /// in the middle of computing it.
+    fn derivation(&self, instance: &Instance, field: &str) -> Option<(&'a Expr, String)> {
+        let key = inspect_model::derived_key(&instance.module, &instance.entity, field);
+        if self.resolving.contains(&key) {
+            return None;
+        }
+        self.derived.get(key.as_str()).map(|expr| (expr, key))
     }
 
     /// The same environment with `name` bound.
@@ -133,7 +180,28 @@ impl<'a> Env<'a> {
     fn scoped(&self, name: &str, value: Value) -> Env<'_> {
         let mut bindings = self.bindings.clone();
         bindings.insert(name.to_owned(), value);
-        Env { world: self.world, module: self.module, bindings, source: self.source }
+        Env {
+            world: self.world,
+            module: self.module,
+            bindings,
+            source: self.source,
+            derived: self.derived,
+            resolving: self.resolving.clone(),
+        }
+    }
+
+    /// The scope a computed field is computed in.
+    ///
+    /// `this` is the instance and its stored fields are visible bare, which is
+    /// what lets `devices where status = active` mean what it reads as. The key
+    /// is remembered so a definition that comes back to itself stops.
+    fn computing(&self, instance: &Instance, key: String) -> Env<'_> {
+        let mut scope = self.scoped("this", Value::Ref(instance.id.clone()));
+        for (field, value) in &instance.fields {
+            scope.bindings.insert(field.clone(), value.clone());
+        }
+        scope.resolving.insert(key);
+        scope
     }
 }
 
@@ -235,6 +303,30 @@ fn unsupported(what: &str, expr: &Expr, env: &Env<'_>) -> Evaluation {
     Evaluation::unknown(format!("{what} is not simulated"), expr, env.source)
 }
 
+/// One field of one instance, computed if the spec computes it rather than
+/// storing it.
+///
+/// The one implementation, called from the expression evaluator and from the
+/// journey walker both. It was two for about ten minutes, and in that time the
+/// second one forgot to put the instance's stored fields in scope — so a rule
+/// guarded by `not member.is_at_limit` refused while the assertion about
+/// `ada.is_at_limit` on the line above it said `false`. The tool contradicting
+/// itself about one field of one instance in one step is worse than either
+/// answer alone.
+#[must_use]
+pub fn field_of(instance: &Instance, field: &str, env: &Env<'_>) -> Evaluation {
+    // Stored wins. A `stipulate` writes to the instance, and a journey that
+    // says a value outright must not be overruled by a definition — that is
+    // the whole point of saying it.
+    if instance.fields.contains_key(field) {
+        return Evaluation::known(instance.field(field));
+    }
+    match env.derivation(instance, field) {
+        Some((definition, key)) => eval(definition, &env.computing(instance, key)),
+        None => Evaluation::known(instance.field(field)),
+    }
+}
+
 /// A bare name: a binding, an entity type, or a state.
 fn ident(ident: &Ident, env: &Env<'_>) -> Evaluation {
     let name = &ident.name;
@@ -253,6 +345,16 @@ fn ident(ident: &Ident, env: &Env<'_>) -> Evaluation {
     {
         return Evaluation::known(collection_of(&entity, env));
     }
+    // A computed field of whatever `this` is, named bare. `is_stranded:
+    // active_devices.count = 0` reads `active_devices` with nothing between,
+    // and the definition it needs is one level further down the same chain.
+    if let Some(Value::Ref(id)) = env.bindings.get("this")
+        && let Some(instance) = env.world.instance(id)
+        && let Some((definition, key)) = env.derivation(instance, name)
+    {
+        return eval(definition, &env.computing(instance, key));
+    }
+
     // Capitalised: a type that exists in the spec but has no instances. An
     // empty collection is the right answer — `exists Membership{...}` over a
     // world with no memberships is false, not undecided.
@@ -323,13 +425,13 @@ fn member(whole: &Expr, object: &Expr, field: &Ident, env: &Env<'_>) -> Evaluati
     match &base.value {
         Value::Ref(id) => match env.world.instance(id) {
             Some(instance) => {
-                let value = instance.field(field);
-                // A field nobody has set is undecided, and saying *which* field
-                // on which instance is the difference between a panel a reader
-                // can act on and one that says only "unknown". Derived values
-                // land here constantly: the spec computes them and this
-                // simulator does not.
-                if value.is_unknown() && !instance.fields.contains_key(field) {
+                let read = field_of(instance, field, env);
+                unresolved.extend(read.unresolved);
+                // A field nobody set and nobody computes is undecided, and
+                // saying *which* field on which instance is the difference
+                // between a panel a reader can act on and one that says only
+                // "unknown".
+                if read.value.is_unknown() && !instance.fields.contains_key(field) {
                     unresolved.push(Unresolved {
                         reason: format!("`{id}` has no `{field}` set"),
                         expression: span_of(whole)
@@ -338,7 +440,7 @@ fn member(whole: &Expr, object: &Expr, field: &Ident, env: &Env<'_>) -> Evaluati
                         span: span_of(whole),
                     });
                 }
-                Evaluation { value, unresolved }
+                Evaluation { value: read.value, unresolved }
             }
             None => Evaluation::unknown(format!("`{id}` is not in this world"), whole, env.source)
                 .carrying(unresolved),

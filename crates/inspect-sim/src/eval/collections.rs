@@ -191,9 +191,10 @@ pub(super) fn filtered(source: &Expr, condition: &Expr, env: &Env<'_>) -> Evalua
     let mut unresolved = base.unresolved.clone();
     let mut kept = Vec::new();
     for item in items {
-        // The element is bound as `this`, and its fields are in scope bare —
-        // `Membership{group: group}` and `where status = active` both read the
-        // element's own fields without naming it.
+        // The element's fields are in scope bare, so `where status = active`
+        // reads them without naming it. See `element_scope` for what `this`
+        // means in here, which is not the element when something outside
+        // already holds it.
         let scope = element_scope(env, item);
         let verdict = eval(condition, &scope);
         let holds = verdict.truth();
@@ -276,8 +277,29 @@ pub(super) fn quantified(
 }
 
 /// A scope in which `item`'s own fields are visible without naming it.
+///
+/// `this` is bound to the element **only when nothing else already holds it**,
+/// and that exception is the whole of a real reading rather than a defensive
+/// one. Inside an entity, `this` means the instance:
+///
+/// ```text
+/// entity Member {
+///     loans: Loan with member = this
+/// }
+/// ```
+///
+/// means *the loans whose member is this member*. Rebinding `this` to each
+/// candidate loan turns it into `member = <that same loan>`, which is false for
+/// every loan there could ever be — so the relationship came back empty, the
+/// count came back zero, and `is_at_limit` was confidently and quietly wrong.
+///
+/// Where there is no enclosing `this` — a filter inside an invariant, say —
+/// the element is the only thing it could mean, and it still means that.
 fn element_scope<'a>(env: &'a Env<'a>, item: &Value) -> Env<'a> {
-    let mut scope = env.scoped("this", item.clone());
+    let mut scope = match env.bindings.get("this") {
+        Some(enclosing) => env.scoped("this", enclosing.clone()),
+        None => env.scoped("this", item.clone()),
+    };
     if let Value::Ref(id) = item
         && let Some(instance) = env.world.instance(id)
     {

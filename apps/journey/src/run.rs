@@ -323,8 +323,8 @@ mod tests {
         // And both exit clean, because *undecided* is not a failure. This
         // binary used to fail on it while `allium-inspect --check --strict`
         // passed, which made a build gate depend on which of the two you ran.
-        // A real spec cannot decide a derived value, so a gate that failed
-        // there would fail on every journey that touches one.
+        // A real spec has fields nobody has stated, so a gate that failed
+        // there would fail on every journey that leaves one unsaid.
         assert_eq!(walk_code, CLEAN, "a world that could not settle it is not a refusal");
     }
 
@@ -391,14 +391,14 @@ mod tests {
 
     #[test]
     fn an_undecided_step_quotes_the_sub_expression_from_the_spec_text() {
-        // The only thing the spec *text* is carried for. "`Member#1` has no
-        // `is_at_limit` set" says what is missing; it does not say which clause
+        // The only thing the spec *text* is carried for. "`Copy#1` has no
+        // `status` set" says what is missing; it does not say which clause
         // asked, and a rule with four preconditions has four candidates. The
         // quote comes from the source, so without it the reader is told half.
         let (printed, _) = run_over(&walk_command(), "undecided.journey", false, false);
         let document: serde_json::Value = serde_json::from_str(&printed).expect("JSON");
         let message = document["diagnostics"][0]["message"].as_str().expect("a message");
-        assert!(message.contains("in `member.is_at_limit`"), "{message}");
+        assert!(message.contains("in `copy.status`"), "{message}");
     }
 
     #[test]

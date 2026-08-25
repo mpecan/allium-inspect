@@ -90,10 +90,23 @@ impl Applied {
 /// together through six recursive calls, and `bindings` in particular has to be
 /// carried *forward*: a creation names its instance, and the next clause reads
 /// that name.
+/// The specification a postcondition is applied against.
+///
+/// Four things that always travel together and never change during an
+/// application, grouped so the call site reads as *this spec, this world*
+/// rather than as six positional arguments of four shapes.
+#[derive(Clone, Copy)]
+pub struct Against<'a> {
+    pub spec: &'a SpecGraph,
+    pub module: &'a str,
+    pub source: &'a str,
+    /// What the spec computes, so a postcondition reading a derived value gets
+    /// the same answer a precondition would.
+    pub derived: &'a BTreeMap<String, Expr>,
+}
+
 pub struct Application<'a> {
-    spec: &'a SpecGraph,
-    module: &'a str,
-    source: &'a str,
+    against: Against<'a>,
     world: &'a mut World,
     bindings: BTreeMap<String, Value>,
 }
@@ -101,13 +114,11 @@ pub struct Application<'a> {
 impl<'a> Application<'a> {
     /// Apply `module`'s postconditions to `world`, starting from `bindings`.
     pub fn new(
-        spec: &'a SpecGraph,
-        module: &'a str,
-        source: &'a str,
+        against: Against<'a>,
         world: &'a mut World,
         bindings: BTreeMap<String, Value>,
     ) -> Self {
-        Self { spec, module, source, world, bindings }
+        Self { against, world, bindings }
     }
 
     /// Apply one `ensures` clause.
@@ -159,7 +170,7 @@ impl<'a> Application<'a> {
         match bare_name(function) {
             Some(trigger) => Applied::effect(Effect::Emitted {
                 trigger: trigger.to_owned(),
-                module: self.module.to_owned(),
+                module: self.against.module.to_owned(),
             }),
             None => self.unmodelled(function, "this call is neither a creation nor a trigger"),
         }
@@ -167,7 +178,7 @@ impl<'a> Application<'a> {
 
     /// `Entity.created(field: value, ...)`.
     fn creation(&mut self, entity: &str, args: &[CallArg]) -> Applied {
-        let home = self.declaring_module(entity).unwrap_or_else(|| self.module.to_owned());
+        let home = self.declaring_module(entity).unwrap_or_else(|| self.against.module.to_owned());
         let id = self.world.create(entity, &home);
         let mut applied =
             Applied::effect(Effect::Created { id: id.clone(), entity: entity.to_owned() });
@@ -348,7 +359,8 @@ impl<'a> Application<'a> {
     // --- helpers ---------------------------------------------------------
 
     fn evaluate(&self, node: &Expr) -> Evaluation {
-        let mut scope = Env::new(self.world, self.module, self.source);
+        let mut scope = Env::new(self.world, self.against.module, self.against.source)
+            .deriving(self.against.derived);
         scope.bindings.clone_from(&self.bindings);
         eval(node, &scope)
     }
@@ -356,7 +368,8 @@ impl<'a> Application<'a> {
     /// The module that declares `entity`, so a created instance knows where it
     /// is from even when the rule creating it lives elsewhere.
     fn declaring_module(&self, entity: &str) -> Option<String> {
-        self.spec
+        self.against
+            .spec
             .nodes
             .iter()
             .find(|node| node.kind == NodeKind::Entity && node.name == entity)
@@ -370,6 +383,7 @@ impl<'a> Application<'a> {
     /// state nothing in the lifecycle mentions.
     fn declared_state(&self, entity: &str, field: &str, name: &str) -> Option<Value> {
         let node = self
+            .against
             .spec
             .nodes
             .iter()
@@ -385,8 +399,11 @@ impl<'a> Application<'a> {
         field: &str,
     ) -> Option<&'a inspect_model::graph::TransitionGraph> {
         let instance = self.world.instance(id)?;
-        let node =
-            self.spec.node(&NodeId::new(&instance.module, NodeKind::Entity, &instance.entity))?;
+        let node = self.against.spec.node(&NodeId::new(
+            &instance.module,
+            NodeKind::Entity,
+            &instance.entity,
+        ))?;
         node.detail.as_entity()?.transitions_for(field)
     }
 
@@ -419,6 +436,7 @@ impl<'a> Application<'a> {
     /// The clause as the spec wrote it, on one line.
     fn describe(&self, node: &Expr) -> Option<String> {
         let span = span_of(node)?;
-        span.slice(self.source).map(|text| text.split_whitespace().collect::<Vec<_>>().join(" "))
+        span.slice(self.against.source)
+            .map(|text| text.split_whitespace().collect::<Vec<_>>().join(" "))
     }
 }

@@ -13,14 +13,29 @@
 use allium_parser::ast::{BlockItemKind, BlockKind, Decl, Expr, Module as Ast};
 
 use crate::{
-    NodeKind,
+    NodeKind, SpecGraph,
     graph::NodeId,
     program::{Program, RuleAst},
 };
 
-/// Add every rule and invariant `ast` declares to `program`.
-pub fn ingest(ast: &Ast, module: &str, program: &mut Program) {
+/// Add every rule, invariant and computed field `ast` declares to `program`.
+///
+/// `graph` is read, never written: it already holds this module's entities,
+/// because the model pass runs first, and it is the only thing that knows which
+/// of an entity's assignments are *computed* rather than declared. `status:
+/// draft | live` and `active: devices where status = live` are the same shape
+/// in the tree and different things entirely, and guessing between them by
+/// looking at the expression would mean re-deciding, worse, something allium
+/// has already decided.
+pub fn ingest(ast: &Ast, module: &str, graph: &SpecGraph, program: &mut Program) {
     for declaration in &ast.declarations {
+        if let Decl::Block(block) = declaration
+            && matches!(block.kind, BlockKind::Entity | BlockKind::Value)
+            && let Some(name) = &block.name
+        {
+            derived(block, module, &name.name, graph, program);
+        }
+
         match declaration {
             Decl::Block(block) if block.kind == BlockKind::Rule => {
                 let Some(name) = &block.name else { continue };
@@ -49,6 +64,40 @@ pub fn ingest(ast: &Ast, module: &str, program: &mut Program) {
                 }
             }
             _ => {}
+        }
+    }
+}
+
+/// The computed fields of one entity.
+///
+/// A relationship and a derived value are both recorded, because the simulator
+/// reaches them the same way: a field nobody wrote is answered by evaluating
+/// its definition. A *stored* field's assignment is its type, and evaluating
+/// that would turn "nobody set `expires_at`" into whatever `Timestamp` happens
+/// to evaluate to — a confident wrong answer in place of an honest unknown.
+fn derived(
+    block: &allium_parser::ast::BlockDecl,
+    module: &str,
+    entity: &str,
+    graph: &SpecGraph,
+    program: &mut Program,
+) {
+    let Some(detail) = graph
+        .nodes_of(NodeKind::Entity)
+        .chain(graph.nodes_of(NodeKind::Value))
+        .find(|node| node.module == module && node.name == entity)
+        .and_then(|node| node.detail.as_entity())
+    else {
+        return;
+    };
+
+    for item in &block.items {
+        // `ParamAssignment` — `safety_number_of(this)` — is deliberately not
+        // here. It takes arguments, so it is a function rather than a field,
+        // and nothing reads it by name.
+        let BlockItemKind::Assignment { name, value } = &item.kind else { continue };
+        if detail.field(&name.name).is_some_and(|field| field.derived || field.relationship) {
+            program.add_derived(module, entity, &name.name, value.clone());
         }
     }
 }
@@ -113,7 +162,12 @@ mod tests {
     /// below is what a person would actually write.
     fn program_of(source: &str) -> Program {
         let mut program = Program::new();
-        ingest(&allium_parser::parse(source).module, "lending", &mut program);
+        ingest(
+            &allium_parser::parse(source).module,
+            "lending",
+            &SpecGraph::new("test"),
+            &mut program,
+        );
         program
     }
 

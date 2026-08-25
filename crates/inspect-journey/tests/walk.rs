@@ -240,10 +240,41 @@ fn a_precondition_the_world_does_not_meet_is_refused_in_the_specs_own_words() {
 }
 
 #[test]
-fn a_derived_value_nobody_set_leaves_the_step_undecided() {
-    // `is_at_limit` is computed by the spec and not by this simulator. Left
-    // unset, the rule that reads it cannot be decided — and the journey says so
-    // rather than picking a side.
+fn a_field_nobody_stated_leaves_the_step_undecided() {
+    // The case that stays undecided however good the simulator gets: somebody
+    // has to say what `Copy.status` is, and this journey does not. The rule
+    // that reads it cannot be decided, and the journey says so rather than
+    // picking a side.
+    //
+    // This used to turn on `is_at_limit` — until the simulator learned to
+    // compute derived values, at which point the case stopped being one.
+    let result = walked(
+        "journey J {
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+    1. she borrows it, and nobody knows whether she may
+        ada does MemberBorrows(ada, copy) on MemberShelf
+}",
+    );
+    let act = &result.steps[0].outcomes[0];
+    assert_eq!(act.verdict, Verdict::Undecided, "{act:?}");
+    assert!(act.detail.as_ref().expect("a reason").contains("status"), "{act:?}");
+}
+
+/// The other half, and the reason the case above had to move: a value the spec
+/// *computes* is now computed, all the way down the chain.
+///
+///     loans:           Loan with member = this
+///     open_loans:      loans where status = open
+///     open_loan_count: open_loans.count
+///     is_at_limit:     open_loan_count >= config.loan_limit
+///
+/// Nobody sets any of them, and the rule guarded by `not member.is_at_limit`
+/// still decides — then the count moves when the borrow creates the loan,
+/// which is the difference between computing a value and reading a constant.
+#[test]
+fn a_value_the_spec_computes_is_computed() {
     let result = walked(
         "journey J {
     cast:
@@ -251,12 +282,50 @@ fn a_derived_value_nobody_set_leaves_the_step_undecided() {
         copy: catalogue/Copy
     given:
         copy.status = available
-    1. she borrows it, and nobody knows whether she may
+    1. she has nothing out
+        then ada.open_loan_count = 0
+        then ada.is_at_limit = false
+    2. and borrows one
         ada does MemberBorrows(ada, copy) on MemberShelf
+        then BorrowCopy fires
+        then ada.open_loan_count = 1
 }",
     );
-    let act = &result.steps[0].outcomes[0];
-    assert_eq!(act.verdict, Verdict::Undecided, "{act:?}");
+
+    let bad: Vec<_> = outcomes(&result)
+        .into_iter()
+        .filter(|(verdict, ..)| *verdict != Verdict::Specified)
+        .collect();
+    assert!(bad.is_empty(), "{bad:#?}");
+}
+
+/// And the other direction, so an empty collection passing for a computed
+/// answer is not what the test above is really asserting.
+#[test]
+fn a_computed_value_reflects_what_the_world_holds() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+    given:
+        copy.status = available
+    1. she is already at the cap
+        stipulate ada.open_loan_count = 5
+        then ada.is_at_limit = true
+    2. so she cannot take another
+        ada does MemberBorrows(ada, copy) on MemberShelf
+        then BorrowCopy does not fire
+}",
+    );
+
+    let first = &result.steps[0];
+    assert_eq!(first.verdict(), Verdict::Specified, "{:#?}", outcomes(&result));
+
+    // The rule refuses, in the spec's own words, rather than coming back
+    // undecided — which is what it did before any of this.
+    let act = &result.steps[1].outcomes[0];
+    assert_eq!(act.verdict, Verdict::Refused, "{act:?}");
     assert!(act.detail.as_ref().expect("a reason").contains("is_at_limit"), "{act:?}");
 }
 
@@ -1093,9 +1162,9 @@ fn every_step_carries_the_configuration_in_force() {
 #[test]
 fn an_undecided_rule_names_the_sub_expression_that_could_not_be_settled() {
     // Two halves of one answer, and only one of them is about the world.
-    // "`Member#1` has no `is_at_limit` set" says what is missing; it does not
-    // say which clause asked, and `BorrowCopy` has two preconditions. The quote
-    // is sliced out of the spec text, which is why the walker is handed it —
+    // "`Copy#1` has no `status` set" says what is missing; it does not say
+    // which clause asked, and `BorrowCopy` has two preconditions. The quote is
+    // sliced out of the spec text, which is why the walker is handed it —
     // without it the reader is told half of what happened.
     let walk = walked(UNDECIDED);
     let act = outcomes(&walk)
@@ -1103,8 +1172,8 @@ fn an_undecided_rule_names_the_sub_expression_that_could_not_be_settled() {
         .find(|(_, about, _)| about.contains("does MemberBorrows"))
         .expect("the act");
     let detail = act.2.expect("a detail");
-    assert!(detail.contains("has no `is_at_limit` set"), "{detail}");
-    assert!(detail.contains("in `member.is_at_limit`"), "and which clause asked: {detail}");
+    assert!(detail.contains("has no `status` set"), "{detail}");
+    assert!(detail.contains("in `copy.status`"), "and which clause asked: {detail}");
 }
 
 // --- naming a moment -----------------------------------------------------

@@ -8,6 +8,13 @@
 
 #![allow(clippy::panic, clippy::expect_used, clippy::unwrap_used)]
 
+/// The definitions an `Application` is given when the case is not about them.
+///
+/// Every one of these is about applying a postcondition, and a postcondition
+/// that read a computed field would be a different test.
+static NOTHING: std::sync::LazyLock<std::collections::BTreeMap<String, allium_parser::ast::Expr>> =
+    std::sync::LazyLock::new(std::collections::BTreeMap::new);
+
 use std::collections::BTreeMap;
 
 use allium_parser::{
@@ -18,7 +25,12 @@ use inspect_model::{
     Node, NodeDetail, NodeKind, SpecGraph,
     graph::{EntityDetail, EntityField, EntityKind, TransitionEdge, TransitionGraph},
 };
-use inspect_sim::{Effect, Value, apply::Application, value::EntityId, world::World};
+use inspect_sim::{
+    Effect, Value,
+    apply::{Against, Application},
+    value::EntityId,
+    world::World,
+};
 
 mod common;
 use common::*;
@@ -81,7 +93,11 @@ fn apply(clause: &Expr, bindings: &[(&str, Value)]) -> (Vec<Effect>, Vec<String>
         bindings.iter().map(|(name, value)| ((*name).to_owned(), value.clone())).collect();
 
     let applied = {
-        let mut application = Application::new(&graph, "lending", "", &mut world, scope);
+        let mut application = Application::new(
+            Against { spec: &graph, module: "lending", source: "", derived: &NOTHING },
+            &mut world,
+            scope,
+        );
         application.apply(clause)
     };
     let reasons = applied.unresolved.into_iter().map(|note| note.reason).collect();
@@ -130,7 +146,11 @@ fn a_creation_binds_its_own_name_for_the_clause_after_it() {
     // `ensures: CopyBorrowed(loan: loan)` on the next line reads this binding.
     let graph = spec();
     let (mut world, _) = world();
-    let mut application = Application::new(&graph, "lending", "", &mut world, BTreeMap::new());
+    let mut application = Application::new(
+        Against { spec: &graph, module: "lending", source: "", derived: &NOTHING },
+        &mut world,
+        BTreeMap::new(),
+    );
     application.apply(&creation("Loan", vec![]));
     let bindings = application.into_bindings();
     assert_eq!(bindings.get("loan"), Some(&Value::Ref(EntityId::new("Loan", 1))));
@@ -194,7 +214,11 @@ fn a_refusal_out_of_a_terminal_state_says_it_is_terminal() {
 
     let scope = BTreeMap::from([("copy".to_owned(), Value::Ref(copy))]);
     let applied = {
-        let mut application = Application::new(&graph, "lending", "", &mut world, scope);
+        let mut application = Application::new(
+            Against { spec: &graph, module: "lending", source: "", derived: &NOTHING },
+            &mut world,
+            scope,
+        );
         application.apply(&assign(field(ident("copy"), "status"), ident("available")))
     };
     let Effect::Refused { reason, .. } = &applied.effects[0] else { panic!("expected a refusal") };
@@ -224,7 +248,11 @@ fn a_field_with_no_lifecycle_takes_any_value() {
 
     let scope = BTreeMap::from([("loan".to_owned(), Value::Ref(loan.clone()))]);
     let applied = {
-        let mut application = Application::new(&graph, "lending", "", &mut world, scope);
+        let mut application = Application::new(
+            Against { spec: &graph, module: "lending", source: "", derived: &NOTHING },
+            &mut world,
+            scope,
+        );
         application.apply(&assign(field(ident("loan"), "status"), ident("returned")))
     };
     assert!(matches!(applied.effects[0], Effect::Assigned { .. }));
@@ -312,7 +340,11 @@ fn an_iteration_applies_its_body_once_per_element() {
 
     let clause = iteration("c", ident("Copy"), emission("CopySeen"));
     let applied = {
-        let mut application = Application::new(&graph, "lending", "", &mut world, BTreeMap::new());
+        let mut application = Application::new(
+            Against { spec: &graph, module: "lending", source: "", derived: &NOTHING },
+            &mut world,
+            BTreeMap::new(),
+        );
         application.apply(&clause)
     };
     assert_eq!(applied.effects.len(), 3, "one per copy in the world");
@@ -328,7 +360,11 @@ fn an_iteration_restores_the_binding_it_shadowed() {
 
     let clause = iteration("c", ident("Copy"), emission("Seen"));
     let bindings = {
-        let mut application = Application::new(&graph, "lending", "", &mut world, scope);
+        let mut application = Application::new(
+            Against { spec: &graph, module: "lending", source: "", derived: &NOTHING },
+            &mut world,
+            scope,
+        );
         application.apply(&clause);
         application.into_bindings()
     };
@@ -410,7 +446,11 @@ fn an_instance_of_a_type_the_spec_does_not_declare_falls_back_to_the_rule() {
 fn apply_over(clause: &Expr, source: &str) -> Vec<Effect> {
     let graph = spec();
     let (mut world, _) = world();
-    let mut application = Application::new(&graph, "lending", source, &mut world, BTreeMap::new());
+    let mut application = Application::new(
+        Against { spec: &graph, module: "lending", source, derived: &NOTHING },
+        &mut world,
+        BTreeMap::new(),
+    );
     application.apply(clause).effects
 }
 

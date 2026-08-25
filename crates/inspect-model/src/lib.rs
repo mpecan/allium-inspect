@@ -34,6 +34,6 @@ pub use graph::{
 pub use ingest::{
     FileReader, IngestError, Ingestion, MemoryReader, SourceReader, ingest, module_name,
 };
-pub use program::{Program, RuleAst};
+pub use program::{Program, RuleAst, derived_key};
 pub use runner::{AlliumRunner, Command, MapRunner, ProcessRunner, RunError};
 pub use span::{LineIndex, Position, Span};

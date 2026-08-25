@@ -13,7 +13,11 @@
 //! devices that do not have it yet.
 
 use inspect_model::{NodeKind, SpecGraph};
-use inspect_sim::{Value, value::EntityId};
+use inspect_sim::{
+    Value,
+    eval::{Env, field_of},
+    value::{EntityId, Instance},
+};
 
 use crate::{
     Outcome,
@@ -196,9 +200,24 @@ impl Walker<'_> {
             }
             let Value::Ref(id) = &current else { return Value::Unknown };
             let Some(instance) = self.world.instance(id) else { return Value::Unknown };
-            current = instance.field(segment);
+            current = self.field(instance, segment);
         }
         current
+    }
+
+    /// One field of one instance, computed if the spec computes it.
+    ///
+    /// Through the evaluator rather than off the instance, so a journey
+    /// asserting `then ada.is_at_limit = true` gets the same answer the rule
+    /// guarded by `not member.is_at_limit` got. Reading it straight off the
+    /// world left the two disagreeing about one field of one instance in one
+    /// step — the rule deciding and the assertion above it saying unknown,
+    /// which reads as a bug in whichever the reader trusts less.
+    fn field(&self, instance: &Instance, name: &str) -> Value {
+        let source = self.sources.get(&instance.module).map_or("", String::as_str);
+        let env =
+            Env::new(&self.world, &instance.module, source).deriving(self.program.derivations());
+        field_of(instance, name, &env).value
     }
 }
 

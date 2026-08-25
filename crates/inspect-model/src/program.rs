@@ -79,6 +79,24 @@ pub struct Program {
     rules: BTreeMap<String, RuleAst>,
     /// Invariant node id to its condition.
     invariants: BTreeMap<String, Expr>,
+    /// What a spec computes rather than stores, by [`derived_key`].
+    ///
+    /// Derived values and relationships together, because the simulator does
+    /// the same thing with both: a field nobody wrote is answered by evaluating
+    /// its definition. `devices: Device with identity = this` and
+    /// `active_devices: devices where status = active` differ in what they say
+    /// and not in how they are reached.
+    derived: BTreeMap<String, Expr>,
+}
+
+/// Where a computed field is filed.
+///
+/// Module-qualified because two modules may both declare a `Message`, and the
+/// instance carries the module that made it. One home for the format so the
+/// crate that writes it and the crate that reads it cannot spell it differently.
+#[must_use]
+pub fn derived_key(module: &str, entity: &str, field: &str) -> String {
+    format!("{module}::{entity}.{field}")
 }
 
 impl Program {
@@ -91,6 +109,23 @@ impl Program {
     /// Record `ast` as the clauses of the rule with `id`.
     pub fn add_rule(&mut self, id: impl Into<String>, ast: RuleAst) {
         self.rules.insert(id.into(), ast);
+    }
+
+    /// Record `expr` as how `field` on `entity` is computed.
+    pub fn add_derived(&mut self, module: &str, entity: &str, field: &str, expr: Expr) {
+        self.derived.insert(derived_key(module, entity, field), expr);
+    }
+
+    /// Every computed field, for the evaluator.
+    #[must_use]
+    pub fn derivations(&self) -> &BTreeMap<String, Expr> {
+        &self.derived
+    }
+
+    /// How many fields a spec computes rather than stores.
+    #[must_use]
+    pub fn derived_count(&self) -> usize {
+        self.derived.len()
     }
 
     /// Record `condition` as the body of the invariant with `id`.

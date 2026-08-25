@@ -1,17 +1,23 @@
 -- A journey the spec cannot decide, which is a different answer from one it
--- refuses. `Member.is_at_limit` is derived from a count of loans, and nothing
--- here has set it.
+-- refuses.
+--
+-- It used to turn on `Member.is_at_limit`, a *derived* value — and stopped
+-- being undecided the day the simulator learned to compute those, which is the
+-- tool getting better and a fixture going stale in the same commit. What is
+-- left is the case that will never stop being undecided: a field somebody has
+-- to state and nobody stated. `Copy.status` is stored, `BorrowCopy` requires it
+-- to be `available`, and this journey deliberately never says what it is.
 
-journey NobodySaidWhetherSheIsAtHerLimit {
-    goal: The limit is a derived value nothing set, so whether she may borrow
-          at all is a question this tool cannot answer.
+journey NobodySaidWhetherTheCopyIsOnTheShelf {
+    goal: Whether she may borrow it turns on the copy's status, and nothing
+          here has said what that is. The honest answer is that nobody knows.
 
     cast:
         ada:  Member
         copy: catalogue/Copy
 
     given:
-        copy.status = available
+        ada.open_loan_count = 0
 
     1. she tries to borrow it
         ada does MemberBorrows(ada, copy) on MemberShelf

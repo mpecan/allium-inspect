@@ -231,14 +231,17 @@ fn borrowing_a_copy_that_is_out_is_refused_by_the_precondition_that_says_so() {
 }
 
 #[test]
-fn a_precondition_over_an_unset_derived_value_is_undecided() {
-    // `member.is_at_limit` is derived from `open_loan_count >= config.loan_limit`
-    // and this simulator does not compute derived fields. Undecided is the
-    // honest answer; treating it as false would fire a rule on a precondition
-    // nothing checked.
+fn a_precondition_over_a_field_nobody_stated_is_undecided() {
+    // `copy.status` is stored: somebody has to say what it is, and here nobody
+    // has. Undecided is the honest answer; treating it as false would refuse a
+    // rule on a precondition nothing checked, and treating it as true would
+    // fire one.
+    //
+    // This used to remove `is_at_limit` instead — until the simulator learned
+    // to compute derived values, at which point the case stopped being one.
     let (graph, program, sources) = library_spec();
     let (mut world, copy, member) = library_world();
-    world.entities.get_mut(&member).expect("the member").fields.remove("is_at_limit");
+    world.entities.get_mut(&copy).expect("the copy").fields.remove("status");
 
     let event = Event::new("MemberBorrows", "lending")
         .with("member", Value::Ref(member))
@@ -247,16 +250,28 @@ fn a_precondition_over_an_unset_derived_value_is_undecided() {
 
     let borrow_copy = outcome_for("BorrowCopy", &outcome);
     assert_eq!(borrow_copy.disposition, Disposition::Undecided);
-    assert_eq!(borrow_copy.requires[1].truth, Truth::Unknown);
+    assert_eq!(borrow_copy.requires[0].truth, Truth::Unknown);
     assert!(borrow_copy.effects.is_empty(), "an undecided rule changes nothing");
     assert!(outcome.has_unknowns());
 }
 
+/// The other half, and the reason the case above had to move.
+///
+/// `is_at_limit` is computed, and so is everything under it:
+///
+///     loans:           Loan with member = this
+///     open_loans:      loans where status = open
+///     open_loan_count: open_loans.count
+///     is_at_limit:     open_loan_count >= config.loan_limit
+///
+/// With none of the four stored, `not member.is_at_limit` still decides.
 #[test]
-fn an_undecided_rule_says_which_expression_it_could_not_settle() {
+fn a_precondition_over_a_value_the_spec_computes_is_decided() {
     let (graph, program, sources) = library_spec();
     let (mut world, copy, member) = library_world();
-    world.entities.get_mut(&member).expect("the member").fields.remove("is_at_limit");
+    for field in ["is_at_limit", "open_loan_count"] {
+        world.entities.get_mut(&member).expect("the member").fields.remove(field);
+    }
 
     let event = Event::new("MemberBorrows", "lending")
         .with("member", Value::Ref(member))
@@ -264,7 +279,49 @@ fn an_undecided_rule_says_which_expression_it_could_not_settle() {
     let outcome = step(&graph, &program, &sources, &world, &event);
 
     let borrow_copy = outcome_for("BorrowCopy", &outcome);
-    let notes = &borrow_copy.requires[1].unresolved;
+    assert_eq!(borrow_copy.requires[1].truth, Truth::True, "{:#?}", borrow_copy.requires);
+    assert_eq!(borrow_copy.disposition, Disposition::Fired);
+}
+
+/// And it reflects the world rather than always answering empty: five open
+/// loans put her at the cap, computed from the loans themselves.
+#[test]
+fn a_computed_value_counts_what_is_actually_there() {
+    let (graph, program, sources) = library_spec();
+    let (mut world, copy, member) = library_world();
+    for field in ["is_at_limit", "open_loan_count"] {
+        world.entities.get_mut(&member).expect("the member").fields.remove(field);
+    }
+    for _ in 0..5 {
+        let loan = world.create("Loan", "lending");
+        world.set_field(&loan, "member", Value::Ref(member.clone()));
+        world.set_field(&loan, "copy", Value::Ref(copy.clone()));
+        world.set_field(&loan, "status", Value::Enum("open".to_owned()));
+    }
+
+    let event = Event::new("MemberBorrows", "lending")
+        .with("member", Value::Ref(member))
+        .with("copy", Value::Ref(copy));
+    let outcome = step(&graph, &program, &sources, &world, &event);
+
+    let borrow_copy = outcome_for("BorrowCopy", &outcome);
+    assert_eq!(borrow_copy.requires[1].truth, Truth::False, "{:#?}", borrow_copy.requires);
+    assert_eq!(borrow_copy.disposition, Disposition::Refused);
+}
+
+#[test]
+fn an_undecided_rule_says_which_expression_it_could_not_settle() {
+    let (graph, program, sources) = library_spec();
+    let (mut world, copy, member) = library_world();
+    world.entities.get_mut(&copy).expect("the copy").fields.remove("status");
+
+    let event = Event::new("MemberBorrows", "lending")
+        .with("member", Value::Ref(member))
+        .with("copy", Value::Ref(copy));
+    let outcome = step(&graph, &program, &sources, &world, &event);
+
+    let borrow_copy = outcome_for("BorrowCopy", &outcome);
+    let notes = &borrow_copy.requires[0].unresolved;
     assert!(!notes.is_empty(), "an unknown with no reason is indistinguishable from a bug");
     assert!(notes[0].span.is_some(), "and it points at the source");
 }

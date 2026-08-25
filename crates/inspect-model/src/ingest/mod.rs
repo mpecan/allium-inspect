@@ -188,7 +188,7 @@ pub fn ingest<R: AlliumRunner, S: SourceReader>(
         // The trees first, straight off allium's typed module: the graph pass
         // below reads them back for the write-edges rather than parsing the
         // same clauses a second time out of JSON.
-        clauses::ingest(&parsed.module, &module, &mut into.program);
+        clauses::ingest(&parsed.module, &module, &into.graph, &mut into.program);
 
         let ast = ast::document(&parsed, &source, &file)
             .map_err(|source| IngestError::Ast { path: path.clone(), source })?;

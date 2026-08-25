@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
+    apply::Against,
     apply::{Application, Effect},
     eval::{Env, Unresolved, eval},
     truth::Truth,
@@ -248,7 +249,7 @@ fn run_rule(
             .map(|clause| clause.text.clone())
             .unwrap_or_default();
         let evaluated = {
-            let mut scope = Env::new(world, module, source);
+            let mut scope = Env::new(world, module, source).deriving(program.derivations());
             scope.bindings.clone_from(&bindings);
             eval(clause, &scope)
         };
@@ -273,7 +274,11 @@ fn run_rule(
 
     let mut effects = Vec::new();
     if disposition == Disposition::Fired {
-        let mut application = Application::new(spec, module, source, world, bindings);
+        let mut application = Application::new(
+            Against { spec, module, source, derived: program.derivations() },
+            world,
+            bindings,
+        );
         for clause in &ast.ensures {
             let applied = application.apply(clause);
             effects.extend(applied.effects);
@@ -303,7 +308,7 @@ fn check_invariants(
         .filter_map(|node| {
             let condition = program.invariant(node.id.as_str())?;
             let source = sources.get(&node.module).map(String::as_str).unwrap_or_default();
-            let scope = Env::new(world, &node.module, source);
+            let scope = Env::new(world, &node.module, source).deriving(program.derivations());
             let evaluated = eval(condition, &scope);
             Some(InvariantVerdict {
                 id: node.id.as_str().to_owned(),
@@ -353,7 +358,7 @@ pub fn enabled(
         let mut undecided = Vec::new();
 
         for instance in world.instances_of(entity) {
-            let mut scope = Env::new(world, &node.module, source);
+            let mut scope = Env::new(world, &node.module, source).deriving(program.derivations());
             scope.bindings.insert(binding.to_owned(), Value::Ref(instance.id.clone()));
             scope.bindings.insert("this".to_owned(), Value::Ref(instance.id.clone()));
             // The entity's own name too. `when: copy: Copy.status = lost` reads
