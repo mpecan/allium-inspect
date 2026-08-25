@@ -19,7 +19,7 @@ use ts_rs::TS;
 use inspect_model::{NodeKind, Program, SpecGraph};
 use inspect_sim::{
     Value,
-    step::Sources,
+    step::{Sources, StepOutcome},
     value::EntityId,
     world::{Answer, Event, World},
 };
@@ -328,9 +328,11 @@ impl Walker<'_> {
     fn walk_clause(&mut self, clause: &Clause) -> Outcome {
         let about = about(clause);
         match clause {
-            Clause::Does { trigger, arguments, creating, line, .. } => {
-                self.act(&Act { trigger, arguments, creating: creating.as_ref() }, *line, about)
-            }
+            Clause::Does { trigger, arguments, creating, negated, line, .. } => self.act(
+                &Act { trigger, arguments, creating: creating.as_ref(), negated: *negated },
+                *line,
+                about,
+            ),
             Clause::After { duration, line, .. } => self.advance(duration, *line, about),
             Clause::Then { assertion, line } => self.assert(assertion, *line, about),
             Clause::Sees { actor, subject, surface, context, negated, line } => self.observe(
@@ -386,7 +388,7 @@ impl Walker<'_> {
 
     /// Fire an act and keep what it caught.
     fn act(&mut self, act: &Act<'_>, line: usize, about: String) -> Outcome {
-        let Act { trigger, arguments, creating } = *act;
+        let Act { trigger, arguments, creating, negated } = *act;
         let module = trigger_module(self.spec, trigger);
 
         // Positional, matched against the trigger's declared parameters — which
@@ -402,6 +404,19 @@ impl Walker<'_> {
         self.fired.clear();
         self.undecided.clear();
         let outcome = self.fire(&event);
+
+        // `bruno cannot do MemberAsksToChat(…)`: the journey asserting a
+        // refusal it *wants*, which without this reads as `refused` — the
+        // right verdict about the spec and the wrong one about the journey.
+        //
+        // Fired anyway rather than asked hypothetically, and whatever happened
+        // is kept. If the act the journey says is impossible turns out to be
+        // possible, the world where it happened is the world the later steps
+        // are now in, and hiding that would be the tool deciding which of the
+        // two the reader would rather believe.
+        if negated {
+            return self.blocked(&outcome, line, about);
+        }
 
         if let Some(caught) = creating {
             let bare = caught.type_expr.rsplit('/').next().unwrap_or(&caught.type_expr);
@@ -445,6 +460,31 @@ impl Walker<'_> {
         }
 
         Outcome { line, verdict: verdict_of(&outcome), about, detail: refusal(&outcome) }
+    }
+
+    /// What a `cannot do` came to: the verdicts, mirrored.
+    ///
+    /// Refused is what the journey asked for, so it is satisfied and says what
+    /// blocked it — a reader wants to know *which* precondition held the line,
+    /// because that is the sentence the block is made of.
+    ///
+    /// Undecided stays undecided, never a polite yes. A refusal that came back
+    /// green because nothing could work out whether the act goes through is
+    /// the same failure as a `cannot see` that passed unchecked, and this
+    /// clause exists for exactly the cases somebody is relying on.
+    fn blocked(&self, outcome: &StepOutcome, line: usize, about: String) -> Outcome {
+        let (verdict, detail) = match verdict_of(outcome) {
+            Verdict::Refused => (Verdict::Specified, refusal(outcome)),
+            Verdict::Specified => (
+                Verdict::Refused,
+                Some(format!(
+                    "`{}` went through",
+                    self.fired.first().map_or("the act", String::as_str)
+                )),
+            ),
+            other => (other, refusal(outcome)),
+        };
+        Outcome { line, verdict, about, detail }
     }
 
     /// The trigger's parameters, in the order the spec declares them.
@@ -512,6 +552,8 @@ struct Act<'a> {
     trigger: &'a str,
     arguments: &'a [Term],
     creating: Option<&'a crate::journey::Cast>,
+    /// Whether the journey said this *cannot* happen.
+    negated: bool,
 }
 
 /// Whether this rule has already run for this instance.
@@ -541,9 +583,10 @@ fn trigger_module(spec: &SpecGraph, trigger: &str) -> String {
 /// The line, as its author wrote it.
 fn about(clause: &Clause) -> String {
     match clause {
-        Clause::Does { actor, trigger, arguments, surface, .. } => {
+        Clause::Does { actor, trigger, arguments, surface, negated, .. } => {
             let args: Vec<String> = arguments.iter().map(Term::as_written).collect();
-            format!("{actor} does {trigger}({}) on {surface}", args.join(", "))
+            let verb = if *negated { "cannot do" } else { "does" };
+            format!("{actor} {verb} {trigger}({}) on {surface}", args.join(", "))
         }
         Clause::After { text, .. } => format!("after {text}"),
         Clause::Then { assertion, .. } => format!("then {}", written(assertion)),

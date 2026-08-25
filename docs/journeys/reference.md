@@ -154,6 +154,35 @@ ada does MemberBorrows(ada, copy) on MemberShelf
 `loan` is then a name like any cast member, usable by every clause after it —
 including as the actor of a later step.
 
+**An act runs everything it sets off.** A rule that emits a trigger wakes the
+rules waiting on that trigger, and those wake the next — so `creating` can name
+what a rule two hops away made, and `then <Rule> fires` can ask about it. The
+Simulate view in the browser stops at the first rule and offers you the emission
+to follow, because there a person is picking. A journey has already picked.
+
+### `cannot do` — the spec refuses, and that is the point
+
+```
+ada cannot do MemberBorrows(ada, copy) on MemberShelf
+```
+
+The mirror of `cannot see`. A step where a block *works* is a step where the act
+is refused — and written as `does` it reports `refused`, which is the correct
+verdict about the specification and the wrong one about the journey. Correct,
+and shaped exactly like a step that is simply wrong.
+
+Satisfied when the spec refuses, and it says which precondition held the line.
+**Refused when the act goes through**, which is the whole reason this is a
+clause and not a comment. Undecided stays undecided: a refusal that came back
+green because nothing could work out whether the act happens is the same failure
+as a `cannot see` that passed unchecked.
+
+It takes no `creating` — an act the spec refuses makes nothing to name.
+
+`then <Rule> does not fire` is close and does not do this: it sits under a `does`
+that has already been marked refused, so the step's own verdict still reads as a
+failure.
+
 ### `after` — time passes
 
 ```

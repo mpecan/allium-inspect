@@ -160,6 +160,42 @@ fn seeing_names_one_value_on_one_surface() {
     assert!(!negated);
 }
 
+/// `cannot do`, the mirror of `cannot see`. A journey has no other way to say
+/// that a block working is the point of the step.
+#[test]
+fn an_act_can_be_written_as_one_that_cannot_happen() {
+    let journeys = parse(
+        "journey J {\n    1. he cannot ask again\n        bruno cannot do \
+         MemberAsksToChat(bruno, ada) on GroupMembers\n}\n",
+    )
+    .expect("parses");
+    let Clause::Does { actor, trigger, negated, .. } = &journeys[0].steps[0].clauses[0] else {
+        panic!("expected an act");
+    };
+    assert_eq!((actor.as_str(), trigger.as_str(), *negated), ("bruno", "MemberAsksToChat", true));
+}
+
+#[test]
+fn an_ordinary_act_is_not_negated() {
+    let Clause::Does { negated, .. } = &first().steps[0].clauses[0] else {
+        panic!("expected an act");
+    };
+    assert!(!negated);
+}
+
+/// An act the spec refuses makes nothing, so there is nothing to catch — and a
+/// name bound to whatever happened to be created anyway would be the worst of
+/// both.
+#[test]
+fn an_act_that_cannot_happen_cannot_catch_anything() {
+    let error = parse(
+        "journey J {\n    1. he cannot\n        bruno cannot do Ask(bruno) on S creating \
+         it: Thing\n}\n",
+    )
+    .expect_err("creates nothing");
+    assert!(error.message.contains("creates nothing to name"), "{error:?}");
+}
+
 /// `bruno sees proposal.decision on GroupMembers in room` — which instance of
 /// the surface's context he is at. Split off the *tail*, because `in` is a
 /// word a subject may contain and a surface name is one word.

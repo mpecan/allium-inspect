@@ -123,7 +123,7 @@ impl Names {
 fn check_step(step: &Step, graph: &SpecGraph, known: &mut Names, notes: &mut Vec<Note>) {
     for clause in &step.clauses {
         match clause {
-            Clause::Does { actor, trigger, arguments, surface, creating, line } => {
+            Clause::Does { actor, trigger, arguments, surface, creating, line, .. } => {
                 check_actor(actor, *line, known, notes);
                 check_act(trigger, surface, *line, graph, notes);
                 check_arity(trigger, arguments.len(), *line, graph, notes);

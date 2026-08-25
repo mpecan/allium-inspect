@@ -597,6 +597,95 @@ fn a_state_no_enumeration_declares_is_still_unknown() {
     assert_eq!(seen.verdict, Verdict::Refused, "{seen:?}");
 }
 
+/// A journey asserting a refusal it *wants*.
+///
+/// `BorrowCopy` requires the copy to be available. A journey about a copy
+/// somebody already has is a journey about the block working — and written as
+/// `does`, the step came back `refused`, which is the right verdict about the
+/// spec and the wrong one about the journey. Correct, and indistinguishable
+/// from a step that is simply wrong.
+#[test]
+fn an_act_the_journey_says_cannot_happen_is_satisfied_when_it_does_not() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+    given:
+        copy.status = lost
+    1. she cannot borrow what is already gone
+        ada cannot do MemberBorrows(ada, copy) on MemberShelf
+}",
+    );
+    let seen = &result.steps[0].outcomes[0];
+    assert_eq!(seen.verdict, Verdict::Specified, "{seen:?}");
+    // And which precondition held the line, because that is the sentence the
+    // block is made of.
+    assert!(
+        seen.detail.as_deref().is_some_and(|why| why.contains("copy.status = available")),
+        "{seen:?}"
+    );
+}
+
+/// And the other direction, which is the whole reason it is not a comment.
+#[test]
+fn an_act_the_journey_says_cannot_happen_and_does_is_refused() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+    given:
+        copy.status = available
+    1. she cannot borrow a copy that is sitting right there
+        ada cannot do MemberBorrows(ada, copy) on MemberShelf
+}",
+    );
+    let seen = &result.steps[0].outcomes[0];
+    assert_eq!(seen.verdict, Verdict::Refused, "{seen:?}");
+    assert!(seen.detail.as_deref().is_some_and(|why| why.contains("went through")), "{seen:?}");
+}
+
+/// Undecided stays undecided, never a polite yes. A refusal that came back
+/// green because nothing could work out whether the act goes through is the
+/// same failure as a `cannot see` that passed unchecked — and this clause
+/// exists for exactly the cases somebody is relying on.
+#[test]
+fn an_act_nobody_could_decide_is_not_a_refusal_that_held() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+    1. she cannot borrow a copy nobody has described
+        ada cannot do MemberBorrows(ada, copy) on MemberShelf
+}",
+    );
+    let seen = &result.steps[0].outcomes[0];
+    assert_eq!(seen.verdict, Verdict::Undecided, "{seen:?}");
+}
+
+/// It reads back as it was written. A report saying `does` under a step about
+/// something not happening would be the tool paraphrasing the journey.
+#[test]
+fn a_refusal_reads_back_the_way_it_was_written() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+    given:
+        copy.status = lost
+    1. she cannot
+        ada cannot do MemberBorrows(ada, copy) on MemberShelf
+}",
+    );
+    assert_eq!(
+        result.steps[0].outcomes[0].about,
+        "ada cannot do MemberBorrows(ada, copy) on MemberShelf"
+    );
+}
+
 /// A rule's own `let`, which its preconditions then read.
 ///
 /// `let standing = Reservation{member: member, book: book}` is computed from

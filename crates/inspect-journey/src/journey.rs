@@ -99,6 +99,19 @@ pub enum Clause {
         surface: String,
         /// What the step caught, named by the writer rather than numbered.
         creating: Option<Cast>,
+        /// `bruno cannot do MemberAsksToChat(…) on GroupMembers`.
+        ///
+        /// The journey asserting a refusal it *wants*. Without it a blocked
+        /// act reads as `refused`, which is the correct verdict and the same
+        /// shape as a step that is simply wrong — so a reader scanning a
+        /// report cannot tell "this was meant to be refused" from "this is a
+        /// defect", and the step where a block works looks like the step where
+        /// it broke.
+        ///
+        /// `then <Rule> does not fire` is close and does not do it: it sits
+        /// under a `does` that has already been marked refused, so the step's
+        /// own verdict still reads as failure.
+        negated: bool,
         line: usize,
     },
     /// `after 21.days`

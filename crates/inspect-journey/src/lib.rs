@@ -23,6 +23,7 @@ pub mod outcome;
 pub mod parse;
 pub mod report;
 pub mod run;
+mod terms;
 mod world;
 
 pub use check::{Note, Verdict, check};
