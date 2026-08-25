@@ -140,6 +140,11 @@ impl<'a> Application<'a> {
             Expr::For { binding, collection, body, .. } => {
                 self.iteration(binding, collection, body)
             }
+            // `let group = Group.created(…)`, and the lines below it that refer
+            // to `group`. A rule that creates two things and joins them writes
+            // it this way — it is the only way to write it — so without this a
+            // `CreateGroup` fires, reports success, and leaves an empty world.
+            Expr::LetExpr { name, value, .. } => self.binding(&name.name, value),
             Expr::NotExists { .. } | Expr::Exists { .. } => Applied::effect(Effect::Noted {
                 description: self
                     .describe(clause)
@@ -173,6 +178,46 @@ impl<'a> Application<'a> {
                 module: self.against.module.to_owned(),
             }),
             None => self.unmodelled(function, "this call is neither a creation nor a trigger"),
+        }
+    }
+
+    /// `let group = Group.created(…)`.
+    ///
+    /// The value is applied — it is usually a creation, and a creation is a
+    /// postcondition rather than an expression — and then bound under the name
+    /// the rule gave it, which is the whole point of writing one. `creation`
+    /// already binds a new instance under its own lowercased type name; this
+    /// binds it under the author's name as well, so
+    ///
+    /// ```text
+    /// let group = Group.created(…)
+    /// Membership.created(group: group, …)
+    /// ```
+    ///
+    /// joins the two. Without the binding the second line's `group` is
+    /// undecided and the membership is created pointing at nothing.
+    fn binding(&mut self, name: &str, value: &Expr) -> Applied {
+        let applied = self.apply(value);
+
+        // What the value produced, if it produced an instance. A `let` over
+        // anything else is bound to what it evaluates to.
+        let bound = applied.effects.iter().rev().find_map(|effect| match effect {
+            Effect::Created { id, .. } => Some(Value::Ref(id.clone())),
+            _ => None,
+        });
+
+        match bound {
+            Some(value) => {
+                self.bindings.insert(name.to_owned(), value);
+                applied
+            }
+            None => {
+                let evaluated = self.evaluate(value);
+                let mut applied = applied;
+                applied.unresolved.extend(evaluated.unresolved);
+                self.bindings.insert(name.to_owned(), evaluated.value);
+                applied
+            }
         }
     }
 

@@ -396,14 +396,23 @@ impl Walker<'_> {
                     // what the reader is trying to understand, and leaving it
                     // out of the cast hides the cause of every later line.
                     self.bind(caught, None, Origin::Caught);
+                    // The symptom, and then the cause. Nothing being created is
+                    // almost never the fault: a rule that could not be decided
+                    // creates nothing, and reporting only the empty hands sent
+                    // a reader looking at their own journey for a mistake that
+                    // was three lines up in the specification.
+                    let missing = format!(
+                        "nothing of kind `{}` was created for `{}`",
+                        caught.type_expr, caught.name
+                    );
                     return Outcome {
                         line,
                         verdict: verdict_of(&outcome),
                         about,
-                        detail: Some(format!(
-                            "nothing of kind `{}` was created for `{}`",
-                            caught.type_expr, caught.name
-                        )),
+                        detail: Some(match refusal(&outcome) {
+                            Some(why) => format!("{missing} — {why}"),
+                            None => missing,
+                        }),
                     };
                 }
             }

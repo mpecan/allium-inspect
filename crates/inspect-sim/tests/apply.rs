@@ -478,3 +478,89 @@ fn a_clause_with_no_source_behind_it_says_what_kind_of_clause_it_was() {
         vec![Effect::Noted { description: "an assertion about what exists".to_owned() }]
     );
 }
+
+// --- `let` ---------------------------------------------------------------
+
+// A rule that creates two things and joins them writes them with a `let`,
+// because that is the only way to write it:
+//
+//     ensures:
+//         let group = Group.created(name: name)
+//         Membership.created(group: group, member: founder)
+//
+// Without this the whole postcondition was silently not applied: the rule
+// fired, reported success, and left an empty world.
+
+fn let_binding(name: &str, value: Expr) -> Expr {
+    Expr::LetExpr {
+        span: NOWHERE,
+        name: allium_parser::ast::Ident { span: NOWHERE, name: name.to_owned() },
+        value: Box::new(value),
+    }
+}
+
+#[test]
+fn a_let_applies_the_creation_it_binds() {
+    let graph = spec();
+    let mut world = World::new().at(1_000);
+    let mut application = Application::new(
+        Against { spec: &graph, module: "lending", source: "", derived: &NOTHING },
+        &mut world,
+        BTreeMap::new(),
+    );
+
+    let applied = application.apply(&let_binding("l", creation("Loan", vec![])));
+
+    assert!(
+        applied.effects.iter().any(|effect| matches!(effect, Effect::Created { .. })),
+        "{applied:#?}"
+    );
+    assert_eq!(world.count_of("Loan"), 1, "the loan was not created");
+}
+
+/// The point of writing one: the next line refers to it by the author's name.
+#[test]
+fn a_let_binds_what_it_created_under_the_name_it_was_given() {
+    let graph = spec();
+    let mut world = World::new().at(1_000);
+    let mut application = Application::new(
+        Against { spec: &graph, module: "lending", source: "", derived: &NOTHING },
+        &mut world,
+        BTreeMap::new(),
+    );
+
+    application.apply(&let_binding("mine", creation("Loan", vec![])));
+    let bindings = application.into_bindings();
+
+    let bound = bindings.get("mine").expect("the name the rule gave it");
+    assert!(matches!(bound, Value::Ref(id) if id.entity() == "Loan"), "{bound:?}");
+}
+
+/// The whole block, which is the shape a real rule has: create, bind, and
+/// point the second creation at the first.
+#[test]
+fn a_second_creation_can_point_at_what_the_let_bound() {
+    let graph = spec();
+    let mut world = World::new().at(1_000);
+    let mut application = Application::new(
+        Against { spec: &graph, module: "lending", source: "", derived: &NOTHING },
+        &mut world,
+        BTreeMap::new(),
+    );
+
+    application.apply(&Expr::Block {
+        span: NOWHERE,
+        items: vec![
+            let_binding("mine", creation("Loan", vec![])),
+            creation("Reservation", vec![("member", ident("mine"))]),
+        ],
+    });
+
+    let reservation =
+        world.instances_of("Reservation").next().expect("the reservation was created").clone();
+    let member = reservation.fields.get("member").expect("it points at something");
+    assert!(
+        matches!(member, Value::Ref(id) if id.entity() == "Loan"),
+        "the `let` binding did not reach the second creation: {member:?}"
+    );
+}

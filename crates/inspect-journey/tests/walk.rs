@@ -1421,3 +1421,28 @@ journey RightNow {
     let verdicts: Vec<Verdict> = outcomes(&result).into_iter().map(|(v, ..)| v).collect();
     assert!(verdicts.contains(&Verdict::Refused), "{:#?}", outcomes(&result));
 }
+
+/// A `creating` that catches nothing is almost never the fault.
+///
+/// A rule that could not be decided creates nothing, and reporting only the
+/// empty hands sent a reader looking at their own journey for a mistake that
+/// was three lines up in the specification. `BorrowCopy` cannot be decided
+/// here — nobody said what the copy's status is — so the note has to carry
+/// both halves.
+#[test]
+fn a_creating_that_caught_nothing_says_why() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+    1. she borrows a copy nobody has described
+        ada does MemberBorrows(ada, copy) on MemberShelf creating loan: Loan
+}",
+    );
+
+    let detail = result.steps[0].outcomes[0].detail.as_deref().expect("a reason");
+    assert!(detail.contains("nothing of kind `Loan` was created"), "the symptom: {detail}");
+    assert!(detail.contains("could not be decided"), "and the cause: {detail}");
+    assert!(detail.contains("copy.status"), "named: {detail}");
+}
