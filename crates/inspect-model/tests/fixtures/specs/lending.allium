@@ -49,6 +49,15 @@ entity Loan {
     is_late: window.due_at <= now
 }
 
+-- What a chained rule makes. Nothing fires `NoteTheBorrowing` directly:
+-- `BorrowCopy` emits `CopyBorrowed` and it waits on that, which is the
+-- ordinary shape once a spec has more than one concern — and the shape a
+-- journey could not reach while the walk stopped at the act's own rule.
+entity Notice {
+    loan: Loan
+    raised_at: Timestamp
+}
+
 entity Reservation {
     book: catalogue/Book
     member: Member
@@ -132,6 +141,18 @@ rule LoanFallsOverdue {
     ensures: LoanOverdue(loan: loan)
 }
 
+-- One hop past the act, with no preconditions of its own — so a journey that
+-- cannot see it is not being told about a rule that failed, but about one that
+-- never ran.
+rule NoteTheBorrowing {
+    when: CopyBorrowed(loan)
+
+    ensures: Notice.created(
+        loan: loan,
+        raised_at: now
+    )
+}
+
 rule PlaceReservation {
     when: MemberReserves(member, book)
 
@@ -161,6 +182,21 @@ rule ReserveQuietly {
         placed_at: now,
         status: waiting
     )
+}
+
+-- A `let` naming something the act's own arguments determine, read by both
+-- halves of the rule. The shape three of `friend-mesh`'s four contact-naming
+-- rules use, and the one whose binding was dropped between the parser and the
+-- program — so `requires` evaluated a name nothing had bound and the whole
+-- surface came back undecided.
+rule WithdrawReservation {
+    when: MemberWithdrawsReservation(member, book)
+
+    let standing = Reservation{member: member, book: book}
+
+    requires: exists standing
+
+    ensures: standing.status = cancelled
 }
 
 rule CancelReservationOnWithdrawal {
@@ -245,6 +281,7 @@ surface MemberShelf {
         MemberReportsLoss(loan, note?)
         MemberReserves(reader, book)
         MemberReservesQuietly(reader, book)
+        MemberWithdrawsReservation(reader, book)
 
     @guarantee ALoanIsVisibleToItsHolderOnly
         -- A shelf shows the reader their own loans. Whose copy is out is a

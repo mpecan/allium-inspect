@@ -597,6 +597,136 @@ fn a_state_no_enumeration_declares_is_still_unknown() {
     assert_eq!(seen.verdict, Verdict::Refused, "{seen:?}");
 }
 
+/// A rule's own `let`, which its preconditions then read.
+///
+/// `let standing = Reservation{member: member, book: book}` is computed from
+/// the arguments the act supplied, so there is nothing unknowable about it —
+/// but the binding was dropped between the parser and the program, so
+/// `requires: exists standing` evaluated a name nothing had bound and the act
+/// came back undecided. Three of `friend-mesh`'s four contact-naming rules are
+/// this shape.
+#[test]
+fn a_rules_own_let_is_bound_before_its_preconditions_read_it() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada:  Member
+        book: catalogue/Book
+    given:
+        book.status = listed
+    1. she reserves it
+        ada does MemberReserves(ada, book) on MemberShelf creating held: Reservation
+    2. and changes her mind
+        ada does MemberWithdrawsReservation(ada, book) on MemberShelf
+        then WithdrawReservation fires
+        then held.status = cancelled
+}",
+    );
+    let bad: Vec<_> = outcomes(&result)
+        .into_iter()
+        .filter(|(verdict, ..)| *verdict != Verdict::Specified)
+        .collect();
+    assert!(bad.is_empty(), "{bad:#?}");
+}
+
+/// And a `let` the simulator cannot settle stays undecided, saying what
+/// defeated it rather than "nothing is bound to `standing`" — which would
+/// point at the `let` instead of at the thing it could not work out.
+#[test]
+fn a_let_that_could_not_be_settled_says_what_defeated_it() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada:  Member
+        book: catalogue/Book
+    1. she withdraws a reservation over a book nobody described
+        ada does MemberWithdrawsReservation(ada, book) on MemberShelf
+}",
+    );
+    let seen = &result.steps[0].outcomes[0];
+    assert_eq!(seen.verdict, Verdict::Refused, "{seen:?}");
+    assert!(seen.detail.as_deref().is_some_and(|why| why.contains("exists standing")), "{seen:?}");
+}
+
+/// A journey saying an act happened means everything the act set off.
+///
+/// `BorrowCopy` emits `CopyBorrowed`; `NoteTheBorrowing` waits on it and has no
+/// preconditions of its own. The simulator's step is one step — it offers the
+/// emitted trigger to the reader, because in the browser a person picks which
+/// to follow — and the walk stopped there too, so the second rule was reported
+/// as never having run. In `friend-mesh` that rule was `QueueOnSend`, and the
+/// whole outbox hung off the one line it could not reach.
+#[test]
+fn an_act_runs_the_rules_its_emissions_wake() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+    given:
+        copy.status = available
+    1. she borrows it, and the desk is told
+        ada does MemberBorrows(ada, copy) on MemberShelf
+        then BorrowCopy fires
+        then NoteTheBorrowing fires
+}",
+    );
+    let bad: Vec<_> = outcomes(&result)
+        .into_iter()
+        .filter(|(verdict, ..)| *verdict != Verdict::Specified)
+        .collect();
+    assert!(bad.is_empty(), "{bad:#?}");
+}
+
+/// And what that rule made can be caught, because now it exists.
+///
+/// This is the half a journey could not write at all: the thing a chained rule
+/// creates is the thing a guarantee about it is *about*, and it had no name.
+#[test]
+fn what_a_chained_rule_creates_can_be_caught_and_read() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+    given:
+        copy.status = available
+    1. she borrows it and the notice is raised
+        ada does MemberBorrows(ada, copy) on MemberShelf
+            creating notice: Notice
+        then notice exists
+}",
+    );
+    let bad: Vec<_> = outcomes(&result)
+        .into_iter()
+        .filter(|(verdict, ..)| *verdict != Verdict::Specified)
+        .collect();
+    assert!(bad.is_empty(), "{bad:#?}");
+}
+
+/// The emission carries what the rule handed it, under the name the trigger
+/// declares. Without that the woken rule fires against nothing and creates a
+/// notice pointing at no loan — which is worse than not running at all,
+/// because it looks like it worked.
+#[test]
+fn a_woken_rule_gets_the_arguments_the_emission_carried() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+    given:
+        copy.status = available
+    1. she borrows it, and the notice names the loan she took
+        ada does MemberBorrows(ada, copy) on MemberShelf
+            creating notice: Notice
+        then notice.loan exists
+}",
+    );
+    let seen = &result.steps[0].outcomes[1];
+    assert_eq!(seen.verdict, Verdict::Specified, "{seen:?}");
+}
+
 /// An exposure that walks further than one hop, which is the ordinary shape
 /// once a spec has more than one noun.
 ///

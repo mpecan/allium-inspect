@@ -18,8 +18,8 @@ use ts_rs::TS;
 
 use inspect_model::{NodeKind, Program, SpecGraph};
 use inspect_sim::{
-    Value, enabled,
-    step::{Sources, StepOutcome, step},
+    Value,
+    step::Sources,
     value::EntityId,
     world::{Answer, Event, World},
 };
@@ -191,7 +191,7 @@ fn describes(journey: &Journey, line: usize) -> String {
 /// Reaching the bound used to push a sentence into `undecided`, which is a list
 /// of *rule names* matched by exact equality — so it matched nothing, nothing
 /// read it, and the two tests asserting it never appeared could not fail.
-enum Settled {
+pub(crate) enum Settled {
     Yes,
     No { rounds: usize },
 }
@@ -505,72 +505,6 @@ impl Walker<'_> {
             }
         }
     }
-
-    /// Fire everything the world now makes true, until nothing else does.
-    ///
-    /// A state-condition rule is not fired by anybody — the clock passing a due
-    /// date is what makes it hold — and the simulator reports those as *newly
-    /// enabled* rather than running them, because in the browser a person picks
-    /// which to follow. A journey has already said: time passed, so whatever
-    /// became true happened.
-    ///
-    /// To a fixpoint, because one rule firing can make the next one true, and
-    /// bounded because a spec with two rules that re-enable each other would
-    /// otherwise run forever. Reaching the bound is reported rather than
-    /// silently truncated.
-    fn settle(&mut self) -> Settled {
-        const ROUNDS: usize = 32;
-        let mut ran: Vec<(String, Value)> = Vec::new();
-        for _ in 0..ROUNDS {
-            // Everything the world makes true, not everything this step made
-            // newly true: a rule enabled before the clock moved and never run
-            // is still waiting, and a journey that skipped it would report a
-            // world the spec does not describe.
-            let waiting: Vec<(String, String, String, Value)> =
-                enabled(self.spec, self.program, self.sources, &self.world)
-                    .into_iter()
-                    .flat_map(|rule| {
-                        let (trigger, module, binding) = (rule.trigger, rule.module, rule.binding);
-                        rule.over.into_iter().map(move |over| {
-                            (trigger.clone(), module.clone(), binding.clone(), over)
-                        })
-                    })
-                    // A rule already run for that same instance is where the
-                    // fixpoint comes from. Without it a rule whose effect keeps
-                    // its own condition true — `status = lost` stays lost —
-                    // runs thirty-two times and then reports never settling.
-                    .filter(|(trigger, _, _, over)| !already_ran(&ran, trigger, over))
-                    .collect();
-            if waiting.is_empty() {
-                return Settled::Yes;
-            }
-            for (trigger, module, binding, over) in waiting {
-                let mut event = Event::new(&trigger, &module);
-                // Under the name the `when` clause gave it. A state rule's
-                // clauses are written about `copy`, and firing without that
-                // binding evaluates every one of them against nothing.
-                event.arguments.insert(binding, over.clone());
-                self.fire(&event);
-                ran.push((trigger, over));
-            }
-        }
-        Settled::No { rounds: ROUNDS }
-    }
-
-    /// One turn of the engine, remembering what ran.
-    fn fire(&mut self, event: &Event) -> StepOutcome {
-        use inspect_sim::Disposition;
-        let outcome = step(self.spec, self.program, self.sources, &self.world, event);
-        for rule in &outcome.rules {
-            match rule.disposition {
-                Disposition::Fired => self.fired.push(rule.name.clone()),
-                Disposition::Undecided => self.undecided.push(rule.name.clone()),
-                Disposition::Refused | Disposition::Unsimulatable => {}
-            }
-        }
-        self.world = outcome.world.clone();
-        outcome
-    }
 }
 
 /// An act, gathered so the walk does not take six arguments.
@@ -588,7 +522,7 @@ struct Act<'a> {
 /// would drop all but one, silently, in a walk that otherwise reads as passing.
 /// And two rules watching the same instance are two separate things to do, so
 /// the instance alone would drop one of those.
-fn already_ran(ran: &[(String, Value)], trigger: &str, over: &Value) -> bool {
+pub(crate) fn already_ran(ran: &[(String, Value)], trigger: &str, over: &Value) -> bool {
     ran.iter().any(|(before, instance)| before == trigger && instance == over)
 }
 

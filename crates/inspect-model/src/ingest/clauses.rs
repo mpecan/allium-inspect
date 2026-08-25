@@ -183,6 +183,13 @@ fn rule(block: &allium_parser::ast::BlockDecl) -> RuleAst {
                 "ensures" => ast.ensures.push(value.clone()),
                 _ => {}
             },
+            // `let existing = ContactName{…}` — the rule's own name for
+            // something its arguments determine. Its own item kind, not a
+            // clause, which is why it fell through the match above and out of
+            // the program entirely.
+            BlockItemKind::Let { name, value } => {
+                ast.lets.push((name.name.clone(), value.clone()));
+            }
             // `for x in collection:` wrapping the rule's body. The clauses
             // inside it are the rule's own, so they are collected as if they
             // had been written at the top, and the iteration is recorded

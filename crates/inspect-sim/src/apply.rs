@@ -47,7 +47,13 @@ pub enum Effect {
     /// A field was set.
     Assigned { id: EntityId, field: String, from: Value, to: Value },
     /// A trigger was emitted, for another rule to consume.
-    Emitted { trigger: String, module: String },
+    ///
+    /// With the arguments it carries, because the consumer needs them: a
+    /// journey saying "he writes into the room" means everything that set off,
+    /// and `QueueOnSend` cannot fill the outbox without knowing which message.
+    /// The simulator still stops here and offers the trigger to the reader —
+    /// one step is one step — but a walk has already said the act happened.
+    Emitted { trigger: String, module: String, arguments: BTreeMap<String, Value> },
     /// A state change the entity's lifecycle does not permit.
     ///
     /// Reported rather than performed. The lifecycle is part of the spec, and a
@@ -176,9 +182,40 @@ impl<'a> Application<'a> {
             Some(trigger) => Applied::effect(Effect::Emitted {
                 trigger: trigger.to_owned(),
                 module: self.against.module.to_owned(),
+                arguments: self.emission_arguments(trigger, args),
             }),
             None => self.unmodelled(function, "this call is neither a creation nor a trigger"),
         }
+    }
+
+    /// What an emission carries, by the parameter name the trigger declares.
+    ///
+    /// `MessageSent(message: message)` names its argument and most emissions
+    /// do; a positional one is matched against the trigger's own parameter
+    /// list, which is where the receiving rule's `when` gets its names from.
+    /// An argument that cannot be placed is dropped rather than invented —
+    /// the receiving rule then reports the binding as unset, which is the
+    /// honest answer and points at the emission.
+    fn emission_arguments(&self, trigger: &str, args: &[CallArg]) -> BTreeMap<String, Value> {
+        let declared = self
+            .against
+            .spec
+            .nodes_of(NodeKind::Trigger)
+            .find(|node| node.name == trigger)
+            .and_then(|node| node.detail.as_trigger())
+            .map(|detail| detail.parameters.clone())
+            .unwrap_or_default();
+
+        let mut carried = BTreeMap::new();
+        for (at, argument) in args.iter().enumerate() {
+            let (name, value) = match argument {
+                CallArg::Named(named) => (Some(named.name.name.clone()), &named.value),
+                CallArg::Positional(value) => (declared.get(at).cloned(), value),
+            };
+            let Some(name) = name else { continue };
+            carried.insert(name, self.evaluate(value).value);
+        }
+        carried
     }
 
     /// `let group = Group.created(…)`.

@@ -34,6 +34,17 @@ use allium_parser::ast::Expr;
 pub struct RuleAst {
     /// The `when` clause: a trigger call, or a state condition.
     pub when: Option<Expr>,
+    /// `let existing = ContactName{owner: owner, subject: subject}`, in order.
+    ///
+    /// A name the rule gives to something computed from the arguments its
+    /// trigger carries — so nothing about it is unknowable, and dropping it
+    /// left `requires: exists existing` evaluating a name nothing had bound.
+    /// Three of `friend-mesh`'s four contact-naming rules are that shape, so a
+    /// whole surface's worth of acts came back undecided.
+    ///
+    /// In order because a later one may read an earlier one, the same way
+    /// `ensures` clauses do.
+    pub lets: Vec<(String, Expr)>,
     /// One entry per `requires` clause, in the order the spec declares them.
     ///
     /// Order matters for reporting rather than for logic: preconditions are
@@ -221,6 +232,7 @@ mod tests {
             "lending::rule::BorrowCopy",
             RuleAst {
                 when: Some(expr("when")),
+                lets: vec![("standing".to_owned(), expr("let"))],
                 requires: vec![expr("requires")],
                 ensures: vec![expr("first"), expr("second")],
                 iterate: None,
@@ -229,6 +241,7 @@ mod tests {
         let ast = program.rule("lending::rule::BorrowCopy").expect("the rule");
         assert_eq!(ast.requires.len(), 1);
         assert_eq!(ast.ensures.len(), 2);
+        assert_eq!(ast.lets.len(), 1);
         assert!(ast.when.is_some());
     }
 

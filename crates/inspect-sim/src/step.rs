@@ -253,6 +253,27 @@ fn run_rule(
         bindings.entry(name).or_insert(Value::Null);
     }
 
+    // The rule's own names, before its preconditions read them.
+    //
+    // `let existing = ContactName{owner: owner, subject: subject}` is computed
+    // from the arguments the trigger carried, so there is nothing unknowable
+    // about it — but until it is bound, `requires: exists existing` evaluates a
+    // name nothing has bound and the whole rule comes back undecided. In
+    // declaration order, because a later one may read an earlier one.
+    //
+    // An unknown value is bound anyway. It carries its own reason with it, and
+    // the precondition that reads it says which sub-expression could not be
+    // settled — better than "nothing is bound to `existing`", which points at
+    // the `let` rather than at what defeated it.
+    for (name, value) in &ast.lets {
+        let evaluated = {
+            let mut scope = Env::new(world, module, source).deriving(program.derivations());
+            scope.bindings.clone_from(&bindings);
+            eval(value, &scope)
+        };
+        bindings.insert(name.clone(), evaluated.value);
+    }
+
     let mut requires = Vec::new();
     let mut unresolved = Vec::new();
 

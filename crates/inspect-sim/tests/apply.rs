@@ -19,11 +19,14 @@ use std::collections::BTreeMap;
 
 use allium_parser::{
     Span,
-    ast::{ComparisonOp, Expr},
+    ast::{CallArg, ComparisonOp, Expr, Ident, NamedArg},
 };
 use inspect_model::{
     Node, NodeDetail, NodeKind, SpecGraph,
-    graph::{EntityDetail, EntityField, EntityKind, EnumDetail, TransitionEdge, TransitionGraph},
+    graph::{
+        EntityDetail, EntityField, EntityKind, EnumDetail, TransitionEdge, TransitionGraph,
+        TriggerDetail, TriggerSource,
+    },
 };
 use inspect_sim::{
     Effect, Value,
@@ -89,6 +92,19 @@ fn spec() -> SpecGraph {
     graph.nodes.push(Node::new("catalogue", NodeKind::Enum, "Medium").with(NodeDetail::Enum(
         EnumDetail { values: ["print", "audio"].map(ToOwned::to_owned).to_vec() },
     )));
+
+    // The trigger an emission names, so a positional argument has a parameter
+    // to land under. What a rule emits is what the next rule is fired with, and
+    // the next rule reads its arguments by the names declared here.
+    graph.nodes.push(Node::new("lending", NodeKind::Trigger, "CopyBorrowed").with(
+        NodeDetail::Trigger(TriggerDetail {
+            source: TriggerSource::External,
+            parameters: vec!["loan".to_owned()],
+            optional: Vec::new(),
+            condition: None,
+            entity: None,
+        }),
+    ));
 
     graph.normalise();
     graph
@@ -306,10 +322,59 @@ fn assigning_through_something_that_is_not_an_instance_changes_nothing() {
 #[test]
 fn an_emission_is_reported_without_changing_anything() {
     let (effects, _, world) = apply(&emission("CopyBorrowed"), &[]);
-    let Effect::Emitted { trigger, module } = &effects[0] else { panic!("expected an emission") };
+    let Effect::Emitted { trigger, module, .. } = &effects[0] else {
+        panic!("expected an emission")
+    };
     assert_eq!(trigger, "CopyBorrowed");
     assert_eq!(module, "lending");
     assert_eq!(world.entities.len(), 1, "the world is untouched");
+}
+
+/// What an emission carries, because the rule waiting on it needs it.
+///
+/// `MessageSent(message: message)` hands the message on, and `QueueOnSend`
+/// reads it to file the outbox entry. Recording the trigger's name alone left
+/// every chained rule firing against nothing.
+#[test]
+fn an_emission_carries_its_arguments_under_the_names_the_trigger_declares() {
+    let loan = EntityId::new("Loan", 7);
+    let (effects, _, _) =
+        apply(&emission("CopyBorrowed"), &[("whatever", Value::Ref(loan.clone()))]);
+    let Effect::Emitted { arguments, .. } = &effects[0] else { panic!("expected an emission") };
+    // Positional, so placed against `CopyBorrowed(loan)`.
+    assert_eq!(arguments.get("loan"), Some(&Value::Ref(loan)));
+}
+
+#[test]
+fn a_named_argument_keeps_the_name_it_was_written_with() {
+    let loan = EntityId::new("Loan", 7);
+    let clause = Expr::Call {
+        span: Span { start: 0, end: 0 },
+        function: Box::new(ident("CopyBorrowed")),
+        args: vec![CallArg::Named(NamedArg {
+            span: Span { start: 0, end: 0 },
+            name: Ident { span: Span { start: 0, end: 0 }, name: "loan".into() },
+            value: ident("whatever"),
+        })],
+    };
+    let (effects, _, _) = apply(&clause, &[("whatever", Value::Ref(loan.clone()))]);
+    let Effect::Emitted { arguments, .. } = &effects[0] else { panic!("expected an emission") };
+    assert_eq!(arguments.get("loan"), Some(&Value::Ref(loan)));
+}
+
+/// An argument with nowhere to go is dropped rather than invented. The rule
+/// waiting on it then reports the binding as unset, which points at the
+/// emission; a made-up name would point nowhere.
+#[test]
+fn an_argument_the_trigger_has_no_parameter_for_is_dropped() {
+    let clause = Expr::Call {
+        span: Span { start: 0, end: 0 },
+        function: Box::new(ident("CopyBorrowed")),
+        args: vec![CallArg::Positional(ident("whatever")), CallArg::Positional(ident("whatever"))],
+    };
+    let (effects, _, _) = apply(&clause, &[("whatever", Value::Int(1))]);
+    let Effect::Emitted { arguments, .. } = &effects[0] else { panic!("expected an emission") };
+    assert_eq!(arguments.len(), 1, "one parameter declared, one argument placed");
 }
 
 #[test]

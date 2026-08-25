@@ -5,4 +5,4 @@ import type { Value } from "./Value";
 /**
  * Something a rule did, or refused to do.
  */
-export type Effect = { "kind": "created", id: EntityId, entity: string, } | { "kind": "assigned", id: EntityId, field: string, from: Value, to: Value, } | { "kind": "emitted", trigger: string, module: string, } | { "kind": "refused", id: EntityId, field: string, from: string, to: string, reason: string, } | { "kind": "noted", description: string, };
+export type Effect = { "kind": "created", id: EntityId, entity: string, } | { "kind": "assigned", id: EntityId, field: string, from: Value, to: Value, } | { "kind": "emitted", trigger: string, module: string, arguments: { [key in string]: Value }, } | { "kind": "refused", id: EntityId, field: string, from: string, to: string, reason: string, } | { "kind": "noted", description: string, };

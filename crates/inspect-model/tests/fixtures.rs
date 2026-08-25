@@ -296,7 +296,8 @@ fn a_surface_lists_the_operations_its_actor_can_perform() {
             "MemberReturns",
             "MemberReportsLoss",
             "MemberReserves",
-            "MemberReservesQuietly"
+            "MemberReservesQuietly",
+            "MemberWithdrawsReservation"
         ]
     );
     assert_eq!(shelf.guarantees, ["ALoanIsVisibleToItsHolderOnly"]);
