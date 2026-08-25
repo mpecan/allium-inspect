@@ -134,10 +134,31 @@ fn check_step(step: &Step, graph: &SpecGraph, known: &mut Names, notes: &mut Vec
                     known.bind(caught);
                 }
             }
-            Clause::Sees { actor, subject, surface, negated, line } => {
+            Clause::Sees { actor, subject, surface, context, negated, line } => {
                 check_actor(actor, *line, known, notes);
+                // Not `check_actor`: a context is a room rather than a
+                // person, and "add them to the cast" is the wrong advice for
+                // one — a group is usually something `given` made.
+                if let Some(context) = context
+                    && !known.knows(context)
+                {
+                    notes.push(Note {
+                        line: *line,
+                        verdict: Verdict::Unspecified,
+                        message: format!(
+                            "`{context}` is nothing in this journey — name it in the cast, in \
+                             `given`, or catch it with `creating`"
+                        ),
+                    });
+                }
                 check_sight(
-                    &Sight { seen: &subject.as_written(), surface, negated: *negated, line: *line },
+                    &Sight {
+                        seen: &subject.as_written(),
+                        surface,
+                        context: context.as_deref(),
+                        negated: *negated,
+                        line: *line,
+                    },
                     graph,
                     notes,
                 );
@@ -314,12 +335,14 @@ fn check_act(trigger: &str, surface: &str, line: usize, graph: &SpecGraph, notes
 struct Sight<'a> {
     seen: &'a str,
     surface: &'a str,
+    /// Which instance of the surface's context, when the journey says.
+    context: Option<&'a str>,
     negated: bool,
     line: usize,
 }
 
 fn check_sight(sight: &Sight<'_>, graph: &SpecGraph, notes: &mut Vec<Note>) {
-    let Sight { seen, surface, negated, line } = *sight;
+    let Sight { seen, surface, negated, line, .. } = *sight;
     let Some(detail) = surface_named(graph, surface) else {
         notes.push(Note {
             line,
@@ -328,6 +351,18 @@ fn check_sight(sight: &Sight<'_>, graph: &SpecGraph, notes: &mut Vec<Note>) {
         });
         return;
     };
+    // `in <name>` names an instance of the surface's `context`, so a surface
+    // that has no context has nothing for it to name. Reported here rather
+    // than ignored: silently dropping it would leave a journey saying which
+    // room it means and a tool answering about a different question.
+    if sight.context.is_some() && detail.context.is_none() {
+        notes.push(Note {
+            line,
+            verdict: Verdict::Unspecified,
+            message: format!("`{surface}` is not scoped to anything, so `in` has nothing to name"),
+        });
+    }
+
     if exposes(detail, seen) {
         return;
     }

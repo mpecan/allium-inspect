@@ -202,6 +202,7 @@ exist` does not hold, because neither is something the world said.
 ```
 ada sees loan.status on MemberShelf
 ada cannot see copy.shelfmark on MemberShelf
+ada sees loan.status on MyLoans in ada
 ```
 
 A `sees` may name a **call** as well as a path, because a surface may expose
@@ -224,11 +225,34 @@ exposes:
 ```
 
 shows a reader the loans on their own shelf and answers `cannot see` for
-everybody else's. The surface's `context` is bound from the actor, and only when
-the actor is an instance of its type — walking from a device to its owner would
-be this tool deciding which identity a person is at, which is what a `context`
-declares and not something to guess on its behalf. A mismatch is undecided and
-says which type it wanted.
+everybody else's.
+
+The walk is matched **whole**, not by its last field. A surface reaching
+something through another noun —
+
+```text
+for m in group.messages:
+    m.attachment.size_bytes
+```
+
+— shows an attachment's size, and a journey names the attachment it caught:
+`ada sees shot.size_bytes on Conversation`. Those are the same walk written
+from two places. `loan.shelfmark` is not, and does not match `loan.copy.
+shelfmark` merely because both end in the same word.
+
+**Say which one with `in`.** A surface scoped to a `Group` shows one group's
+business, and a person is usually in several — so
+`bruno sees proposal.decision on GroupMembers in room` says which room he has
+open, and nothing else can.
+
+Without it the context is bound from the actor, and only when the actor is an
+instance of its type — which is right for `context identity: Identity` and
+impossible for anything else. Walking from a person to a plausible group would
+be this tool deciding which room somebody has open, which is a fact about their
+afternoon and not about the specification. So the tool asks, and the reason on
+an undecided `sees` names the surface and the type it wants.
+
+`in` is for `sees` alone. An act names which one with its arguments.
 
 Undecided is still the answer whenever anything under it is: a filtered
 collection keeps its definite members and notes what it could not settle, and a

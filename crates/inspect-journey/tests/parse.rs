@@ -160,6 +160,58 @@ fn seeing_names_one_value_on_one_surface() {
     assert!(!negated);
 }
 
+/// `bruno sees proposal.decision on GroupMembers in room` — which instance of
+/// the surface's context he is at. Split off the *tail*, because `in` is a
+/// word a subject may contain and a surface name is one word.
+#[test]
+fn seeing_can_say_which_one_it_is_looking_at() {
+    let journeys = parse(
+        "journey J {\n    1. he opens the room he was invited to\n        bruno sees \
+         proposal.decision on GroupMembers in room\n}\n",
+    )
+    .expect("parses");
+    let Clause::Sees { subject, surface, context, .. } = &journeys[0].steps[0].clauses[0] else {
+        panic!("expected an observation");
+    };
+    assert_eq!(
+        (subject.as_written().as_str(), surface.as_str(), context.as_deref()),
+        ("proposal.decision", "GroupMembers", Some("room"))
+    );
+}
+
+/// And a line that does not say which reads exactly as it did before: the
+/// whole tail is the surface.
+#[test]
+fn seeing_without_one_names_no_context() {
+    let Clause::Sees { surface, context, .. } = &first().steps[0].clauses[4] else {
+        panic!("expected an observation");
+    };
+    assert_eq!((surface.as_str(), context.as_deref()), ("MemberShelf", None));
+}
+
+#[test]
+fn saying_which_one_and_naming_nothing_is_refused() {
+    let error = parse(
+        "journey J {\n    1. he looks\n        bruno sees p.decision on GroupMembers in \n}\n",
+    )
+    .expect_err("names nothing");
+    assert!(error.message.contains("names nothing"), "{error:?}");
+}
+
+/// An act's surface is where it happens, and an act says *which* one with its
+/// arguments. Without this the surface is `GroupMembers in room` and the
+/// reader is told there is no such surface, which sends them looking for a
+/// spelling mistake in a line that has none.
+#[test]
+fn an_act_that_says_in_is_told_what_in_is_for() {
+    let error = parse(
+        "journey J {\n    1. he proposes\n        bruno does MemberProposes(room) on \
+         GroupMembers in room\n}\n",
+    )
+    .expect_err("an act does not take a context");
+    assert!(error.message.contains("`GroupMembers` is it"), "{error:?}");
+}
+
 #[test]
 fn the_ending_is_prose_and_stays_prose() {
     let journey = first();

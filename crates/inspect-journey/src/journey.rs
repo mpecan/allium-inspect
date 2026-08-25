@@ -110,7 +110,25 @@ pub enum Clause {
     /// A call as well as a path, because a surface may expose one:
     /// `exposes: announces_reads(owner)` shows a person whether they announce
     /// reads, and there is no field to name for it.
-    Sees { actor: String, subject: Subject, surface: String, negated: bool, line: usize },
+    Sees {
+        actor: String,
+        subject: Subject,
+        surface: String,
+        /// Which instance of the surface's `context` they are looking at:
+        /// `bruno sees proposal.decision on GroupMembers in room`.
+        ///
+        /// A surface scoped to a `Group` shows one group's business, and a
+        /// person is usually in several. Without this the only instance the
+        /// tool could resolve was the actor themselves, which is right for
+        /// `context identity: Identity` and impossible for anything else — so
+        /// every scoped surface came back undecided, and a `cannot see` about
+        /// one came back undecided too. The remedy has to be something the
+        /// *journey* says, because which room somebody has open is a fact
+        /// about them and not about the specification.
+        context: Option<String>,
+        negated: bool,
+        line: usize,
+    },
     /// `stipulate ada.is_at_limit = false`, or `stipulate may_invite(g, a) = true`
     Stipulate { subject: Subject, value: Term, line: usize },
 }

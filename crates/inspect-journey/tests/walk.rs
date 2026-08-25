@@ -533,6 +533,176 @@ fn a_surface_scoped_to_something_else_is_undecided_and_says_so() {
         seen.detail.as_deref().is_some_and(|why| why.contains("scoped to `Member`")),
         "{seen:?}"
     );
+    // And the reason carries the remedy. Before this it ended "a journey
+    // cannot yet say which one it is looking at", which was true and left the
+    // reader nowhere to go.
+    assert!(seen.detail.as_deref().is_some_and(|why| why.contains("in <the Member>")), "{seen:?}");
+}
+
+/// An exposure that walks further than one hop, which is the ordinary shape
+/// once a spec has more than one noun.
+///
+/// ```text
+/// for loan in borrower.open_loans:
+///     loan.copy.shelfmark
+/// ```
+///
+/// The reader asking is asking about the *copy* — that is the thing they were
+/// handed and the thing they named — and the surface reaches it through the
+/// loan it hangs off. Matching only the last field made these two different
+/// questions, and the tool answered "this surface exposes nothing like
+/// `copy.shelfmark`" about a clause that exposes exactly that.
+#[test]
+fn an_exposure_that_walks_further_than_one_hop_is_still_this_walk() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+    given:
+        copy.status = available
+    1. she borrows it and looks for it on her shelf
+        ada does MemberBorrows(ada, copy) on MemberShelf creating loan: Loan
+        ada sees copy.shelfmark on MyLoans
+}",
+    );
+    let seen = &result.steps[0].outcomes[1];
+    assert_eq!(seen.verdict, Verdict::Specified, "{seen:?}");
+}
+
+/// And the privacy direction over the same clause. Bob's shelf reaches Bob's
+/// copies, and a walk that passes through an element of somebody else's
+/// collection arrives nowhere.
+#[test]
+fn a_longer_walk_still_only_reaches_what_this_readers_shelf_holds() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada:  Member
+        bob:  Member
+        copy: catalogue/Copy
+    given:
+        copy.status = available
+    1. bob borrows it and ada looks for it on her own shelf
+        bob does MemberBorrows(bob, copy) on MemberShelf creating loan: Loan
+        ada cannot see copy.shelfmark on MyLoans
+        bob sees copy.shelfmark on MyLoans
+}",
+    );
+    let bad: Vec<_> = outcomes(&result)
+        .into_iter()
+        .filter(|(verdict, ..)| *verdict != Verdict::Specified)
+        .collect();
+    assert!(bad.is_empty(), "{bad:#?}");
+}
+
+/// The failure the old rule had pointed the other way. `loan.copy.shelfmark`
+/// is not an answer to a question about a loan's shelfmark, and matching on
+/// the last field alone made every clause ending in one an answer to every
+/// question about anybody's.
+#[test]
+fn a_walk_that_ends_the_same_way_off_something_else_is_not_this_walk() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+    given:
+        copy.status = available
+    1. she looks for a shelfmark on the loan rather than on the copy
+        ada does MemberBorrows(ada, copy) on MemberShelf creating loan: Loan
+        ada cannot see loan.shelfmark on MyLoans
+}",
+    );
+    let seen = &result.steps[0].outcomes[1];
+    assert_eq!(seen.verdict, Verdict::Specified, "{seen:?}");
+}
+
+/// The remedy, used. A surface scoped to something the actor is not an
+/// instance of is the ordinary case in a real spec set — `GroupMembers` is
+/// scoped to a `Group` and faces a person, and a person is in several groups —
+/// so which one they have open is a fact about them that only the journey has.
+#[test]
+fn a_journey_can_say_which_one_it_is_looking_at() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+    given:
+        copy.status = available
+    1. the copy is looked at on a member's shelf
+        ada does MemberBorrows(ada, copy) on MemberShelf creating loan: Loan
+        loan sees loan.status on MyLoans in ada
+}",
+    );
+    let seen = &result.steps[0].outcomes[1];
+    assert_eq!(seen.verdict, Verdict::Specified, "{seen:?}");
+}
+
+/// Named, and the wrong kind of thing. Reported against the name the journey
+/// wrote rather than against the actor, because that is the word to change.
+#[test]
+fn naming_something_that_is_not_the_context_says_which_it_is() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+    1. she looks at a shelf scoped to a copy
+        ada sees ada.name on MyLoans in copy
+}",
+    );
+    let seen = &result.steps[0].outcomes[0];
+    assert_eq!(seen.verdict, Verdict::Undecided, "{seen:?}");
+    assert!(seen.detail.as_deref().is_some_and(|why| why.contains("`copy` is `Copy`")), "{seen:?}");
+}
+
+/// The privacy direction, with the context said out loud. Bob's loan is on
+/// Bob's shelf and not on Ada's, and naming the shelf is what makes the two
+/// claims different claims rather than the same one twice.
+#[test]
+fn the_named_context_is_whose_row_is_shown() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada:  Member
+        bob:  Member
+        copy: catalogue/Copy
+    given:
+        copy.status = available
+    1. bob borrows it, and the two shelves are looked at
+        bob does MemberBorrows(bob, copy) on MemberShelf creating loan: Loan
+        ada sees loan.status on MyLoans in bob
+        ada cannot see loan.status on MyLoans in ada
+}",
+    );
+    let bad: Vec<_> = outcomes(&result)
+        .into_iter()
+        .filter(|(verdict, ..)| *verdict != Verdict::Specified)
+        .collect();
+    assert!(bad.is_empty(), "{bad:#?}");
+}
+
+/// A name nothing in the journey bound. The static pass answers it before the
+/// walk gets there, which is the better answer: a name nobody wrote is a
+/// requirement on the journey rather than a question about the spec.
+#[test]
+fn naming_a_context_the_journey_never_bound_is_reported_as_missing() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada: Member
+    1. she looks at somewhere nobody named
+        ada sees ada.name on MyLoans in elsewhere
+}",
+    );
+    let seen = &result.steps[0].outcomes[0];
+    assert_eq!(seen.verdict, Verdict::Unspecified, "{seen:?}");
+    assert!(
+        seen.detail.as_deref().is_some_and(|why| why.contains("`elsewhere` is nothing")),
+        "{seen:?}"
+    );
 }
 
 /// An exposure written over a *type* shows every instance of it, and this

@@ -333,8 +333,17 @@ impl Walker<'_> {
             }
             Clause::After { duration, line, .. } => self.advance(duration, *line, about),
             Clause::Then { assertion, line } => self.assert(assertion, *line, about),
-            Clause::Sees { actor, subject, surface, negated, line } => self
-                .observe(&Sight { actor, subject, surface, negated: *negated, line: *line }, about),
+            Clause::Sees { actor, subject, surface, context, negated, line } => self.observe(
+                &Sight {
+                    actor,
+                    subject,
+                    surface,
+                    context: context.as_deref(),
+                    negated: *negated,
+                    line: *line,
+                },
+                about,
+            ),
             Clause::Stipulate { subject, value, line } => {
                 let value = self.value_of(value);
                 let written = format!("{} = {}", subject.as_written(), value.render());
@@ -604,9 +613,10 @@ fn about(clause: &Clause) -> String {
         }
         Clause::After { text, .. } => format!("after {text}"),
         Clause::Then { assertion, .. } => format!("then {}", written(assertion)),
-        Clause::Sees { actor, subject, surface, negated, .. } => {
+        Clause::Sees { actor, subject, surface, context, negated, .. } => {
             let verb = if *negated { "cannot see" } else { "sees" };
-            format!("{actor} {verb} {} on {surface}", subject.as_written())
+            let at = context.as_ref().map_or_else(String::new, |it| format!(" in {it}"));
+            format!("{actor} {verb} {} on {surface}{at}", subject.as_written())
         }
         Clause::Stipulate { subject, value, .. } => {
             format!("stipulate {} = {}", subject.as_written(), value.as_written())

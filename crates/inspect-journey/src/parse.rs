@@ -411,6 +411,17 @@ fn does(actor: &str, rest: &str, line: usize) -> Result<Clause, ParseError> {
     if surface.is_empty() {
         return fail(line, "an act happens on a surface, and this one names none");
     }
+    // Otherwise this parses as a surface with a space in its name, and the
+    // reader is told there is no surface called `GroupMembers in room`.
+    if let Some((surface, _)) = surface.split_once(" in ") {
+        return fail(
+            line,
+            format!(
+                "an act names the surface it happens on, and `{surface}` is it — `in` says which \
+                 one somebody is *looking* at, and an act says that with its arguments"
+            ),
+        );
+    }
     Ok(Clause::Does {
         actor: actor.to_owned(),
         trigger,
@@ -421,15 +432,36 @@ fn does(actor: &str, rest: &str, line: usize) -> Result<Clause, ParseError> {
     })
 }
 
-/// `loan.status on MemberShelf`
+/// `loan.status on MemberShelf`, or `proposal.decision on GroupMembers in room`
 fn sees(actor: &str, rest: &str, negated: bool, line: usize) -> Result<Clause, ParseError> {
     let Some((seen, surface)) = rest.rsplit_once(" on ") else {
         return fail(line, format!("expected `… on <Surface>`, found `{rest}`"));
     };
+    // Split off the tail rather than the whole line: `in` is a word a subject
+    // may contain and a surface name is one word, so the only ` in ` that can
+    // be this one is the one after the surface.
+    let tail = surface.trim();
+    let (surface, context) = match tail.split_once(" in ") {
+        Some((surface, context)) => (surface.trim(), Some(context.trim())),
+        // The line was trimmed before it got here, so a trailing `in` has
+        // nothing after it to split on — and left alone it becomes a surface
+        // with a space in its name.
+        None => match tail.strip_suffix(" in") {
+            Some(surface) => (surface.trim(), Some("")),
+            None => (tail, None),
+        },
+    };
+    if surface.is_empty() {
+        return fail(line, "somebody looking is looking at a surface, and this one names none");
+    }
+    if context.is_some_and(str::is_empty) {
+        return fail(line, "`in` says which one they are looking at, and this one names nothing");
+    }
     Ok(Clause::Sees {
         actor: actor.to_owned(),
         subject: subject(seen.trim(), line)?,
-        surface: surface.trim().to_owned(),
+        surface: surface.to_owned(),
+        context: context.map(ToOwned::to_owned),
         negated,
         line,
     })

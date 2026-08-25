@@ -207,6 +207,11 @@ surface MyLoans {
         borrower.name
         for loan in borrower.open_loans:
             loan.status
+            -- Two hops from the thing being iterated, which is the ordinary
+            -- shape once a spec has more than one noun: what is on the shelf
+            -- is the copy, and a reader looking for it names the copy rather
+            -- than the loan it happens to hang off.
+            loan.copy.shelfmark
 
     provides:
         MemberReturns(loan)

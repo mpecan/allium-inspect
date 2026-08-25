@@ -208,6 +208,43 @@ fn an_act_offered_by_another_surface_says_which() {
     );
 }
 
+/// `in <name>` names an instance of the surface's `context`, and `MemberShelf`
+/// has none — it shows every loan to everyone it faces. Left unreported, the
+/// journey would say which shelf it means and the tool would answer about a
+/// different question entirely.
+#[test]
+fn saying_which_one_of_an_unscoped_surface_is_reported() {
+    let found = notes(
+        "journey J {
+    cast:
+        ada: Member
+        bob: Member
+    1. she looks at a shelf that is not scoped to anybody
+        ada sees ada.name on MemberShelf in bob
+}",
+    );
+    assert!(
+        found.iter().any(|(verdict, message)| *verdict == Verdict::Unspecified
+            && message.contains("`MemberShelf` is not scoped to anything")),
+        "{found:?}"
+    );
+}
+
+/// And the same line against the surface that *is* scoped has nothing to say.
+#[test]
+fn saying_which_one_of_a_scoped_surface_is_ordinary() {
+    let found = notes(
+        "journey J {
+    cast:
+        ada: Member
+        bob: Member
+    1. she looks at bob's shelf
+        ada sees bob.name on MyLoans in bob
+}",
+    );
+    assert!(found.is_empty(), "{found:?}");
+}
+
 #[test]
 fn an_act_nobody_offers_says_that_instead() {
     let found = notes(

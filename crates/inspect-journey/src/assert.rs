@@ -130,7 +130,7 @@ impl Walker<'_> {
     /// surface that exposes it on the line above. A privacy claim that passes
     /// because nothing checked it is the worst answer this tool could give.
     pub(crate) fn observe(&self, sight: &Sight<'_>, about: String) -> Outcome {
-        let Sight { actor, subject, surface, negated, line } = *sight;
+        let Sight { actor, subject, surface, negated, line, .. } = *sight;
         let written = subject.as_written();
         let say = |verdict, detail: String| Outcome {
             line,
@@ -212,7 +212,7 @@ impl Walker<'_> {
         let Some(looking) = self.bound.get(actor) else {
             return Admission::Undecided(format!("`{actor}` is nobody in this journey"));
         };
-        let mut context = match self.context_for(boundary, looking) {
+        let mut context = match self.context_for(boundary, sight, looking) {
             Ok(bound) => bound,
             Err(why) => return Admission::Undecided(why),
         };
@@ -242,10 +242,10 @@ impl Walker<'_> {
                         path.root
                     ));
                 };
-                let Some(field) = path.segments.last() else {
+                if path.segments.is_empty() {
                     return Admission::Undecided("nothing is being read".to_owned());
-                };
-                Asked::Field { field, of }
+                }
+                Asked::Path { of, segments: &path.segments }
             }
         };
 
@@ -265,36 +265,54 @@ impl Walker<'_> {
 
     /// The surface's `context`, bound to the instance this actor stands at.
     ///
-    /// The actor *is* the context when they are an instance of its type, which
-    /// is the ordinary case and not a guess: `surface DeviceManagement` is
-    /// scoped to an `Identity`, the journey says Ada is looking, and Ada is an
-    /// Identity. Anything else is undecided rather than inferred — walking from
-    /// a device to its owner would be this tool deciding which identity a
-    /// person is at, which is exactly what a surface's context declares and not
-    /// something to guess on its behalf.
+    /// Two ways of knowing which one, and the journey's own word comes first.
+    /// `bruno sees proposal.decision on GroupMembers in room` says which group
+    /// he has open, and nothing else can: a person is in several, and picking
+    /// for them would be this tool deciding a fact about somebody's afternoon.
+    ///
+    /// Failing that, the actor *is* the context when they are an instance of
+    /// its type, which is the ordinary case and not a guess: `surface
+    /// DeviceManagement` is scoped to an `Identity`, the journey says Ada is
+    /// looking, and Ada is an Identity. Anything else is undecided rather than
+    /// inferred, with the remedy in the reason.
     fn context_for(
         &self,
         boundary: &Boundary,
+        sight: &Sight<'_>,
         looking: &EntityId,
     ) -> Result<BTreeMap<String, Value>, String> {
         let Some((name, entity)) = &boundary.context else {
             // No context: the surface is not scoped, and what it exposes it
-            // exposes to whoever it faces.
+            // exposes to whoever it faces. A journey that named one anyway has
+            // already been told so by the checker.
             return Ok(BTreeMap::new());
         };
 
-        let Some(instance) = self.world.instance(looking) else {
+        let standing = match sight.context {
+            Some(named) => self
+                .bound
+                .get(named)
+                .ok_or_else(|| format!("`{named}` is nobody in this journey"))?,
+            None => looking,
+        };
+
+        let Some(instance) = self.world.instance(standing) else {
             return Err("whoever is looking is not in this world".to_owned());
         };
         if &instance.entity != entity {
-            return Err(format!(
-                "it is scoped to `{entity}`, and `{}` is `{}` instead — a journey \
-                 cannot yet say which one it is looking at",
-                looking, instance.entity
-            ));
+            return Err(match sight.context {
+                Some(named) => {
+                    format!("it is scoped to `{entity}`, and `{named}` is `{}`", instance.entity)
+                }
+                None => format!(
+                    "it is scoped to `{entity}`, and `{}` is `{}` — say which one with \
+                     `… on {} in <the {entity}>`",
+                    sight.actor, instance.entity, sight.surface
+                ),
+            });
         }
 
-        Ok(BTreeMap::from([(name.clone(), Value::Ref(looking.clone()))]))
+        Ok(BTreeMap::from([(name.clone(), Value::Ref(standing.clone()))]))
     }
 
     /// Whether one item of an `exposes` block shows what is being asked about.
@@ -323,36 +341,20 @@ impl Walker<'_> {
             return Admission::Yes;
         }
 
-        let Asked::Field { field, of: subject } = asked else { return Admission::No };
-        let (field, subject) = (*field, *subject);
+        let Asked::Path { of, segments } = asked else { return Admission::No };
         match item {
             // `identity.name` — a field of the context itself — or
             // `SpecSet.module_count`, which is the same clause written over a
             // type rather than over a binding and means every instance of it.
-            Expr::MemberAccess { object, field: named, .. } => {
-                if named.name != field {
-                    return Admission::No;
-                }
-                match self.evaluate(object, context, module) {
-                    Ok((Value::Ref(id), _)) => Admission::from(&id == subject),
-                    Ok((Value::Set(items), unsettled)) => holds(&items, subject, unsettled),
-                    Ok(_) => Admission::No,
-                    Err(why) => Admission::Undecided(why),
-                }
-            }
-            // `for device in identity.listed_devices: device.label` — a field
-            // of one of a collection, and the question is whether the subject
-            // is in it.
+            Expr::MemberAccess { .. } => self.walks_to(item, (*of, segments), context, module),
+            // `for device in identity.listed_devices: device.label` — a walk
+            // that starts at one of a collection.
             Expr::For { binding, collection, filter, body, .. } => {
                 let ForBinding::Single(name) = binding else {
                     return Admission::Undecided(
                         "its iteration binds more than one name".to_owned(),
                     );
                 };
-                if !body_names(body, field, &name.name) {
-                    return Admission::No;
-                }
-
                 let (members, unsettled) = match self.evaluate(collection, context, module) {
                     Ok((Value::Set(items), unsettled)) => (items, unsettled),
                     Ok((other, _)) => {
@@ -363,40 +365,136 @@ impl Walker<'_> {
                     }
                     Err(why) => return Admission::Undecided(why),
                 };
-
-                match holds(&members, subject, unsettled) {
-                    Admission::Yes => {}
-                    other => return other,
-                }
-
-                // In the collection, and the filter is a second gate on it.
-                let Some(filter) = filter else { return Admission::Yes };
-
-                // The candidate's own fields are in scope bare, which is how
-                // `where status = pending` reads — it is the element's status,
-                // not anybody else's.
-                let mut scope = context.clone();
-                scope.insert(name.name.clone(), Value::Ref(subject.clone()));
-                if let Some(instance) = self.world.instance(subject) {
-                    for (field, value) in &instance.fields {
-                        scope.insert(field.clone(), value.clone());
-                    }
-                }
-
-                match self.evaluate(filter, &scope, module) {
-                    Ok((Value::Bool(true), _)) => Admission::Yes,
-                    Ok((Value::Bool(false), _)) => Admission::No,
-                    Ok(_) => Admission::Undecided(
-                        "its filter did not come back true or false".to_owned(),
-                    ),
-                    Err(why) => Admission::Undecided(why),
-                }
+                self.shown_to_a_member(
+                    &Iteration {
+                        binding: &name.name,
+                        members: &members,
+                        filter: filter.as_deref(),
+                        body,
+                    },
+                    (*of, segments),
+                    asking,
+                )
+                // A collection that dropped what it could not decide may have
+                // dropped the very element this walk starts from, and "no"
+                // about a set nothing finished reading is the privacy claim
+                // pointed the other way.
+                .or_undecided(unsettled)
             }
             _ => Admission::No,
         }
     }
 
-    /// Evaluate one expression of an `exposes` clause.
+    /// Whether an `exposes` item is the very walk being asked about.
+    ///
+    /// `shot.size_bytes` and `m.attachment.size_bytes` are the same walk
+    /// written from two places: the journey names the attachment it caught,
+    /// the surface reaches it through the message it hangs off. So the item is
+    /// split at every point, and the question at each is whether the part
+    /// *before* the split is the thing being asked about and the part after it
+    /// is the fields being read.
+    ///
+    /// Matching only the last field was the old rule, and it had the two
+    /// failures a rule this loose always has: `m.attachment.size_bytes` did not
+    /// match `shot.size_bytes` at all — the surface exposes it and the tool
+    /// reported a spec gap — while a clause reading some *other* thing's
+    /// `status` would have matched anything ending in `.status`.
+    fn walks_to(
+        &self,
+        item: &Expr,
+        (of, segments): (&EntityId, &[String]),
+        context: &BTreeMap<String, Value>,
+        module: &str,
+    ) -> Admission {
+        // A `for` body is usually several lines, and any of them may be the
+        // one being asked about.
+        if let Expr::Block { items, .. } = item {
+            let mut undecided = None;
+            for item in items {
+                match self.walks_to(item, (of, segments), context, module) {
+                    Admission::Yes => return Admission::Yes,
+                    Admission::Undecided(why) => undecided = undecided.or(Some(why)),
+                    Admission::No => {}
+                }
+            }
+            return undecided.map_or(Admission::No, Admission::Undecided);
+        }
+
+        let (root, fields) = walked(item);
+        let Some(prefix) = split_before(root, &fields, segments) else { return Admission::No };
+        match self.evaluate(prefix, context, module) {
+            Ok((Value::Ref(id), _)) => Admission::from(&id == of),
+            Ok((Value::Set(items), unsettled)) => holds(&items, of, unsettled),
+            Ok(_) => Admission::No,
+            Err(why) => Admission::Undecided(why),
+        }
+    }
+
+    /// Whether an iteration reaches what is being asked about, and admits it.
+    ///
+    /// Every element in turn rather than the asked-about thing alone, because
+    /// the walk may pass *through* an element on its way: `for m in
+    /// group.messages: m.attachment.name` shows the name of an attachment,
+    /// and the attachment is not in `group.messages`.
+    fn shown_to_a_member(
+        &self,
+        over: &Iteration<'_>,
+        (of, segments): (&EntityId, &[String]),
+        asking: &Asking<'_>,
+    ) -> Admission {
+        let Asking { context, module, .. } = *asking;
+        let mut undecided = None;
+        for member in over.members {
+            let Value::Ref(id) = member else { continue };
+            let mut scope = context.clone();
+            scope.insert(over.binding.to_owned(), member.clone());
+
+            match self.walks_to(over.body, (of, segments), &scope, module) {
+                Admission::No => continue,
+                Admission::Undecided(why) => {
+                    undecided = undecided.or(Some(why));
+                    continue;
+                }
+                Admission::Yes => {}
+            }
+
+            // Reached from this element, and its `where` is a second gate.
+            match self.admits_element(over.filter, id, scope, module) {
+                Admission::Yes => return Admission::Yes,
+                Admission::Undecided(why) => undecided = undecided.or(Some(why)),
+                Admission::No => {}
+            }
+        }
+        undecided.map_or(Admission::No, Admission::Undecided)
+    }
+
+    /// Whether an iteration's `where` admits one element.
+    fn admits_element(
+        &self,
+        filter: Option<&Expr>,
+        element: &EntityId,
+        mut scope: BTreeMap<String, Value>,
+        module: &str,
+    ) -> Admission {
+        let Some(filter) = filter else { return Admission::Yes };
+
+        // The element's own fields are in scope bare, which is how `where
+        // status = pending` reads — it is the element's status, not anybody
+        // else's.
+        if let Some(instance) = self.world.instance(element) {
+            for (field, value) in &instance.fields {
+                scope.insert(field.clone(), value.clone());
+            }
+        }
+
+        match self.evaluate(filter, &scope, module) {
+            Ok((Value::Bool(true), _)) => Admission::Yes,
+            Ok((Value::Bool(false), _)) => Admission::No,
+            Ok(_) => Admission::Undecided("its filter did not come back true or false".to_owned()),
+            Err(why) => Admission::Undecided(why),
+        }
+    }
+
     /// Evaluate one expression of an `exposes` clause.
     ///
     /// Returns what was left unsettled along with the value, and the caller has
@@ -441,10 +539,22 @@ struct Asking<'a> {
 
 /// What a `sees` line is asking about, resolved.
 enum Asked<'a> {
-    /// `tablet.label` — a field, and whose.
-    Field { field: &'a str, of: &'a EntityId },
+    /// `tablet.label` — the thing it starts from, and the walk off it.
+    ///
+    /// The whole walk rather than its last field: `shot.size_bytes` and
+    /// `note.author.display_name` end in a field each and are not the same
+    /// question, and a surface that shows one need not show the other.
+    Path { of: &'a EntityId, segments: &'a [String] },
     /// `announces_reads(ada)` — a call the surface may expose.
     Call { name: &'a str, arguments: Vec<Value> },
+}
+
+/// One `for … in … where …:` of an `exposes` clause, with its members read.
+struct Iteration<'a> {
+    binding: &'a str,
+    members: &'a [Value],
+    filter: Option<&'a Expr>,
+    body: &'a Expr,
 }
 
 /// Whether `subject` is among `items`, given what could not be settled.
@@ -466,25 +576,55 @@ impl From<bool> for Admission {
     }
 }
 
-/// Whether an iteration's body reads `field` off its own binding.
-///
-/// `for device in identity.listed_devices: device.label` shows labels, and it
-/// shows them off `device`. A body reading `identity.label` inside the same
-/// loop would be exposing something else entirely, so the binding is checked
-/// rather than only the field name.
-fn body_names(body: &Expr, field: &str, binding: &str) -> bool {
-    match body {
-        Expr::Block { items, .. } => items.iter().any(|item| body_names(item, field, binding)),
-        Expr::MemberAccess { object, field: named, .. } => {
-            named.name == field && is_ident(object, binding)
+impl Admission {
+    /// Downgrade a *no* to undecided when something was left unsettled.
+    ///
+    /// A `yes` stands: it was reached, whatever else could not be. A `no`
+    /// reached over a set that dropped what it could not decide is a claim
+    /// nothing checked.
+    fn or_undecided(self, unsettled: Option<String>) -> Self {
+        match (self, unsettled) {
+            (Admission::No, Some(why)) => Admission::Undecided(why),
+            (settled, _) => settled,
         }
-        _ => false,
     }
 }
 
-/// Whether `expr` is exactly the name `wanted`.
-fn is_ident(expr: &Expr, wanted: &str) -> bool {
-    matches!(expr, Expr::Ident(ident) if ident.name == wanted)
+/// A member-access chain, split into what it starts from and the fields walked.
+///
+/// `m.attachment.size_bytes` gives `m` and, in order, `attachment` paired with
+/// `m.attachment`, then `size_bytes` paired with the whole. Each field carries
+/// the sub-expression that *ends* at it, so a prefix can be evaluated without
+/// rebuilding one.
+fn walked(expr: &Expr) -> (&Expr, Vec<(&str, &Expr)>) {
+    let mut fields: Vec<(&str, &Expr)> = Vec::new();
+    let mut here = expr;
+    while let Expr::MemberAccess { object, field, .. } = here {
+        fields.push((field.name.as_str(), here));
+        here = object;
+    }
+    fields.reverse();
+    (here, fields)
+}
+
+/// The part of a chain that would have to be the thing being asked about.
+///
+/// `m.attachment.size_bytes` asked about as `<an attachment>.size_bytes` splits
+/// after `attachment`, and what comes back is `m.attachment` — evaluate that,
+/// and if it is the attachment in question the surface shows this.
+///
+/// `None` when the chain does not end in the fields being read, which is the
+/// ordinary answer: most items of an `exposes` block are about something else.
+fn split_before<'a>(
+    root: &'a Expr,
+    fields: &[(&str, &'a Expr)],
+    wanted: &[String],
+) -> Option<&'a Expr> {
+    let at = fields.len().checked_sub(wanted.len())?;
+    if !fields[at..].iter().map(|(name, _)| *name).eq(wanted.iter().map(String::as_str)) {
+        return None;
+    }
+    Some(if at == 0 { root } else { fields[at - 1].1 })
 }
 
 /// One `sees` or `cannot see` line, as the walker asks it.
@@ -492,11 +632,14 @@ fn is_ident(expr: &Expr, wanted: &str) -> bool {
 /// Grouped rather than passed loose because the four travel together and the
 /// checker already asks the same question under the same shape.
 pub(crate) struct Sight<'a> {
-    /// Who is looking. The surface's `context` is resolved from them.
+    /// Who is looking. The surface's `context` is resolved from them when the
+    /// journey does not say which one they are at.
     pub(crate) actor: &'a str,
     /// What they are looking at: a path, or a call the surface exposes.
     pub(crate) subject: &'a Subject,
     pub(crate) surface: &'a str,
+    /// Which instance of the surface's `context`, when the journey says.
+    pub(crate) context: Option<&'a str>,
     pub(crate) negated: bool,
     pub(crate) line: usize,
 }
@@ -535,56 +678,96 @@ mod tests {
     }
 
     fn access(object: &str, field: &str) -> Expr {
+        access_of(ident(object), field)
+    }
+
+    fn access_of(object: Expr, field: &str) -> Expr {
         Expr::MemberAccess {
             span: NOWHERE,
-            object: Box::new(ident(object)),
+            object: Box::new(object),
             field: Ident { span: NOWHERE, name: field.to_owned() },
         }
     }
 
-    fn block(items: Vec<Expr>) -> Expr {
-        Expr::Block { span: NOWHERE, items }
+    fn is_named(expr: &Expr, wanted: &str) -> bool {
+        matches!(expr, Expr::Ident(ident) if ident.name == wanted)
+    }
+
+    fn segments(names: &[&str]) -> Vec<String> {
+        names.iter().map(|name| (*name).to_owned()).collect()
+    }
+
+    /// The chain, and each field paired with the walk that ends at it.
+    #[test]
+    fn a_chain_splits_into_what_it_starts_from_and_the_fields_walked() {
+        let deep = access_of(access("m", "attachment"), "size_bytes");
+        let (root, fields) = walked(&deep);
+        assert!(is_named(root, "m"));
+        assert_eq!(
+            fields.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+            ["attachment", "size_bytes"]
+        );
     }
 
     #[test]
-    fn a_body_that_reads_the_field_off_the_binding_names_it() {
-        assert!(body_names(&access("device", "label"), "label", "device"));
+    fn something_that_is_not_a_chain_is_all_root_and_no_fields() {
+        let bare = ident("device");
+        let (root, fields) = walked(&bare);
+        assert!(is_named(root, "device"));
+        assert!(fields.is_empty());
     }
 
-    /// The binding is checked, not only the field. `identity.label` inside
-    /// `for device in …` exposes something else entirely.
+    /// The whole point of the split. `m.attachment.size_bytes` is asked about
+    /// as `<the attachment>.size_bytes`, so it splits after `attachment` and
+    /// what comes back is the walk to the attachment itself.
     #[test]
-    fn a_body_that_reads_the_field_off_something_else_does_not() {
-        assert!(!body_names(&access("identity", "label"), "label", "device"));
+    fn a_chain_splits_where_the_fields_being_read_begin() {
+        let deep = access_of(access("m", "attachment"), "size_bytes");
+        let (root, fields) = walked(&deep);
+
+        let prefix = split_before(root, &fields, &segments(&["size_bytes"])).expect("splits");
+        let (prefix_root, prefix_fields) = walked(prefix);
+        assert!(is_named(prefix_root, "m"));
+        assert_eq!(prefix_fields.iter().map(|(name, _)| *name).collect::<Vec<_>>(), ["attachment"]);
     }
 
+    /// Asked about as the whole walk, the split is before everything and what
+    /// has to be the subject is what the chain starts from.
     #[test]
-    fn a_body_that_reads_a_different_field_does_not() {
-        assert!(!body_names(&access("device", "status"), "label", "device"));
+    fn a_chain_asked_about_whole_splits_at_its_root() {
+        let deep = access_of(access("intent", "targets"), "count");
+        let (root, fields) = walked(&deep);
+        let prefix = split_before(root, &fields, &segments(&["targets", "count"])).expect("splits");
+        assert!(is_named(prefix, "intent"));
     }
 
-    /// A `for` body is usually several lines, and any of them may be the one.
+    /// The failure the old rule had in the other direction: matching only the
+    /// last field made every clause ending in `.status` an answer to every
+    /// question about somebody's status.
     #[test]
-    fn any_line_of_a_body_can_name_it() {
-        let body = block(vec![
-            access("device", "status"),
-            access("device", "label"),
-            access("device", "key_storage"),
-        ]);
-        assert!(body_names(&body, "label", "device"));
-        assert!(!body_names(&body, "serial", "device"));
+    fn a_chain_that_ends_in_the_wrong_fields_does_not_split() {
+        let deep = access_of(access("m", "attachment"), "size_bytes");
+        let (root, fields) = walked(&deep);
+        assert!(split_before(root, &fields, &segments(&["status"])).is_none());
+        assert!(split_before(root, &fields, &segments(&["author", "size_bytes"])).is_none());
     }
 
+    /// A walk longer than the clause cannot be inside it, and asking for one
+    /// must not panic on the arithmetic.
     #[test]
-    fn a_body_that_is_not_a_read_at_all_names_nothing() {
-        assert!(!body_names(&ident("device"), "label", "device"));
-        assert!(!body_names(&block(Vec::new()), "label", "device"));
+    fn a_walk_longer_than_the_clause_does_not_split() {
+        let shallow = access("group", "name");
+        let (root, fields) = walked(&shallow);
+        assert!(split_before(root, &fields, &segments(&["a", "long", "way", "down"])).is_none());
     }
 
+    /// A `no` over a set that dropped what it could not decide is a claim
+    /// nothing checked; a `yes` stands whatever else was unsettled.
     #[test]
-    fn a_name_is_itself_and_nothing_else() {
-        assert!(is_ident(&ident("device"), "device"));
-        assert!(!is_ident(&ident("devices"), "device"));
-        assert!(!is_ident(&access("device", "label"), "device"));
+    fn an_unsettled_set_downgrades_a_no_and_leaves_a_yes_alone() {
+        let why = || Some("something was unsettled".to_owned());
+        assert!(matches!(Admission::No.or_undecided(why()), Admission::Undecided(_)));
+        assert!(matches!(Admission::No.or_undecided(None), Admission::No));
+        assert!(matches!(Admission::Yes.or_undecided(why()), Admission::Yes));
     }
 }
