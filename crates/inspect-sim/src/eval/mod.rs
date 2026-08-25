@@ -148,7 +148,15 @@ pub fn eval(expr: &Expr, env: &Env<'_>) -> Evaluation {
         }
         Expr::Comparison { left, op, right, .. } => compare(left, *op, right, env),
         Expr::LogicalOp { left, op, right, .. } => logical(left, *op, right, env),
-        Expr::BinaryOp { left, op, right, .. } => arithmetic(left, *op, right, env),
+        Expr::BinaryOp { left, op, right, .. } => {
+            // `exists membership/Membership{…}` arrives here as a division. See
+            // `collections::misparsed_qualified_lookup` for why, and for the
+            // test that says when it stops arriving that way.
+            match collections::misparsed_qualified_lookup(left, *op, right) {
+                Some(lookup) => collections::existence(lookup, env, false),
+                None => arithmetic(left, *op, right, env),
+            }
+        }
         Expr::Not { operand, .. } => {
             let operand = eval(operand, env);
             let truth = operand.truth().not();
@@ -202,7 +210,9 @@ pub fn eval(expr: &Expr, env: &Env<'_>) -> Evaluation {
         Expr::Pipe { .. } => unsupported("a `|` alternation", expr, env),
         Expr::Lambda { .. } => unsupported("a lambda", expr, env),
         Expr::Call { .. } => unsupported("a function call", expr, env),
-        Expr::JoinLookup { .. } => unsupported("a join lookup", expr, env),
+        Expr::JoinLookup { entity, fields, .. } => {
+            collections::join_lookup(expr, entity, fields, env)
+        }
         Expr::ObjectLiteral { .. } => unsupported("an object literal", expr, env),
         Expr::GenericType { .. } | Expr::TypeOptional { .. } => {
             unsupported("a type annotation", expr, env)

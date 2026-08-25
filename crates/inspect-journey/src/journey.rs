@@ -192,6 +192,24 @@ pub enum Term {
     Path(Path),
     /// `{note, other}` — a set of things already named.
     Set(Vec<Term>),
+    /// `now`, `now + 1.day`, `now - 2.hours`.
+    ///
+    /// The only way a journey can name a *moment*. Every other literal form is
+    /// absolute, and a timestamp written absolutely is unreadable and wrong the
+    /// day after it is written: what a journey means is "this expires an hour
+    /// from where the clock is", not "this expires at 2038-01-19T03:14:07Z".
+    ///
+    /// It is also the form the specifications need. A rule guarded by
+    /// `requires: invitation.expires_at > now` cannot be reached from a world
+    /// where `expires_at` holds an integer — the comparison is between an
+    /// integer and a timestamp and is refused, correctly — so before this
+    /// existed, every rule with a deadline in it was unreachable in a walk.
+    Clock {
+        /// Milliseconds either side of the world's clock. Zero for bare `now`.
+        offset: i64,
+        /// As the author wrote it, for the report.
+        written: String,
+    },
 }
 
 impl Term {
@@ -204,6 +222,7 @@ impl Term {
                 let inside: Vec<String> = items.iter().map(Term::as_written).collect();
                 format!("{{{}}}", inside.join(", "))
             }
+            Term::Clock { written, .. } => written.clone(),
         }
     }
 }

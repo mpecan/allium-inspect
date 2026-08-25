@@ -644,3 +644,80 @@ mod shows {
         assert_eq!(journeys[0].cast.len(), 1);
     }
 }
+
+/// Naming a moment.
+///
+/// The one arithmetic in the grammar, and the reason it exists: a rule guarded
+/// by `requires: x.expires_at > now` cannot be reached from a world where
+/// `expires_at` holds an integer, because an integer cannot be ordered against
+/// a timestamp. Before this, every rule with a deadline in it was unreachable.
+mod clock {
+    use inspect_journey::{Given, Term, parse};
+
+    fn given_value(written: &str) -> Term {
+        let source = format!(
+            "journey Reading {{\n    goal: x\n    given:\n        inv.expires_at = {written}\n\n    1. a step\n        then inv.status = live\n}}\n"
+        );
+        let journeys = parse(&source).unwrap_or_else(|error| panic!("`{written}`: {error}"));
+        match journeys[0].given.first().expect("one given") {
+            Given::Assign { value, .. } => value.clone(),
+            other => panic!("expected an assignment, got {other:?}"),
+        }
+    }
+
+    fn offset(written: &str) -> i64 {
+        match given_value(written) {
+            Term::Clock { offset, .. } => offset,
+            other => panic!("`{written}` is not a clock term: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn bare_now_is_the_clock_where_it_stands() {
+        assert_eq!(offset("now"), 0);
+    }
+
+    #[test]
+    fn a_moment_after_now() {
+        assert_eq!(offset("now + 1.day"), 86_400_000);
+        assert_eq!(offset("now + 2.hours"), 7_200_000);
+    }
+
+    #[test]
+    fn a_moment_before_now() {
+        assert_eq!(offset("now - 1.day"), -86_400_000);
+        assert_eq!(offset("now - 30.minutes"), -1_800_000);
+    }
+
+    #[test]
+    fn it_keeps_what_the_author_wrote() {
+        match given_value("now + 1.day") {
+            Term::Clock { written, .. } => assert_eq!(written, "now + 1.day"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// Silence here would leave the line reading as the bare name `now`, which
+    /// resolves to nothing and reports as an unbound cast member — an error
+    /// about the journey when the fault is in the line.
+    #[test]
+    fn now_followed_by_something_that_is_not_a_duration_is_refused() {
+        for written in ["now + 1.fortnight", "now + banana", "now * 2", "now 1.day", "now +"] {
+            let source = format!(
+                "journey R {{\n    goal: x\n    given:\n        a.b = {written}\n\n    1. s\n        then a.b = c\n}}\n"
+            );
+            assert!(parse(&source).is_err(), "`{written}` should not read as a moment");
+        }
+    }
+
+    /// `nowhere` opens with the same three letters and is an ordinary word.
+    #[test]
+    fn a_word_that_merely_starts_with_now_is_not_a_moment() {
+        assert!(matches!(given_value("nowhere"), Term::Path(_)));
+    }
+
+    #[test]
+    fn a_duration_on_its_own_is_still_a_duration() {
+        assert!(matches!(given_value("1.day"), Term::Literal(_)));
+    }
+}

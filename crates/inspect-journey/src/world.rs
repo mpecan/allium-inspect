@@ -141,6 +141,11 @@ impl Walker<'_> {
             Term::Literal(value) => value.clone(),
             Term::Set(items) => Value::Set(items.iter().map(|item| self.value_of(item)).collect()),
             Term::Path(path) => self.read(path),
+            // Resolved against the world's clock at the moment it is read, so
+            // `now + 1.day` in a `given` means a day after the world started
+            // and the same words in a `stipulate` after `after 3.days` mean a
+            // day after *that*. Both are what the line says where it is.
+            Term::Clock { offset, .. } => Value::Timestamp(self.world.now + offset),
         }
     }
 

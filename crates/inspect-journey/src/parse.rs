@@ -530,6 +530,9 @@ fn term(text: &str, line: usize) -> Result<Term, ParseError> {
     if let Some(value) = seed::literal(trimmed) {
         return Ok(Term::Literal(value));
     }
+    if let Some(clock) = clock(trimmed, line)? {
+        return Ok(clock);
+    }
     // Everything else is a path — including a bare word, which is the shape of
     // both a state a spec declares (`available`) and somebody the journey cast
     // (`copy`). Nothing here can tell those apart, and a parser that guessed
@@ -537,6 +540,55 @@ fn term(text: &str, line: usize) -> Result<Term, ParseError> {
     // knows what the journey has bound, so it decides: a bound name is what it
     // is bound to, and an unbound one is the state it spells.
     Ok(Term::Path(path(trimmed, line)?))
+}
+
+/// `now`, `now + 1.day`, `now - 2.hours`, or nothing.
+///
+/// The one arithmetic the grammar has, and it stops here on purpose. A journey
+/// says *when* relative to the clock it can already move with `after`; anything
+/// more is an expression language, and this file has spent its whole life not
+/// being one — see the note on `Assertion`.
+///
+/// # Errors
+///
+/// Returns an error for `now` followed by something that is not a signed
+/// duration. Silence there would leave `now + 1.fortnight` reading as the bare
+/// name `now`, which resolves to nothing and reports as an unbound cast member
+/// — an error about the journey when the fault is in the line.
+fn clock(text: &str, line: usize) -> Result<Option<Term>, ParseError> {
+    let Some(rest) = text.strip_prefix("now") else { return Ok(None) };
+
+    // `nowhere` opens with the same three letters and is an ordinary word. What
+    // follows `now` has to be nothing or an operator, or this claims every name
+    // that happens to start that way — and then refuses it, which is an error
+    // about the line when there is nothing wrong with it.
+    if !rest.is_empty() && !rest.starts_with([' ', '\t', '+', '-']) {
+        return Ok(None);
+    }
+
+    let rest = rest.trim();
+
+    if rest.is_empty() {
+        return Ok(Some(Term::Clock { offset: 0, written: "now".to_owned() }));
+    }
+
+    let (sign, amount) = match rest.split_at_checked(1) {
+        Some(("+", amount)) => (1, amount.trim()),
+        Some(("-", amount)) => (-1, amount.trim()),
+        _ => return fail(line, format!("expected `now`, `now + …` or `now - …`, found `{text}`")),
+    };
+
+    let Some(Value::Duration(millis)) = seed::literal(amount) else {
+        return fail(
+            line,
+            format!("`{amount}` is not a duration — expected something like `1.day`"),
+        );
+    };
+
+    Ok(Some(Term::Clock {
+        offset: sign * millis,
+        written: format!("now {} {amount}", if sign > 0 { "+" } else { "-" }),
+    }))
 }
 
 /// Everything before a `--` comment, trimmed.

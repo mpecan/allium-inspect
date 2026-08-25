@@ -16,7 +16,8 @@
 
 use allium_parser::Span as AstSpan;
 use allium_parser::ast::{
-    BinaryOp, ComparisonOp, Expr, ForBinding, Ident, LogicalOp, StringLiteral, StringPart,
+    BinaryOp, ComparisonOp, Expr, ForBinding, Ident, JoinField, LogicalOp, QualifiedName,
+    StringLiteral, StringPart,
 };
 use inspect_sim::{
     Truth, Value,
@@ -1088,4 +1089,155 @@ fn a_plural_name_resolves_to_the_instances_of_its_singular() {
         panic!("expected a collection");
     };
     assert_eq!(copies.len(), 2);
+}
+
+// --- join lookups --------------------------------------------------------
+//
+// `exists Membership{group: g, member: m}` is how a specification asks whether
+// a relationship is already recorded, and it is most of the interesting rules
+// in a real set. The care in here is the third truth value: a candidate whose
+// field nobody set has not been ruled *out*.
+
+fn join(entity: Expr, fields: &[(&str, Expr)]) -> Expr {
+    Expr::JoinLookup {
+        span: NOWHERE,
+        entity: Box::new(entity),
+        fields: fields
+            .iter()
+            .map(|(name, value)| JoinField {
+                span: NOWHERE,
+                field: Ident { span: NOWHERE, name: (*name).to_owned() },
+                value: Some(value.clone()),
+            })
+            .collect(),
+    }
+}
+
+/// A world with one membership in it, joining `Group#1` and `Member#1`.
+fn joined() -> (World, EntityId, EntityId, EntityId) {
+    let mut world = World::new().at(1_000);
+    let group = world.create("Group", "membership");
+    let member = world.create("Member", "membership");
+
+    let membership = world.create("Membership", "membership");
+    world.set_field(&membership, "group", Value::Ref(group.clone()));
+    world.set_field(&membership, "member", Value::Ref(member.clone()));
+
+    (world, group, member, membership)
+}
+
+#[test]
+fn a_join_lookup_finds_the_instance_whose_fields_match() {
+    let (world, group, member, membership) = joined();
+    let env = env(&world, "membership").bind("g", Value::Ref(group)).bind("m", Value::Ref(member));
+
+    let found = value_of(
+        &join(ident("Membership"), &[("group", ident("g")), ("member", ident("m"))]),
+        &env,
+    );
+    assert_eq!(found, Value::Ref(membership));
+}
+
+#[test]
+fn a_join_lookup_that_matches_nothing_is_null() {
+    let (world, group, _, _) = joined();
+    let stranger = EntityId::new("Member", 9);
+    let env =
+        env(&world, "membership").bind("g", Value::Ref(group)).bind("m", Value::Ref(stranger));
+
+    assert_eq!(
+        value_of(
+            &join(ident("Membership"), &[("group", ident("g")), ("member", ident("m"))]),
+            &env
+        ),
+        Value::Null
+    );
+}
+
+#[test]
+fn exists_over_a_join_lookup_answers_the_question_a_spec_asks() {
+    let (world, group, member, _) = joined();
+    let env = env(&world, "membership")
+        .bind("g", Value::Ref(group.clone()))
+        .bind("m", Value::Ref(member));
+
+    let lookup = join(ident("Membership"), &[("group", ident("g")), ("member", ident("m"))]);
+    assert_eq!(truth_of(&exists(lookup), &env), Truth::True);
+
+    let stranger = join(ident("Membership"), &[("group", ident("g")), ("member", ident("nobody"))]);
+    let env = env.bind("nobody", Value::Ref(EntityId::new("Member", 9)));
+    assert_eq!(truth_of(&exists(stranger), &env), Truth::False);
+}
+
+/// The whole care in the implementation. A membership whose `member` nobody set
+/// has not been shown *not* to match, and answering `null` there would report a
+/// relationship absent because nothing had looked.
+#[test]
+fn a_candidate_with_an_unknown_field_leaves_the_lookup_undecided() {
+    let mut world = World::new().at(1_000);
+    let group = world.create("Group", "membership");
+    let membership = world.create("Membership", "membership");
+    world.set_field(&membership, "group", Value::Ref(group.clone()));
+    // `member` is never set.
+
+    let env = env(&world, "membership")
+        .bind("g", Value::Ref(group))
+        .bind("m", Value::Ref(EntityId::new("Member", 7)));
+
+    let lookup = join(ident("Membership"), &[("group", ident("g")), ("member", ident("m"))]);
+    assert_eq!(truth_of(&exists(lookup.clone()), &env), Truth::Unknown);
+    assert!(
+        reasons(&lookup, &env).iter().any(|why| why.contains("might match")),
+        "{:?}",
+        reasons(&lookup, &env)
+    );
+}
+
+/// A definite mismatch on one field settles it, even with an unknown elsewhere.
+#[test]
+fn a_field_that_definitely_differs_rules_a_candidate_out() {
+    let mut world = World::new().at(1_000);
+    let membership = world.create("Membership", "membership");
+    world.set_field(&membership, "group", Value::Ref(EntityId::new("Group", 5)));
+    world.set_field(&membership, "member", Value::Ref(EntityId::new("Member", 5)));
+
+    let env = env(&world, "membership")
+        .bind("g", Value::Ref(EntityId::new("Group", 1)))
+        .bind("m", Value::Ref(EntityId::new("Member", 1)));
+
+    let lookup = join(ident("Membership"), &[("group", ident("g")), ("member", ident("m"))]);
+    assert_eq!(truth_of(&exists(lookup), &env), Truth::False);
+}
+
+#[test]
+fn a_lookup_on_a_value_nothing_settled_is_undecided_with_its_reason() {
+    let (world, group, _, _) = joined();
+    let env = env(&world, "membership").bind("g", Value::Ref(group));
+
+    // `m` is bound to nothing at all.
+    let lookup = join(ident("Membership"), &[("group", ident("g")), ("member", ident("m"))]);
+    assert_eq!(truth_of(&exists(lookup.clone()), &env), Truth::Unknown);
+    assert!(reasons(&lookup, &env).iter().any(|why| why.contains("nothing is bound to `m`")));
+}
+
+#[test]
+fn a_qualified_join_lookup_reads_the_same_as_a_bare_one() {
+    let (world, group, member, _) = joined();
+    let env = env(&world, "messaging").bind("g", Value::Ref(group)).bind("m", Value::Ref(member));
+
+    let qualified = Expr::QualifiedName(QualifiedName {
+        span: NOWHERE,
+        qualifier: Some("membership".to_owned()),
+        name: "Membership".to_owned(),
+    });
+    let lookup = join(qualified, &[("group", ident("g")), ("member", ident("m"))]);
+    assert_eq!(truth_of(&exists(lookup), &env), Truth::True);
+}
+
+#[test]
+fn a_join_lookup_over_a_type_with_no_instances_is_null() {
+    let world = library();
+    let env = env(&world, "lending");
+    let lookup = join(ident("Membership"), &[("group", ident("g"))]);
+    assert_eq!(value_of(&lookup, &env.bind("g", Value::Int(1))), Value::Null);
 }
