@@ -365,7 +365,7 @@ impl Walker<'_> {
 
         // Positional, matched against the trigger's declared parameters — which
         // is how the spec writes the act and how a person reads it back.
-        let parameters = self.parameters_of(trigger);
+        let (parameters, _) = self.parameters_of(trigger);
         let mut event = Event::new(trigger, &module);
         for (at, argument) in arguments.iter().enumerate() {
             let name = parameters.get(at).cloned().unwrap_or_else(|| format!("arg{at}"));
@@ -422,12 +422,12 @@ impl Walker<'_> {
     }
 
     /// The trigger's parameters, in the order the spec declares them.
-    fn parameters_of(&self, trigger: &str) -> Vec<String> {
+    fn parameters_of(&self, trigger: &str) -> (Vec<String>, Vec<String>) {
         self.spec
             .nodes_of(NodeKind::Trigger)
             .find(|node| node.name == trigger)
             .and_then(|node| node.detail.as_trigger())
-            .map(|detail| detail.parameters.clone())
+            .map(|detail| (detail.parameters.clone(), detail.optional.clone()))
             .unwrap_or_default()
     }
 

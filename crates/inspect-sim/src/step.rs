@@ -21,6 +21,8 @@
 
 use std::collections::BTreeMap;
 
+use allium_parser::ast::{CallArg, Expr};
+
 use inspect_model::{NodeKind, Program, SpecGraph, graph::TriggerSource};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -235,9 +237,21 @@ fn run_rule(
     world: &mut World,
     event: &Event,
 ) -> RuleOutcome {
-    let bindings: BTreeMap<String, Value> = event.arguments.clone();
     let empty = inspect_model::RuleAst::default();
     let ast = program.rule(id).unwrap_or(&empty);
+
+    let mut bindings: BTreeMap<String, Value> = event.arguments.clone();
+    // An optional parameter nobody passed is `null`, which is what `?` means
+    // and what a rule guarding `attachment_size = null` is written against.
+    // Left unbound it is undecided instead — for every caller who did not pass
+    // one, which is all of them, since not passing it is the point.
+    //
+    // Read off the rule's own `when` clause rather than looked up in the graph:
+    // that clause *is* the declaration, and one answer is better than two that
+    // can disagree.
+    for name in ast.when.as_ref().map(optional_parameters).unwrap_or_default() {
+        bindings.entry(name).or_insert(Value::Null);
+    }
 
     let mut requires = Vec::new();
     let mut unresolved = Vec::new();
@@ -397,4 +411,18 @@ pub fn enabled(
     }
 
     found
+}
+
+/// The parameters a `when` clause declares with `?`.
+fn optional_parameters(when: &Expr) -> Vec<String> {
+    let Expr::Call { args, .. } = when else { return Vec::new() };
+    args.iter()
+        .filter_map(|argument| match argument {
+            CallArg::Positional(Expr::TypeOptional { inner, .. }) => match inner.as_ref() {
+                Expr::Ident(ident) => Some(ident.name.clone()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
 }

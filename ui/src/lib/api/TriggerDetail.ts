@@ -10,6 +10,16 @@ export type TriggerDetail = { source: TriggerSource,
  */
 parameters: Array<string>, 
 /**
+ * Which of them are declared `name?`.
+ *
+ * An omitted optional argument is `null`, which is what the `?` means and
+ * what a rule guarding `attachment_size = null` is written against.
+ * Leaving it unbound instead makes that rule undecided for every caller
+ * who did not pass one — which is all of them, since the point of an
+ * optional parameter is that it is usually not passed.
+ */
+optional: Array<string>, 
+/**
  * The condition as written, for a state or temporal trigger.
  */
 condition: string | null, 

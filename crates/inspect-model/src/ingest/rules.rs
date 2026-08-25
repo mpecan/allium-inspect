@@ -96,6 +96,7 @@ pub fn ingest(block: &Value, module: &str, source: &str, into: &mut Ingestion) {
             TriggerDetail {
                 source: TriggerSource::External,
                 parameters: Vec::new(),
+                optional: Vec::new(),
                 condition: None,
                 entity: None,
             },
@@ -157,6 +158,7 @@ fn expression_span(value: &Value) -> Option<Span> {
 pub fn trigger_from_when(value: &Value) -> (String, TriggerDetail) {
     match json::tagged(value) {
         Some(("Call", call)) => {
+            let (parameters, optional) = call_parameters(call);
             let name = call
                 .get("function")
                 .and_then(|function| json::tagged(function))
@@ -166,7 +168,8 @@ pub fn trigger_from_when(value: &Value) -> (String, TriggerDetail) {
                 name,
                 TriggerDetail {
                     source: TriggerSource::External,
-                    parameters: call_parameters(call),
+                    parameters,
+                    optional,
                     condition: None,
                     entity: None,
                 },
@@ -188,6 +191,7 @@ pub fn trigger_from_when(value: &Value) -> (String, TriggerDetail) {
                 TriggerDetail {
                     source,
                     parameters: json::declared_name(binding).into_iter().collect(),
+                    optional: Vec::new(),
                     condition: None,
                     entity,
                 },
@@ -198,6 +202,7 @@ pub fn trigger_from_when(value: &Value) -> (String, TriggerDetail) {
             TriggerDetail {
                 source: TriggerSource::External,
                 parameters: Vec::new(),
+                optional: Vec::new(),
                 condition: None,
                 entity: None,
             },
@@ -205,18 +210,45 @@ pub fn trigger_from_when(value: &Value) -> (String, TriggerDetail) {
     }
 }
 
-/// The positional and named argument names of a call.
-fn call_parameters(call: &Value) -> Vec<String> {
-    json::array(call, "args")
-        .iter()
-        .filter_map(|argument| match json::tagged(argument)? {
-            ("Positional", inner) => {
-                json::tagged(inner).and_then(|(_, node)| json::string(node, "name"))
-            }
+/// The positional and named argument names of a call, and which are optional.
+///
+/// `attachment_size?` nests as `Positional(TypeOptional(Ident))`, and the
+/// unwrap looked for a `name` on the `TypeOptional` — which has a span and an
+/// inner and no name — so every optional parameter was dropped on the floor.
+/// `MemberSends(group, author, body, parents, attachment_name?,
+/// attachment_size?)` arrived with four parameters, and the rule's own
+/// `requires: attachment_size = null` was undecided against a name the graph
+/// had never heard of.
+fn call_parameters(call: &Value) -> (Vec<String>, Vec<String>) {
+    let mut parameters = Vec::new();
+    let mut optional = Vec::new();
+
+    for argument in json::array(call, "args") {
+        let Some(named) = json::tagged(argument) else { continue };
+        let name = match named {
+            ("Positional", inner) => match json::tagged(inner) {
+                Some(("TypeOptional", wrapped)) => {
+                    let name = wrapped
+                        .get("inner")
+                        .and_then(json::tagged)
+                        .and_then(|(_, node)| json::string(node, "name"));
+                    if let Some(name) = &name {
+                        optional.push(name.clone());
+                    }
+                    name
+                }
+                Some((_, node)) => json::string(node, "name"),
+                None => None,
+            },
             ("Named", inner) => json::declared_name(inner),
             _ => None,
-        })
-        .collect()
+        };
+        if let Some(name) = name {
+            parameters.push(name);
+        }
+    }
+
+    (parameters, optional)
 }
 
 /// The leftmost identifier of a navigation chain.
@@ -247,6 +279,57 @@ fn mentions_now(value: &Value) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    /// `attachment_size?` nests as `Positional(TypeOptional(Ident))`, and the
+    /// unwrap used to look for a `name` on the `TypeOptional` — which has a
+    /// span and an inner and no name — so every optional parameter was dropped.
+    #[test]
+    fn an_optional_parameter_is_kept_and_marked() {
+        let call = serde_json::json!({
+            "args": [
+                { "Positional": { "Ident": { "name": "group" } } },
+                { "Positional": { "TypeOptional": { "inner": { "Ident": { "name": "note" } } } } }
+            ]
+        });
+
+        let (parameters, optional) = call_parameters(&call);
+        assert_eq!(parameters, ["group", "note"], "an optional parameter is still a parameter");
+        assert_eq!(optional, ["note"], "and is known to be one");
+    }
+
+    #[test]
+    fn a_required_parameter_is_not_marked_optional() {
+        let call = serde_json::json!({
+            "args": [{ "Positional": { "Ident": { "name": "group" } } }]
+        });
+
+        let (parameters, optional) = call_parameters(&call);
+        assert_eq!(parameters, ["group"]);
+        assert!(optional.is_empty());
+    }
+
+    #[test]
+    fn a_named_argument_is_a_parameter_and_not_optional() {
+        let call = serde_json::json!({
+            "args": [{ "Named": { "name": { "name": "loan" }, "value": {} } }]
+        });
+
+        let (parameters, optional) = call_parameters(&call);
+        assert_eq!(parameters, ["loan"]);
+        assert!(optional.is_empty());
+    }
+
+    #[test]
+    fn a_call_with_no_arguments_has_no_parameters() {
+        let (parameters, optional) = call_parameters(&serde_json::json!({ "args": [] }));
+        assert!(parameters.is_empty());
+        assert!(optional.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod more_tests {
     use serde_json::json;
 
     use super::*;

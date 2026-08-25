@@ -194,6 +194,15 @@ pub struct TriggerDetail {
     pub source: TriggerSource,
     /// Parameter names, for an external stimulus.
     pub parameters: Vec<String>,
+    /// Which of them are declared `name?`.
+    ///
+    /// An omitted optional argument is `null`, which is what the `?` means and
+    /// what a rule guarding `attachment_size = null` is written against.
+    /// Leaving it unbound instead makes that rule undecided for every caller
+    /// who did not pass one — which is all of them, since the point of an
+    /// optional parameter is that it is usually not passed.
+    #[serde(default)]
+    pub optional: Vec<String>,
     /// The condition as written, for a state or temporal trigger.
     pub condition: Option<String>,
     /// The entity a state condition is bound over.
@@ -523,6 +532,7 @@ mod tests {
 
         let trigger = NodeDetail::Trigger(TriggerDetail {
             source: TriggerSource::State,
+            optional: Vec::new(),
             parameters: Vec::new(),
             condition: None,
             entity: Some("Loan".to_owned()),
@@ -546,6 +556,7 @@ mod tests {
     fn a_trigger_records_how_it_happens() {
         let external = TriggerDetail {
             source: TriggerSource::External,
+            optional: Vec::new(),
             parameters: ["member", "copy"].map(ToOwned::to_owned).to_vec(),
             condition: None,
             entity: None,
@@ -555,6 +566,7 @@ mod tests {
 
         let temporal = TriggerDetail {
             source: TriggerSource::Temporal,
+            optional: Vec::new(),
             parameters: Vec::new(),
             condition: Some("Loan.window.due_at <= now".to_owned()),
             entity: Some("Loan".to_owned()),

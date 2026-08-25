@@ -86,6 +86,7 @@ fn apply_dependencies(obligation: &Value, rule: &str, module: &str, graph: &mut 
                 NodeDetail::Trigger(TriggerDetail {
                     source: TriggerSource::External,
                     parameters: Vec::new(),
+                    optional: Vec::new(),
                     condition: None,
                     entity: None,
                 }),

@@ -231,6 +231,7 @@ mod tests {
                 NodeDetail::Trigger(TriggerDetail {
                     source,
                     parameters: parameters.into_iter().map(ToOwned::to_owned).collect(),
+                    optional: Vec::new(),
                     condition: None,
                     entity: None,
                 }),

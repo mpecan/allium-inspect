@@ -139,6 +139,7 @@ fn declare_offered_triggers(graph: &mut SpecGraph) {
             NodeDetail::Trigger(TriggerDetail {
                 source: TriggerSource::External,
                 parameters: Vec::new(),
+                optional: Vec::new(),
                 condition: None,
                 entity: None,
             }),

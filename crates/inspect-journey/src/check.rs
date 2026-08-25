@@ -241,15 +241,25 @@ fn check_arity(trigger: &str, given: usize, line: usize, graph: &SpecGraph, note
         return;
     };
     let declared = detail.parameters.len();
-    if declared == given {
+    // An optional parameter may be left off, which is the whole of what `?`
+    // means. Counting them as required refused every ordinary call of
+    // `MemberSends(group, author, body, parents, attachment_name?,
+    // attachment_size?)` — six declared, four written, and nobody ever writes
+    // six.
+    let required = declared - detail.optional.len();
+    if given >= required && given <= declared {
         return;
     }
     notes.push(Note {
         line,
         verdict: Verdict::Unspecified,
         message: format!(
-            "`{trigger}` takes {declared} argument{}, and this gives {given}: {}",
-            if declared == 1 { "" } else { "s" },
+            "`{trigger}` takes {}, and this gives {given}: {}",
+            if required == declared {
+                format!("{declared} argument{}", if declared == 1 { "" } else { "s" })
+            } else {
+                format!("{required} to {declared} arguments")
+            },
             if detail.parameters.is_empty() {
                 "it declares none".to_owned()
             } else {

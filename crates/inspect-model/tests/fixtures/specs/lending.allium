@@ -103,10 +103,14 @@ rule ReturnCopy {
     ensures: CopyReturned(loan: loan)
 }
 
+-- The optional parameter in the set. `note?` is what a caller usually does not
+-- pass, and a rule guarding it against `null` has to be reachable by the
+-- callers who do not.
 rule ReportCopyLost {
-    when: MemberReportsLoss(loan)
+    when: MemberReportsLoss(loan, note?)
 
     requires: loan.status = open
+    requires: note = null or note != ""
 
     ensures: loan.copy.status = lost
     ensures: loan.status = returned
@@ -206,7 +210,7 @@ surface MemberShelf {
     provides:
         MemberBorrows(reader, copy)
         MemberReturns(loan)
-        MemberReportsLoss(loan)
+        MemberReportsLoss(loan, note?)
         MemberReserves(reader, book)
 
     @guarantee ALoanIsVisibleToItsHolderOnly

@@ -1446,3 +1446,57 @@ fn a_creating_that_caught_nothing_says_why() {
     assert!(detail.contains("could not be decided"), "and the cause: {detail}");
     assert!(detail.contains("copy.status"), "named: {detail}");
 }
+
+/// An optional parameter nobody passed is `null`, which is what the `?` means.
+///
+/// `MemberReportsLoss(loan, note?)` is guarded by `note = null or note != ""`,
+/// and nearly every caller omits the note. Left unbound the guard is undecided
+/// for all of them — so the rule was unreachable by exactly the callers it was
+/// written for.
+#[test]
+fn an_optional_argument_nobody_passed_is_null() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+    given:
+        copy.status = available
+    1. she borrows it and then loses it
+        ada does MemberBorrows(ada, copy) on MemberShelf creating loan: Loan
+        ada does MemberReportsLoss(loan) on MemberShelf
+        then ReportCopyLost fires
+        then copy.status = lost
+}",
+    );
+
+    let bad: Vec<_> = outcomes(&result)
+        .into_iter()
+        .filter(|(verdict, ..)| *verdict != Verdict::Specified)
+        .collect();
+    assert!(bad.is_empty(), "{bad:#?}");
+}
+
+/// And one that *is* passed keeps its value rather than being nulled.
+#[test]
+fn an_optional_argument_that_was_passed_is_what_was_passed() {
+    let result = walked(
+        r#"journey J {
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+    given:
+        copy.status = available
+    1. she loses it and says so
+        ada does MemberBorrows(ada, copy) on MemberShelf creating loan: Loan
+        ada does MemberReportsLoss(loan, "left on a train") on MemberShelf
+        then ReportCopyLost fires
+}"#,
+    );
+
+    let bad: Vec<_> = outcomes(&result)
+        .into_iter()
+        .filter(|(verdict, ..)| *verdict != Verdict::Specified)
+        .collect();
+    assert!(bad.is_empty(), "{bad:#?}");
+}
