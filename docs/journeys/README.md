@@ -220,16 +220,14 @@ fact about the `exposes` block, and it settles a `cannot see` outright — not "
 instance matched" but "this boundary does not carry it", which is the strongest
 form the claim has.
 
-The half that is not built is the filter. `OpenDeletions` exposes `for intent in
-DeleteIntents where owner = owner and status = applied: intent.targets.count`.
-Asking whether Ada sees `DeleteIntent#1.targets.count` means evaluating that
-filter with `owner` bound to Ada, which needs the `exposes` clause as an
-expression rather than as text. It is stored as text today. So once the surface
-*does* carry the field, neither direction can be settled, and both come back
-**undecided** with a reason saying which half is unread.
+The filter is evaluated. `OpenDeletions` exposes `for intent in DeleteIntents
+where owner = owner and status = applied: intent.targets.count`, and asking
+whether Ada sees `DeleteIntent#1.targets.count` means evaluating that filter
+with `owner` bound to Ada — which is what happens. A positive `sees` holds when
+the surface, scoped to that person, does carry that row.
 
-That means a positive `sees` never holds yet. It is the honest answer rather than
-a satisfying one, and it is the right way round:
+Undecided is still the answer whenever anything under it is, and the care runs
+in both directions:
 
 **A `cannot see` that could not be evaluated is undecided, never safe.** A
 privacy claim that passes because the tool could not check it is the worst output

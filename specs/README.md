@@ -73,9 +73,10 @@ because there is no specification of people.
 normal state of a journey and the reason to write them — but here the gaps are
 worth reading, because most of them are the tool describing its own limits:
 
-- **A positive `sees` is always undecided.** Whether a surface's filter admits
-  *this* actor needs the `exposes` clause as an expression, and it is stored as
-  text. `cannot see` against a surface that does not carry the field is decided.
+- **A surface scoped to something the reader is not.** `sees` walks the
+  `exposes` clause now, and binds the surface's `context` from the actor when
+  the actor is an instance of its type. Where it is not, the tool declines
+  rather than guessing which instance a person is looking at.
 - **Derived values are computed, and answer about *this* world.**
   `module_count` is `modules.count`, and the walk holds no `Module` instances —
   a spec set having four files is a fact about the disk rather than about the

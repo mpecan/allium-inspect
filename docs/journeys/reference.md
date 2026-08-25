@@ -208,15 +208,29 @@ Being able to *do* something and being able to *see* the result are different
 claims, and a system that does the right thing and tells nobody is a real
 failure. `cannot see` is how a privacy claim gets written down.
 
-**Half of this is built, and the half that is missing is why a positive `sees`
-never holds yet.** Whether the surface carries the field at all is read, and it
-settles a `cannot see` outright — the second line above holds because
-`MemberShelf` exposes nothing like `copy.shelfmark`. Whether the surface's
-filter admits *this particular actor* needs the `exposes` clause as an
-expression, and it is stored as text today. So once the field *is* exposed, both
-directions come back `undecided` with a reason saying so. That is the right way
-round: a privacy claim that passed because nothing checked it would be the worst
-answer this tool could give.
+**The clause is walked, not merely matched.** The question is never "does this
+surface expose labels" but "does it show me *this* label", so
+
+```text
+context borrower: Member
+exposes:
+    for loan in borrower.open_loans:
+        loan.status
+```
+
+shows a reader the loans on their own shelf and answers `cannot see` for
+everybody else's. The surface's `context` is bound from the actor, and only when
+the actor is an instance of its type — walking from a device to its owner would
+be this tool deciding which identity a person is at, which is what a `context`
+declares and not something to guess on its behalf. A mismatch is undecided and
+says which type it wanted.
+
+Undecided is still the answer whenever anything under it is: a filtered
+collection keeps its definite members and notes what it could not settle, and a
+subject missing from a result like that might have belonged. Saying *this
+surface does not show you that* on those grounds is the same failure as saying
+yes, pointed the other way — and a privacy claim that passed because nothing
+checked it would be the worst answer this tool could give.
 
 ### `stipulate` — say it rather than show it
 
