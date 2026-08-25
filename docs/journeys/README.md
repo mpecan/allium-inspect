@@ -398,11 +398,26 @@ says so rather than a rule in the checker that guesses.
 
 ## Still open
 
-- **How much of `sees` can actually be evaluated?** The design says the filter is
-  walked. `where owner = owner and status = applied` is within reach today;
-  `announces_reads(owner)` is a call the simulator does not make. The honest
-  fraction on a real spec is unknown until it is tried, and if it is low the
-  `unexposed` verdict is worth less than this design assumes.
+- **How much of `sees` can actually be evaluated?** Measured, on `friend-mesh`:
+  **none of it yet**, and the reason is not the one this entry expected.
+
+  Every one of the seven undecided `sees` lines in that set is exposed through
+  a `for … in <collection>:` block, and every one of those collections is a
+  *derived* value — `identity.listed_devices`, `group.active_memberships`,
+  `identity.recovery_claims where status = pending`. Answering whether a
+  surface shows *this* device to *this* person means computing the collection
+  first. Not one of the seven is the bare `entity.field` case that could be
+  decided today by reading the clause as an expression.
+
+  So the work `sees` is waiting on is **derived values**, not exposure parsing,
+  and that is a general capability rather than a `sees` feature: the same nine
+  or so undecided lines in that walk include `claim.attestations.count is
+  unknown`, which is the same gap seen from the other side.
+
+  What this does *not* change is the verdict when a surface carries nothing
+  like the field — that is read from the clause text and settled, including
+  the negative case. A privacy claim that passed because nothing checked it
+  would still be the worst answer this tool could give.
 - ~~**What does a step number mean when a journey changes?**~~ Settled, and by
   building on it rather than by deciding: a step number is now a citation that
   code carries (`// journey: Name.3`), so renumbering on an insert breaks real
