@@ -18,6 +18,9 @@ use crate::{
     program::{Program, RuleAst},
 };
 
+#[cfg(test)]
+use crate::{Node, NodeDetail, program::derived_key};
+
 /// Add every rule, invariant and computed field `ast` declares to `program`.
 ///
 /// `graph` is read, never written: it already holds this module's entities,
@@ -161,14 +164,106 @@ mod tests {
     /// so a fixture that is not one proves nothing about it — and the source
     /// below is what a person would actually write.
     fn program_of(source: &str) -> Program {
+        against(source, &SpecGraph::new("test"))
+    }
+
+    fn against(source: &str, graph: &SpecGraph) -> Program {
         let mut program = Program::new();
-        ingest(
-            &allium_parser::parse(source).module,
-            "lending",
-            &SpecGraph::new("test"),
-            &mut program,
-        );
+        ingest(&allium_parser::parse(source).module, "lending", graph, &mut program);
         program
+    }
+
+    /// A graph that says which of `Member`'s fields are computed.
+    ///
+    /// Hand-built here rather than ingested, because what this pass needs from
+    /// the graph is exactly those two flags and nothing else — and a fixture
+    /// that ran the CLI to get them would be testing the model pass instead.
+    fn member_graph() -> SpecGraph {
+        use crate::graph::{EntityDetail, EntityField, EntityKind};
+
+        fn field(name: &str, derived: bool, relationship: bool) -> EntityField {
+            EntityField {
+                name: name.to_owned(),
+                type_expr: String::new(),
+                enum_values: Vec::new(),
+                derived,
+                relationship,
+                when: None,
+                note: Vec::new(),
+            }
+        }
+
+        let mut graph = SpecGraph::new("test");
+        let mut node = Node::new("lending", NodeKind::Entity, "Member");
+        node.detail = NodeDetail::Entity(EntityDetail {
+            kind: EntityKind::Internal,
+            fields: vec![
+                field("name", false, false),
+                field("loans", false, true),
+                field("open_loans", true, false),
+            ],
+            transitions: Vec::new(),
+            parent: None,
+        });
+        graph.nodes.push(node);
+        graph
+    }
+
+    const MEMBER: &str = "
+entity Member {
+    name: String
+    loans: Loan with member = this
+    open_loans: loans where status = open
+}
+";
+
+    #[test]
+    fn a_computed_field_is_kept_with_the_expression_that_computes_it() {
+        let program = against(MEMBER, &member_graph());
+        assert!(
+            program.derivations().contains_key(&derived_key("lending", "Member", "open_loans")),
+            "{:?}",
+            program.derivations().keys().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_relationship_is_kept_too() {
+        let program = against(MEMBER, &member_graph());
+        assert!(program.derivations().contains_key(&derived_key("lending", "Member", "loans")));
+    }
+
+    /// The one that matters. `name: String` is an assignment in the tree, the
+    /// same shape as the two above, and evaluating it would turn "nobody set
+    /// `name`" into whatever `String` happens to evaluate to.
+    #[test]
+    fn a_stored_field_is_not_kept() {
+        let program = against(MEMBER, &member_graph());
+        assert!(!program.derivations().contains_key(&derived_key("lending", "Member", "name")));
+        assert_eq!(program.derivations().len(), 2);
+    }
+
+    /// The graph is what knows. Without it nothing is computed, which is the
+    /// honest answer rather than a guess from the expression's shape.
+    #[test]
+    fn nothing_is_kept_for_an_entity_the_graph_does_not_have() {
+        assert!(against(MEMBER, &SpecGraph::new("test")).derivations().is_empty());
+    }
+
+    #[test]
+    fn a_computed_field_is_filed_under_its_own_module_and_entity() {
+        let program = against(MEMBER, &member_graph());
+        assert_eq!(derived_key("lending", "Member", "loans"), "lending::Member.loans");
+        assert!(!program.derivations().contains_key("catalogue::Member.loans"));
+        assert!(!program.derivations().contains_key("lending::Copy.loans"));
+    }
+
+    /// A rule's assignments are not an entity's, and a rule block reaching this
+    /// would file its `let` bindings as fields of something.
+    #[test]
+    fn only_entity_and_value_blocks_contribute() {
+        let program = against(BORROW, &member_graph());
+        assert!(program.derivations().is_empty());
     }
 
     fn rule_of(source: &str) -> RuleAst {

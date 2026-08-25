@@ -122,12 +122,6 @@ impl Program {
         &self.derived
     }
 
-    /// How many fields a spec computes rather than stores.
-    #[must_use]
-    pub fn derived_count(&self) -> usize {
-        self.derived.len()
-    }
-
     /// Record `condition` as the body of the invariant with `id`.
     pub fn add_invariant(&mut self, id: impl Into<String>, condition: Expr) {
         self.invariants.insert(id.into(), condition);
