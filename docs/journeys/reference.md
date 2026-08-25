@@ -204,6 +204,11 @@ ada sees loan.status on MemberShelf
 ada cannot see copy.shelfmark on MemberShelf
 ```
 
+A `sees` may name a **call** as well as a path, because a surface may expose
+one — `exposes: announces_reads(owner)` shows a person whether they announce
+reads, and there is no field to name for it. Write it with whoever is looking
+in the argument: `ada sees announces_reads(ada) on PrivacyControls`.
+
 Being able to *do* something and being able to *see* the result are different
 claims, and a system that does the right thing and tells nobody is a real
 failure. `cannot see` is how a privacy claim gets written down.
@@ -236,11 +241,23 @@ checked it would be the worst answer this tool could give.
 
 ```
 stipulate ada.is_at_limit = false
+stipulate may_invite(chat, ada) = true
 ```
 
 Sets a value directly, mid-journey, the way `given` does at the start. Use it
 when reaching a state honestly would take ten steps that are not what this
 journey is about.
+
+**A call, as well as a path.** A specification names functions it never
+defines — a policy nobody has decided yet — and no simulator can work one out,
+now or ever. Every rule guarded by one is permanently undecided until somebody
+says, and this is how they say it. The answer is matched on the argument
+*values*, so the rule's `may_invite(group, issuer)` and the journey's
+`may_invite(chat, ada)` are the same call; and it is about the arguments it
+names, so answering for Ada says nothing about Bob.
+
+Both answers are sayable. `= false` refuses the rule, or this would be a way of
+making journeys pass rather than a way of saying what nobody has decided.
 
 **Every stipulation is reported, first and always.** An agent can make any
 journey pass; it cannot make one pass invisibly.
