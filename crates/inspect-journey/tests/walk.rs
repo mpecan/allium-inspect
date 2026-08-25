@@ -1610,3 +1610,67 @@ fn a_stipulated_call_is_reported_like_every_other_stipulation() {
 
     assert_eq!(result.stipulated, ["ada.open_loan_count = 0", "may_reserve(ada, book) = true"]);
 }
+
+// --- a call a surface exposes --------------------------------------------
+//
+// `exposes: in_good_standing(reader)` is a thing a surface may show and a
+// thing no field can stand for. The clause writes the surface's own name for
+// whoever it faces; the journey writes who that is. One call about one person,
+// written two ways, and comparing the *text* of them says no to every case
+// there is — which is how a real spec's `announces_reads(owner)` came back as
+// "exposes nothing like `announces_reads(ada)`" and read as a spec gap.
+
+#[test]
+fn a_call_a_surface_exposes_is_matched_by_name_and_by_who() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada: Member
+    1. she looks at her own standing
+        ada sees in_good_standing(ada) on MemberShelf
+}",
+    );
+
+    let seen = &result.steps[0].outcomes[0];
+    assert_eq!(seen.verdict, Verdict::Specified, "{seen:?}");
+}
+
+/// About the person it names. The surface shows a reader *their* standing, and
+/// answering for somebody else would be the same privacy mistake a filter
+/// exists to prevent.
+#[test]
+fn a_call_a_surface_exposes_is_about_who_it_names() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada: Member
+        bob: Member
+    1. she looks for his standing
+        ada cannot see in_good_standing(bob) on MemberShelf
+}",
+    );
+
+    let seen = &result.steps[0].outcomes[0];
+    assert_eq!(seen.verdict, Verdict::Specified, "{seen:?}");
+}
+
+/// A call the surface does not expose at all is settled from the clause text,
+/// the same as a field it does not carry.
+#[test]
+fn a_call_a_surface_does_not_expose_is_unexposed() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada: Member
+    1. she looks for something nobody shows
+        ada sees credit_rating(ada) on MemberShelf
+}",
+    );
+
+    let seen = &result.steps[0].outcomes[0];
+    assert_eq!(seen.verdict, Verdict::Unexposed, "{seen:?}");
+    assert!(
+        seen.detail.as_deref().is_some_and(|why| why.contains("exposes nothing like")),
+        "{seen:?}"
+    );
+}

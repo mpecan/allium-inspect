@@ -220,6 +220,10 @@ surface MemberShelf {
     facing reader: Reader
 
     exposes:
+        -- A call, which is a thing a surface may expose and a thing no field
+        -- can stand for: whether this reader is in good standing is a question
+        -- about them rather than a value written down anywhere.
+        in_good_standing(reader)
         Loan.status
         Loan.is_late
         Member.open_loan_count

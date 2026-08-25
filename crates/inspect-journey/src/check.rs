@@ -134,10 +134,10 @@ fn check_step(step: &Step, graph: &SpecGraph, known: &mut Names, notes: &mut Vec
                     known.bind(caught);
                 }
             }
-            Clause::Sees { actor, path, surface, negated, line } => {
+            Clause::Sees { actor, subject, surface, negated, line } => {
                 check_actor(actor, *line, known, notes);
                 check_sight(
-                    &Sight { seen: &path.as_written(), surface, negated: *negated, line: *line },
+                    &Sight { seen: &subject.as_written(), surface, negated: *negated, line: *line },
                     graph,
                     notes,
                 );
@@ -351,6 +351,16 @@ fn check_sight(sight: &Sight<'_>, graph: &SpecGraph, notes: &mut Vec<Note>) {
 /// where a surface writes `Loan.status`, and a projection binds its own name
 /// with `for m in group.messages: m.body`. The tail is the part both agree on.
 pub(crate) fn exposes(detail: &SurfaceDetail, seen: &str) -> bool {
+    // A call the surface exposes: `exposes: announces_reads(owner)`, asked
+    // about as `announces_reads(ada)`. The names are what have to match — the
+    // arguments are the surface's own binding on one side and whoever that is
+    // on the other, which is one call about one person written two ways, and
+    // comparing the text of them says no to every case there is.
+    if let Some((name, _)) = seen.split_once('(') {
+        let opens = format!("{name}(");
+        return detail.exposes.iter().any(|clause| clause.trim_start().starts_with(&opens));
+    }
+
     let Some((_, tail)) = seen.rsplit_once('.') else {
         return detail.exposes.iter().any(|clause| mentions(clause, seen));
     };

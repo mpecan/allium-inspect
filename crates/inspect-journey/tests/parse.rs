@@ -150,11 +150,11 @@ fn seeing_names_one_value_on_one_surface() {
     // Not "somewhere on screen". A step asking whether a word was anywhere would
     // be answered by the wrong thing and pass.
     let journey = first();
-    let Clause::Sees { actor, path, surface, negated, .. } = &journey.steps[0].clauses[4] else {
+    let Clause::Sees { actor, subject, surface, negated, .. } = &journey.steps[0].clauses[4] else {
         panic!("expected an observation");
     };
     assert_eq!(
-        (actor.as_str(), path.as_written().as_str(), surface.as_str()),
+        (actor.as_str(), subject.as_written().as_str(), surface.as_str()),
         ("ada", "loan.status", "MemberShelf")
     );
     assert!(!negated);
@@ -724,7 +724,7 @@ mod clock {
 
 /// `stipulate may_invite(chat, she) = true` — the grammar half.
 mod stipulating_a_call {
-    use inspect_journey::{Clause, Stipulated, Term, parse};
+    use inspect_journey::{Clause, Subject, Term, parse};
 
     fn clause(written: &str) -> Clause {
         let source = format!(
@@ -739,7 +739,7 @@ mod stipulating_a_call {
         let Clause::Stipulate { subject, .. } = clause("may_invite(chat, she) = true") else {
             panic!("not a stipulation");
         };
-        let Stipulated::Call { name, arguments } = subject else { panic!("{subject:?}") };
+        let Subject::Call { name, arguments } = subject else { panic!("{subject:?}") };
 
         assert_eq!(name, "may_invite");
         assert_eq!(arguments.len(), 2);
@@ -751,7 +751,7 @@ mod stipulating_a_call {
         let Clause::Stipulate { subject, .. } = clause("in_maintenance() = false") else {
             panic!("not a stipulation");
         };
-        let Stipulated::Call { name, arguments } = subject else { panic!("{subject:?}") };
+        let Subject::Call { name, arguments } = subject else { panic!("{subject:?}") };
 
         assert_eq!(name, "in_maintenance");
         assert!(arguments.is_empty());
@@ -763,7 +763,7 @@ mod stipulating_a_call {
         let Clause::Stipulate { subject, .. } = clause("ada.is_at_limit = false") else {
             panic!("not a stipulation");
         };
-        assert!(matches!(subject, Stipulated::Path(_)));
+        assert!(matches!(subject, Subject::Path(_)));
     }
 
     #[test]
@@ -771,7 +771,7 @@ mod stipulating_a_call {
         let Clause::Stipulate { subject, .. } = clause("within_hours(9, 17) = true") else {
             panic!("not a stipulation");
         };
-        let Stipulated::Call { arguments, .. } = subject else { panic!("{subject:?}") };
+        let Subject::Call { arguments, .. } = subject else { panic!("{subject:?}") };
         assert!(matches!(arguments[0], Term::Literal(_)));
     }
 

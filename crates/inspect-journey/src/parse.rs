@@ -25,7 +25,7 @@
 use inspect_sim::{Value, seed};
 
 use crate::journey::{
-    Assertion, Axis, Cast, Clause, Comparison, Given, Journey, Path, Step, Stipulated, Term,
+    Assertion, Axis, Cast, Clause, Comparison, Given, Journey, Path, Step, Subject, Term,
 };
 
 /// A journey file that could not be read.
@@ -260,14 +260,14 @@ fn cast(text: &str, line: usize) -> Result<Cast, ParseError> {
     Ok(Cast { name: name.to_owned(), type_expr: type_expr.to_owned(), line })
 }
 
-/// What a `stipulate` line is about: a path, or a call.
+/// What a `stipulate` or `sees` line is about: a path, or a call.
 ///
 /// A call is told apart by its shape rather than by looking it up, because the
 /// whole reason to write one is that the specification names a function it
 /// never defines — there is nothing to look it up in.
-fn stipulated(text: &str, line: usize) -> Result<Stipulated, ParseError> {
+fn subject(text: &str, line: usize) -> Result<Subject, ParseError> {
     let Some((name, rest)) = text.split_once('(') else {
-        return Ok(Stipulated::Path(path(text, line)?));
+        return Ok(Subject::Path(path(text, line)?));
     };
     let Some(inside) = rest.strip_suffix(')') else {
         return fail(line, format!("`{text}` opens a call and does not close it"));
@@ -286,7 +286,7 @@ fn stipulated(text: &str, line: usize) -> Result<Stipulated, ParseError> {
         }
     }
 
-    Ok(Stipulated::Call { name: name.to_owned(), arguments })
+    Ok(Subject::Call { name: name.to_owned(), arguments })
 }
 
 /// `theme: dark, light`
@@ -380,7 +380,7 @@ fn clause(text: &str, line: usize) -> Result<Clause, ParseError> {
             );
         };
         return Ok(Clause::Stipulate {
-            subject: stipulated(left.trim(), line)?,
+            subject: subject(left.trim(), line)?,
             value: term(right, line)?,
             line,
         });
@@ -428,7 +428,7 @@ fn sees(actor: &str, rest: &str, negated: bool, line: usize) -> Result<Clause, P
     };
     Ok(Clause::Sees {
         actor: actor.to_owned(),
-        path: path(seen, line)?,
+        subject: subject(seen.trim(), line)?,
         surface: surface.trim().to_owned(),
         negated,
         line,

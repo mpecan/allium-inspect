@@ -30,7 +30,7 @@ pub use evidence::{
     claims, resolve, seal, step_texts,
 };
 pub use journey::{
-    Assertion, Axis, Cast, Clause, Comparison, Given, Journey, Path, Step, Stipulated, Term,
+    Assertion, Axis, Cast, Clause, Comparison, Given, Journey, Path, Step, Subject, Term,
 };
 pub use parse::{ParseError, parse};
 pub use report::{Strictness, as_json, passes, render};

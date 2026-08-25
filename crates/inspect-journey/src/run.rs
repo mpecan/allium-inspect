@@ -27,7 +27,7 @@ use inspect_sim::{
 use crate::{
     assert::Sight,
     check::{self, Verdict},
-    journey::{Assertion, Clause, Journey, Step, Stipulated, Term},
+    journey::{Assertion, Clause, Journey, Step, Subject, Term},
     outcome::{refusal, verdict_of},
 };
 
@@ -333,9 +333,8 @@ impl Walker<'_> {
             }
             Clause::After { duration, line, .. } => self.advance(duration, *line, about),
             Clause::Then { assertion, line } => self.assert(assertion, *line, about),
-            Clause::Sees { actor, path, surface, negated, line } => {
-                self.observe(&Sight { actor, path, surface, negated: *negated, line: *line }, about)
-            }
+            Clause::Sees { actor, subject, surface, negated, line } => self
+                .observe(&Sight { actor, subject, surface, negated: *negated, line: *line }, about),
             Clause::Stipulate { subject, value, line } => {
                 let value = self.value_of(value);
                 let written = format!("{} = {}", subject.as_written(), value.render());
@@ -344,7 +343,7 @@ impl Walker<'_> {
                     // can see everything the journey was told rather than
                     // shown, and a line in it that never reached the world is a
                     // false receipt.
-                    Stipulated::Path(path) => match self.assign(path, value) {
+                    Subject::Path(path) => match self.assign(path, value) {
                         Ok(()) => {
                             self.stipulated.push(written);
                             Outcome {
@@ -364,7 +363,7 @@ impl Walker<'_> {
                     // A call writes nowhere: there is no field to set, which is
                     // the whole reason it needs saying. It is remembered and
                     // answered from when the specification asks.
-                    Stipulated::Call { name, arguments } => {
+                    Subject::Call { name, arguments } => {
                         let arguments: Vec<Value> =
                             arguments.iter().map(|term| self.value_of(term)).collect();
                         self.world.answers.push(Answer { call: name.clone(), arguments, value });
@@ -605,9 +604,9 @@ fn about(clause: &Clause) -> String {
         }
         Clause::After { text, .. } => format!("after {text}"),
         Clause::Then { assertion, .. } => format!("then {}", written(assertion)),
-        Clause::Sees { actor, path, surface, negated, .. } => {
+        Clause::Sees { actor, subject, surface, negated, .. } => {
             let verb = if *negated { "cannot see" } else { "sees" };
-            format!("{actor} {verb} {} on {surface}", path.as_written())
+            format!("{actor} {verb} {} on {surface}", subject.as_written())
         }
         Clause::Stipulate { subject, value, .. } => {
             format!("stipulate {} = {}", subject.as_written(), value.as_written())

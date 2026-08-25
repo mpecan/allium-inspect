@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use allium_parser::ast::{Expr, ForBinding};
+use allium_parser::ast::{CallArg, Expr, ForBinding};
 use inspect_model::{Boundary, NodeKind};
 use inspect_sim::{
     Truth, Value,
@@ -16,7 +16,7 @@ use inspect_sim::{
 
 use crate::{
     check::Verdict,
-    journey::{Assertion, Comparison, Path},
+    journey::{Assertion, Comparison, Subject},
     run::{Outcome, Walker},
 };
 
@@ -130,8 +130,8 @@ impl Walker<'_> {
     /// surface that exposes it on the line above. A privacy claim that passes
     /// because nothing checked it is the worst answer this tool could give.
     pub(crate) fn observe(&self, sight: &Sight<'_>, about: String) -> Outcome {
-        let Sight { actor, path, surface, negated, line } = *sight;
-        let written = path.as_written();
+        let Sight { actor, subject, surface, negated, line } = *sight;
+        let written = subject.as_written();
         let say = |verdict, detail: String| Outcome {
             line,
             verdict,
@@ -190,7 +190,7 @@ impl Walker<'_> {
     /// somebody asking about a device that is not on it would be a privacy
     /// claim that passed because nothing checked it.
     fn admits(&self, sight: &Sight<'_>) -> Admission {
-        let Sight { actor, path, surface, .. } = *sight;
+        let Sight { actor, subject, surface, .. } = *sight;
         let Some((id, module)) = crate::check::surface_id(self.spec, surface) else {
             return Admission::Undecided(format!("no surface called `{surface}`"));
         };
@@ -212,24 +212,47 @@ impl Walker<'_> {
         let Some(looking) = self.bound.get(actor) else {
             return Admission::Undecided(format!("`{actor}` is nobody in this journey"));
         };
-        let context = match self.context_for(boundary, looking) {
+        let mut context = match self.context_for(boundary, looking) {
             Ok(bound) => bound,
             Err(why) => return Admission::Undecided(why),
         };
 
-        // What is being looked at: the instance the path starts from, and the
-        // field it ends on.
-        let Some(subject) = self.bound.get(&path.root) else {
-            return Admission::Undecided(format!("`{}` is nobody in this journey", path.root));
-        };
-        let Some(field) = path.segments.last() else {
-            return Admission::Undecided("nothing is being read".to_owned());
+        // And whoever the surface faces, under the name it gave them.
+        // `facing owner: Identity` and `exposes: announces_reads(owner)` are
+        // one sentence: the clause refers to the person looking, and this is
+        // who that is.
+        if let Some(binding) =
+            crate::check::surface_named(self.spec, surface).and_then(|s| s.actor_binding.clone())
+        {
+            context.entry(binding).or_insert_with(|| Value::Ref(looking.clone()));
+        }
+
+        // What is being looked at. A call is answered against the exposure's own
+        // call; a path against the instance it starts from and the field it
+        // ends on.
+        let asking = match subject {
+            Subject::Call { name, arguments } => {
+                let wanted: Vec<Value> = arguments.iter().map(|term| self.value_of(term)).collect();
+                Asked::Call { name, arguments: wanted }
+            }
+            Subject::Path(path) => {
+                let Some(of) = self.bound.get(&path.root) else {
+                    return Admission::Undecided(format!(
+                        "`{}` is nobody in this journey",
+                        path.root
+                    ));
+                };
+                let Some(field) = path.segments.last() else {
+                    return Admission::Undecided("nothing is being read".to_owned());
+                };
+                Asked::Field { field, of }
+            }
         };
 
         let mut undecided = None;
         for item in items {
             match self
-                .exposed_by(item, &Asking { field, subject, context: &context, module: &module })
+                .exposed_by(item, &Asking { asked: &asking, context: &context, module: &module })
             {
                 Admission::Yes => return Admission::Yes,
                 Admission::Undecided(why) => undecided = undecided.or(Some(why)),
@@ -276,7 +299,32 @@ impl Walker<'_> {
 
     /// Whether one item of an `exposes` block shows what is being asked about.
     fn exposed_by(&self, item: &Expr, asking: &Asking<'_>) -> Admission {
-        let Asking { field, subject, context, module } = *asking;
+        let Asking { asked, context, module } = *asking;
+
+        // A call the surface exposes — `announces_reads(owner)` — matched
+        // against the call being asked about. The name has to be the same and
+        // the arguments have to be the same *things*: the clause writes the
+        // surface's own binding for the actor and the journey writes whoever
+        // that is, which is one call about one person written two ways.
+        if let Expr::Call { function, args, .. } = item {
+            let Asked::Call { name, arguments } = asked else { return Admission::No };
+            let Expr::Ident(called) = function.as_ref() else { return Admission::No };
+            if &called.name != name || args.len() != arguments.len() {
+                return Admission::No;
+            }
+            for (argument, wanted) in args.iter().zip(arguments) {
+                let CallArg::Positional(value) = argument else { return Admission::No };
+                match self.evaluate(value, context, module) {
+                    Ok((held, _)) if &held == wanted => {}
+                    Ok(_) => return Admission::No,
+                    Err(why) => return Admission::Undecided(why),
+                }
+            }
+            return Admission::Yes;
+        }
+
+        let Asked::Field { field, of: subject } = asked else { return Admission::No };
+        let (field, subject) = (*field, *subject);
         match item {
             // `identity.name` — a field of the context itself — or
             // `SpecSet.module_count`, which is the same clause written over a
@@ -384,14 +432,19 @@ impl Walker<'_> {
 /// the way, which is what a struct is for — and six positional arguments of
 /// four shapes is a call nobody can read at the site.
 struct Asking<'a> {
-    /// The field at the end of the path being seen: `label`.
-    field: &'a str,
-    /// The instance the path starts from: whose label.
-    subject: &'a EntityId,
+    asked: &'a Asked<'a>,
     /// The surface's context, bound to the instance this actor stands at.
     context: &'a BTreeMap<String, Value>,
     /// The module the surface is declared in, for `config` and for the source.
     module: &'a str,
+}
+
+/// What a `sees` line is asking about, resolved.
+enum Asked<'a> {
+    /// `tablet.label` — a field, and whose.
+    Field { field: &'a str, of: &'a EntityId },
+    /// `announces_reads(ada)` — a call the surface may expose.
+    Call { name: &'a str, arguments: Vec<Value> },
 }
 
 /// Whether `subject` is among `items`, given what could not be settled.
@@ -441,7 +494,8 @@ fn is_ident(expr: &Expr, wanted: &str) -> bool {
 pub(crate) struct Sight<'a> {
     /// Who is looking. The surface's `context` is resolved from them.
     pub(crate) actor: &'a str,
-    pub(crate) path: &'a Path,
+    /// What they are looking at: a path, or a call the surface exposes.
+    pub(crate) subject: &'a Subject,
     pub(crate) surface: &'a str,
     pub(crate) negated: bool,
     pub(crate) line: usize,
