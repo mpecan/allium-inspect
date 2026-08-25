@@ -97,9 +97,9 @@ fn boundary(block: &allium_parser::ast::BlockDecl) -> Boundary {
             // clause uses, and the type an actor has to be to stand in it.
             "context" => {
                 if let Expr::Binding { name, value, .. } = value
-                    && let Expr::Ident(entity) = value.as_ref()
+                    && let Some(entity) = entity_named(value)
                 {
-                    boundary.context = Some((name.name.clone(), entity.name.clone()));
+                    boundary.context = Some((name.name.clone(), entity));
                 }
             }
             "exposes" => boundary.exposes = Some(value.clone()),
@@ -108,6 +108,30 @@ fn boundary(block: &allium_parser::ast::BlockDecl) -> Boundary {
     }
 
     boundary
+}
+
+/// The entity a `context` binding names, unqualified.
+///
+/// `context group: membership/Group` and `context group: Group` are the same
+/// declaration written from two distances, and the parser gives them two
+/// shapes: an `Ident` for the near one and a `QualifiedName` for the far one.
+/// Reading only the near shape dropped every cross-module context on the
+/// floor, and a surface whose context was dropped exposes its whole boundary
+/// off a name nothing binds — so `Conversation`, which is scoped to a
+/// `membership/Group` and shows a group's messages, reported "nothing is bound
+/// to `group`" about every field it carries. A sentence about this pass,
+/// presented as a fact about the specification.
+///
+/// The qualifier is dropped rather than kept because what this is compared
+/// against is an instance's entity, and those are bare — `world::create` takes
+/// the tail of `identity/Identity`. Two bare names, or two qualified ones;
+/// one of each is the comparison that silently never matches.
+fn entity_named(value: &Expr) -> Option<String> {
+    match value {
+        Expr::Ident(entity) => Some(entity.name.clone()),
+        Expr::QualifiedName(entity) => Some(entity.name.clone()),
+        _ => None,
+    }
 }
 
 /// The computed fields of one entity.
@@ -369,6 +393,23 @@ surface MyLoans {
         let boundary = boundary_of(SHELF);
         let printed = format!("{:?}", boundary.exposes);
         assert!(!printed.contains("MemberReturns"), "{printed}");
+    }
+
+    /// A context declared across a module boundary is the same declaration.
+    ///
+    /// The parser hands back a `QualifiedName` rather than an `Ident` for it,
+    /// and reading only the second dropped the context of every surface scoped
+    /// to something another module declares — which then reported "nothing is
+    /// bound to `group`" about every field it carries.
+    #[test]
+    fn a_context_from_another_module_is_kept_under_its_bare_name() {
+        let boundary = boundary_of(
+            "\nsurface MyLoans {\n    facing reader: people/Reader\n    context borrower: \
+             people/Member\n\n    exposes:\n        borrower.name\n}\n",
+        );
+        // Bare, because what this is compared against is an instance's entity
+        // and those carry the tail of `people/Member`.
+        assert_eq!(boundary.context, Some(("borrower".to_owned(), "Member".to_owned())));
     }
 
     #[test]
