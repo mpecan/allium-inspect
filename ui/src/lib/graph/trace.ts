@@ -89,6 +89,25 @@ export function walk(
 }
 
 /**
+ * Whether these edges carry a chain at all.
+ *
+ * A view is a filter, and two of them filter the chain out entirely. The domain
+ * view draws entities, values and enums; every causal edge has a rule, a
+ * trigger or a surface at one end, so none of them survive the projection —
+ * `field`, `relationship` and `variant_of` are what is left. Following one is
+ * "this has a field of that type", which is true and is not what happens next.
+ *
+ * So `Follows` and `Leads here` cannot answer anything there, and never could.
+ * Asked, they said "nothing follows from this one in this view", which reads as
+ * a fact about the construct when it is a fact about the view. The rail asks
+ * this instead, and says the other thing.
+ */
+export function carriesAChain(edges: Edge[]): boolean {
+  const causal = new Set<EdgeKind>(CAUSAL);
+  return edges.some((edge) => causal.has(edge.kind));
+}
+
+/**
  * The causal chain that follows from `start`.
  *
  * Restricted to the edge kinds that carry causation, so a trace does not wander
@@ -143,6 +162,8 @@ export function narrow<N extends { id: string }>(
   const reached = trace.nodes;
   return {
     nodes: nodes.filter((node) => reached.has(node.id)),
-    edges: edges.filter((edge) => reached.has(edge.from) && reached.has(edge.to)),
+    edges: edges.filter(
+      (edge) => reached.has(edge.from) && reached.has(edge.to),
+    ),
   };
 }

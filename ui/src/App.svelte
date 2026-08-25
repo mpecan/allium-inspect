@@ -5,6 +5,7 @@
   import Canvas from "./lib/graph/Canvas.svelte";
   import Focus from "./lib/graph/Focus.svelte";
   import {
+    carriesAChain,
     isMeaningful,
     chain,
     neighbourhood,
@@ -210,6 +211,15 @@
     return isMeaningful(walked) ? walked : null;
   });
 
+  /**
+   * Whether this view holds a chain at all.
+   *
+   * Asked of the edges actually on screen rather than of the view's name, so a
+   * spec set with no rules in it answers the same way the domain view does —
+   * and neither can drift from `views.ts` deciding what a view draws.
+   */
+  const chainable = $derived(carriesAChain(visibleEdges));
+
   const traceIsEmpty = $derived(
     selectedId !== null && traceMode !== "off" && trace === null,
   );
@@ -395,6 +405,7 @@
     ongrouping={() => (grouped = !grouped)}
     ontrace={(mode) => (traceMode = mode)}
     {traceIsEmpty}
+    {chainable}
     {nodes}
     onfind={find}
     onreports={() => (reportsOpen = true)}

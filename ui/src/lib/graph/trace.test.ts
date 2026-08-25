@@ -2,7 +2,15 @@ import { describe, expect, it } from "vitest";
 
 import type { Edge } from "../api/Edge";
 import type { EdgeKind } from "../api/EdgeKind";
-import { chain, isMeaningful, narrow, neighbourhood, origins, walk } from "./trace";
+import {
+  carriesAChain,
+  chain,
+  isMeaningful,
+  narrow,
+  neighbourhood,
+  origins,
+  walk,
+} from "./trace";
 
 function edge(from: string, to: string, kind: EdgeKind = "triggers"): Edge {
   return { from, to, kind, label: `${from}->${to}`, span: null };
@@ -210,6 +218,44 @@ describe("narrow", () => {
     expect(edges.length).toBeGreaterThan(0);
     for (const edge of edges) {
       expect(present.has(edge.from) && present.has(edge.to)).toBe(true);
+    }
+  });
+});
+
+describe("carriesAChain", () => {
+  // The domain view's whole edge vocabulary, measured off a five-module set:
+  // `field`, `relationship` and `variant_of`, and not one causal edge among
+  // them. Every causal kind has a rule, a trigger or a surface at one end, and
+  // that view draws none of the three — so `Follows` and `Leads here` could
+  // never answer there, whichever construct was picked.
+  it("says no to a view that draws only how things are shaped", () => {
+    expect(
+      carriesAChain([
+        edge("Loan", "Copy", "field"),
+        edge("Member", "Loan", "relationship"),
+        edge("Print", "Medium", "variant_of"),
+      ]),
+    ).toBe(false);
+  });
+
+  it("says yes as soon as one edge carries causation", () => {
+    expect(
+      carriesAChain([edge("Loan", "Copy", "field"), edge("BorrowCopy", "Loan", "creates")]),
+    ).toBe(true);
+  });
+
+  // Asked of the edges on screen rather than of the view's name, so a spec set
+  // with no rules in it answers the same way the domain view does.
+  it("says no to nothing at all", () => {
+    expect(carriesAChain([])).toBe(false);
+  });
+
+  it("counts every causal kind, not just the one a test happened to pick", () => {
+    for (const kind of ["provides", "triggers", "creates", "mutates", "emits"] as const) {
+      expect(carriesAChain([edge("a", "b", kind)])).toBe(true);
+    }
+    for (const kind of ["field", "relationship", "reads", "constrains"] as const) {
+      expect(carriesAChain([edge("a", "b", kind)])).toBe(false);
     }
   });
 });

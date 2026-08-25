@@ -22,6 +22,8 @@
     traceMode: TraceMode;
     hasSelection: boolean;
     traceIsEmpty: boolean;
+    /** Whether this view holds any causal edge for a chain to run along. */
+    chainable: boolean;
     /** Analysis findings plus anything reported against no construct. */
     reports: number;
     version: string;
@@ -44,6 +46,7 @@
     traceMode,
     hasSelection,
     traceIsEmpty,
+    chainable,
     reports,
     version,
     nodes,
@@ -68,13 +71,63 @@
   // buttons four lines above always did, and the difference showed: a reader
   // watching over someone's shoulder never sees a tooltip, and someone who has
   // not met the word "trace" has no way to find out what these four are for.
-  const TRACES: { mode: TraceMode; label: string; hint: string }[] = [
-    { mode: "off", label: "All", hint: "the whole view" },
+  // `empty` is what to say when the trace found nothing, and there is one per
+  // direction because the reader asked a particular question. A single "nothing
+  // follows from this one" appeared under *Leads here* too, answering the
+  // opposite of what was clicked.
+  //
+  // `chained` marks the two that walk causal edges only. `Adjacent` follows
+  // every kind, so it works in a view that holds no chain — which is why it
+  // kept answering in the domain view while the other two could not.
+  const TRACES: {
+    mode: TraceMode;
+    label: string;
+    hint: string;
+    chained: boolean;
+    empty: string;
+  }[] = [
+    { mode: "off", label: "All", hint: "the whole view", chained: false, empty: "" },
     // Not "Leads to", which reads as "this leads to …" — the other direction.
-    { mode: "forward", label: "Follows", hint: "what happens after this" },
-    { mode: "backward", label: "Leads here", hint: "what has to happen first" },
-    { mode: "near", label: "Adjacent", hint: "one step either way" },
+    {
+      mode: "forward",
+      label: "Follows",
+      hint: "what happens after this",
+      chained: true,
+      empty: "Nothing follows from this one here.",
+    },
+    {
+      mode: "backward",
+      label: "Leads here",
+      hint: "what has to happen first",
+      chained: true,
+      empty: "Nothing leads to this one here.",
+    },
+    {
+      mode: "near",
+      label: "Adjacent",
+      hint: "one step either way",
+      chained: false,
+      empty: "Nothing is next to this one here.",
+    },
   ];
+
+  /** Why a trace button is off, or nothing when it is not. */
+  function unavailable(option: (typeof TRACES)[number]): string | undefined {
+    if (option.mode === "off") {
+      return undefined;
+    }
+    if (!hasSelection) {
+      return "Select a construct to trace from it";
+    }
+    if (option.chained && !chainable) {
+      return "This view draws what the spec has, not what happens — there is no chain here to follow. Try Flow or Chain.";
+    }
+    return undefined;
+  }
+
+  const emptyReason = $derived(
+    TRACES.find((option) => option.mode === traceMode)?.empty ?? "",
+  );
 </script>
 
 <nav aria-label="Views and filters">
@@ -131,12 +184,13 @@
     <h2>Trace</h2>
     <ul class="traces">
       {#each TRACES as option (option.mode)}
+        {@const why = unavailable(option)}
         <li>
           <button
             type="button"
             class:current={traceMode === option.mode}
-            disabled={!hasSelection && option.mode !== "off"}
-            title={hasSelection ? undefined : "Select a construct to trace from it"}
+            disabled={why !== undefined}
+            title={why}
             onclick={() => ontrace(option.mode)}
           >
             <span class="trace-name">{option.label}</span>
@@ -145,10 +199,16 @@
         </li>
       {/each}
     </ul>
-    {#if traceIsEmpty}
+    {#if hasSelection && !chainable && (traceMode === "forward" || traceMode === "backward")}
       <p class="prose caveat empty-trace">
-        Nothing follows from this one in this view. Try another direction, or
-        the Flow view, which carries more of the chain.
+        This view draws what the spec <em>has</em>, not what happens — so there
+        is no chain here to follow, whichever construct is picked. The Flow and
+        Chain views carry one.
+      </p>
+    {:else if traceIsEmpty}
+      <p class="prose caveat empty-trace">
+        {emptyReason} Try another direction, or the Flow view, which carries
+        more of the chain.
       </p>
     {:else}
       <p class="prose caveat">
