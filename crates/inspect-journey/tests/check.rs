@@ -208,6 +208,63 @@ fn an_act_offered_by_another_surface_says_which() {
     );
 }
 
+/// The distinction the whole tool turns on, one line lower down.
+///
+/// `then his.ended_by = ada` against an entity that declares no `ended_by`
+/// used to come back "his.ended_by is unknown" — which reads as *this tool
+/// could not work it out* — when the answer is that the specification does
+/// not have it. That is a requirement, and a journey written first is mostly
+/// made of them.
+#[test]
+fn asserting_a_field_the_entity_does_not_declare_is_a_requirement() {
+    let found = notes(
+        "journey J {
+    cast:
+        ada: Member
+    1. she has something the spec never gave her
+        then ada.favourite_shelf = 3
+}",
+    );
+    assert!(
+        found.iter().any(|(verdict, message)| *verdict == Verdict::Unspecified
+            && message == "`Member` has no field called `favourite_shelf`"),
+        "{found:?}"
+    );
+}
+
+/// A derived field is a field. `open_loan_count` is computed rather than
+/// stored, and a check that only knew about stored ones would report every
+/// spec's most interesting values missing.
+#[test]
+fn a_computed_field_is_one_the_entity_declares() {
+    let found = notes(
+        "journey J {
+    cast:
+        ada: Member
+    1. she is within her limit
+        then ada.open_loan_count = 0
+        then ada.is_at_limit = false
+}",
+    );
+    assert!(found.is_empty(), "{found:?}");
+}
+
+/// A walk of more than one hop is not checked, and must not be guessed at: a
+/// field holding a collection has members that are not fields at all, so
+/// `ada.open_loans.count` would report `count` missing from a `Loan`.
+#[test]
+fn a_longer_walk_is_left_alone_rather_than_reported_wrongly() {
+    let found = notes(
+        "journey J {
+    cast:
+        ada: Member
+    1. she counts what she has out
+        then ada.open_loans.count = 0
+}",
+    );
+    assert!(found.is_empty(), "{found:?}");
+}
+
 /// `in <name>` names an instance of the surface's `context`, and `MemberShelf`
 /// has none — it shows every loan to everyone it faces. Left unreported, the
 /// journey would say which shelf it means and the tool would answer about a

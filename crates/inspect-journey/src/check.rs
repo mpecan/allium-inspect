@@ -176,10 +176,62 @@ fn check_step(step: &Step, graph: &SpecGraph, known: &mut Names, notes: &mut Vec
                 crate::journey::Assertion::Within { haystack, .. } => {
                     check_collection(haystack, *line, known, graph, notes);
                 }
+                crate::journey::Assertion::Compare { left, .. } => {
+                    check_field(left, *line, known, graph, notes);
+                }
                 _ => {}
             },
             Clause::Stipulate { .. } | Clause::After { .. } => {}
         }
+    }
+}
+
+/// Does the construct this path starts from declare the field it ends on?
+///
+/// The distinction the whole tool turns on, applied one line lower down.
+/// `then his.ended_by = ada` against a `Membership` that declares no
+/// `ended_by` came back **undecided** — "his.ended_by is unknown", which reads
+/// as *this tool could not work it out* — when the answer is that the
+/// specification does not have it. That is `Unspecified`: a requirement
+/// nobody has met, which for a journey written first is the ordinary state and
+/// the most useful thing the tool can say.
+///
+/// **One hop only, deliberately.** Walking further means resolving each
+/// field's type as it goes, and a field holding a *collection* has members
+/// that are not fields at all — `intent.targets.count` would report `count`
+/// missing from whatever `targets` holds. Reporting a spec gap that is not
+/// there is the failure this function exists to fix, and doing it while
+/// fixing it would be a poor trade.
+fn check_field(
+    path: &crate::journey::Path,
+    line: usize,
+    known: &Names,
+    graph: &SpecGraph,
+    notes: &mut Vec<Note>,
+) {
+    let [field] = path.segments.as_slice() else { return };
+    let Some(type_expr) = known.types.get(&path.root) else { return };
+
+    // Qualified names carry their module, and an optional carries a `?`.
+    let bare = type_expr.rsplit('/').next().unwrap_or(type_expr).trim_end_matches('?');
+    let Some(detail) = graph
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.kind, NodeKind::Entity | NodeKind::Value))
+        .find(|node| node.name == bare)
+        .and_then(|node| node.detail.as_entity())
+    else {
+        // An actor, a variant, or something this graph has no fields for. A
+        // name the spec does not have at all is `missing_type`'s to report.
+        return;
+    };
+
+    if detail.field(field).is_none() {
+        notes.push(Note {
+            line,
+            verdict: Verdict::Unspecified,
+            message: format!("`{bare}` has no field called `{field}`"),
+        });
     }
 }
 
