@@ -5,12 +5,20 @@
 test_tool = "nextest"
 additional_cargo_test_args = ["--profile", "mutants"]
 
-# The server and the binary are deliberately thin — argument parsing, a socket,
-# a browser launch and JSON in/out. Mutating them produces survivors that say
-# nothing about assurance, and drowns the signal from the two pure crates where
-# all the logic lives.
+# The server and most of the binary are deliberately thin — a socket, a browser
+# launch, a file watcher and JSON in/out. Mutating them produces survivors that
+# say nothing about assurance, and drowns the signal from the two pure crates
+# where all the logic lives.
+#
+# `apps/inspect/src/config.rs` is the exception, and it is named rather than
+# swept in with the rest: reading `.allium-inspect.toml` is a *decision* —
+# which of the file and the command line wins, how far the search goes up, what
+# a path is relative to — and every one of those is exactly the kind of thing
+# a test can look at without noticing. `args.rs` comes with it for the one
+# function in it that is not a `clap` attribute.
 exclude_globs = [
-    "apps/inspect/**",
+    "apps/inspect/src/main.rs",
+    "apps/inspect/src/watch.rs",
     "crates/inspect-server/**",
 ]
 
