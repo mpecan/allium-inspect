@@ -197,8 +197,15 @@ impl Walker<'_> {
         let Some(boundary) = self.program.boundary(&id) else {
             return Admission::Undecided("its boundary was not read".to_owned());
         };
-        let Some(Expr::Block { items, .. }) = &boundary.exposes else {
-            return Admission::Undecided("its `exposes` clause is not a list".to_owned());
+        // A clause with several entries is a `Block`; one with a single entry
+        // is that entry. Reading only the first shape left a surface whose
+        // whole boundary is one `for` block reporting that its clause was not
+        // a list, which is a sentence about this parser rather than about the
+        // specification.
+        let items: Vec<&Expr> = match &boundary.exposes {
+            Some(Expr::Block { items, .. }) => items.iter().collect(),
+            Some(only) => vec![only],
+            None => return Admission::Undecided("it exposes nothing".to_owned()),
         };
 
         // Who is looking, and which instance of the surface they are at.
@@ -294,7 +301,7 @@ impl Walker<'_> {
                         "its iteration binds more than one name".to_owned(),
                     );
                 };
-                if !self.body_names(body, field, &name.name) {
+                if !body_names(body, field, &name.name) {
                     return Admission::No;
                 }
 
@@ -338,19 +345,6 @@ impl Walker<'_> {
                 }
             }
             _ => Admission::No,
-        }
-    }
-
-    /// Whether an iteration's body reads `field` off its own binding.
-    fn body_names(&self, body: &Expr, field: &str, binding: &str) -> bool {
-        match body {
-            Expr::Block { items, .. } => {
-                items.iter().any(|item| self.body_names(item, field, binding))
-            }
-            Expr::MemberAccess { object, field: named, .. } => {
-                named.name == field && is_ident(object, binding)
-            }
-            _ => false,
         }
     }
 
@@ -419,6 +413,22 @@ impl From<bool> for Admission {
     }
 }
 
+/// Whether an iteration's body reads `field` off its own binding.
+///
+/// `for device in identity.listed_devices: device.label` shows labels, and it
+/// shows them off `device`. A body reading `identity.label` inside the same
+/// loop would be exposing something else entirely, so the binding is checked
+/// rather than only the field name.
+fn body_names(body: &Expr, field: &str, binding: &str) -> bool {
+    match body {
+        Expr::Block { items, .. } => items.iter().any(|item| body_names(item, field, binding)),
+        Expr::MemberAccess { object, field: named, .. } => {
+            named.name == field && is_ident(object, binding)
+        }
+        _ => false,
+    }
+}
+
 /// Whether `expr` is exactly the name `wanted`.
 fn is_ident(expr: &Expr, wanted: &str) -> bool {
     matches!(expr, Expr::Ident(ident) if ident.name == wanted)
@@ -455,5 +465,72 @@ fn compare(found: &Value, operator: Comparison, wanted: &Value) -> Truth {
             // than a question answered no.
             None => Truth::Unknown,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use allium_parser::{Span, ast::Ident};
+
+    use super::*;
+
+    const NOWHERE: Span = Span { start: 0, end: 0 };
+
+    fn ident(name: &str) -> Expr {
+        Expr::Ident(Ident { span: NOWHERE, name: name.to_owned() })
+    }
+
+    fn access(object: &str, field: &str) -> Expr {
+        Expr::MemberAccess {
+            span: NOWHERE,
+            object: Box::new(ident(object)),
+            field: Ident { span: NOWHERE, name: field.to_owned() },
+        }
+    }
+
+    fn block(items: Vec<Expr>) -> Expr {
+        Expr::Block { span: NOWHERE, items }
+    }
+
+    #[test]
+    fn a_body_that_reads_the_field_off_the_binding_names_it() {
+        assert!(body_names(&access("device", "label"), "label", "device"));
+    }
+
+    /// The binding is checked, not only the field. `identity.label` inside
+    /// `for device in …` exposes something else entirely.
+    #[test]
+    fn a_body_that_reads_the_field_off_something_else_does_not() {
+        assert!(!body_names(&access("identity", "label"), "label", "device"));
+    }
+
+    #[test]
+    fn a_body_that_reads_a_different_field_does_not() {
+        assert!(!body_names(&access("device", "status"), "label", "device"));
+    }
+
+    /// A `for` body is usually several lines, and any of them may be the one.
+    #[test]
+    fn any_line_of_a_body_can_name_it() {
+        let body = block(vec![
+            access("device", "status"),
+            access("device", "label"),
+            access("device", "key_storage"),
+        ]);
+        assert!(body_names(&body, "label", "device"));
+        assert!(!body_names(&body, "serial", "device"));
+    }
+
+    #[test]
+    fn a_body_that_is_not_a_read_at_all_names_nothing() {
+        assert!(!body_names(&ident("device"), "label", "device"));
+        assert!(!body_names(&block(Vec::new()), "label", "device"));
+    }
+
+    #[test]
+    fn a_name_is_itself_and_nothing_else() {
+        assert!(is_ident(&ident("device"), "device"));
+        assert!(!is_ident(&ident("devices"), "device"));
+        assert!(!is_ident(&access("device", "label"), "device"));
     }
 }

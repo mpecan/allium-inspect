@@ -171,6 +171,29 @@ actor Reader {
     identified_by: Member where open_loan_count >= 0
 }
 
+-- A shelf scoped to the person reading it, beside `MemberShelf`, which is not.
+--
+-- The pair is the point. `MemberShelf` exposes `Loan.status` over the *type*,
+-- so it shows every loan to everyone it faces — and carries a `@guarantee`
+-- four lines below saying it does no such thing. This one says in its
+-- `exposes` clause what that one says in prose, and the difference is that a
+-- journey can tell them apart.
+surface MyLoans {
+    facing reader: Reader
+    context borrower: Member
+
+    exposes:
+        for loan in borrower.open_loans:
+            loan.status
+
+    provides:
+        MemberReturns(loan)
+
+    @guarantee AShelfShowsItsOwnerTheirOwnLoans
+        -- Written in the clause above rather than only here, which is what
+        -- makes it something other than a wish.
+}
+
 surface MemberShelf {
     facing reader: Reader
 

@@ -599,6 +599,7 @@ dependencies = [
 name = "inspect-journey"
 version = "0.1.0"
 dependencies = [
+ "allium-parser",
  "inspect-model",
  "inspect-sim",
  "serde",

@@ -322,6 +322,79 @@ entity Member {
 
     /// A rule's assignments are not an entity's, and a rule block reaching this
     /// would file its `let` bindings as fields of something.
+    const SHELF: &str = "
+surface MyLoans {
+    facing reader: Reader
+    context borrower: Member
+
+    exposes:
+        borrower.name
+        for loan in borrower.open_loans:
+            loan.status
+
+    provides:
+        MemberReturns(loan)
+}
+";
+
+    fn boundary_of(source: &str) -> crate::Boundary {
+        program_of(source)
+            .boundary(NodeId::new("lending", NodeKind::Surface, "MyLoans").as_str())
+            .cloned()
+            .expect("the surface")
+    }
+
+    #[test]
+    fn a_surface_keeps_the_binding_its_exposes_clause_refers_to() {
+        // Both halves. The name is what `borrower.open_loans` means, and the
+        // type is what decides whether a given actor can stand in it.
+        assert_eq!(boundary_of(SHELF).context, Some(("borrower".to_owned(), "Member".to_owned())));
+    }
+
+    #[test]
+    fn a_surface_keeps_its_exposes_clause_as_an_expression() {
+        let exposes = boundary_of(SHELF).exposes.expect("the clause");
+        let Expr::Block { items, .. } = exposes else { panic!("expected a block: {exposes:?}") };
+
+        assert_eq!(items.len(), 2, "a path and an iteration");
+        assert!(matches!(items[0], Expr::MemberAccess { .. }));
+        assert!(matches!(items[1], Expr::For { .. }));
+    }
+
+    /// `provides` and `@guarantee` are the graph's business — a panel draws
+    /// them and nothing evaluates them — so they must not arrive here as
+    /// exposures that would then be matched against.
+    #[test]
+    fn nothing_but_context_and_exposes_is_kept() {
+        let boundary = boundary_of(SHELF);
+        let printed = format!("{:?}", boundary.exposes);
+        assert!(!printed.contains("MemberReturns"), "{printed}");
+    }
+
+    #[test]
+    fn a_surface_with_no_context_keeps_none() {
+        let boundary = program_of(
+            "surface Open {\n    facing reader: Reader\n\n    exposes:\n        Loan.status\n}\n",
+        )
+        .boundary(NodeId::new("lending", NodeKind::Surface, "Open").as_str())
+        .cloned()
+        .expect("the surface");
+
+        assert_eq!(boundary.context, None);
+        assert!(boundary.exposes.is_some());
+    }
+
+    /// A rule is not a surface, and one arriving here would file its clauses
+    /// as somebody's boundary.
+    #[test]
+    fn only_surfaces_get_a_boundary() {
+        assert!(
+            program_of(BORROW)
+                .boundary(NodeId::new("lending", NodeKind::Surface, "BorrowCopy").as_str())
+                .is_none()
+        );
+    }
+
     #[test]
     fn only_entity_and_value_blocks_contribute() {
         let program = against(BORROW, &member_graph());

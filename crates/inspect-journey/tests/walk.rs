@@ -414,6 +414,104 @@ fn seeing_a_value_the_surface_shows_this_actor_holds() {
     assert_eq!(seen.verdict, Verdict::Specified, "{seen:?}");
 }
 
+/// The pair the fixture exists for. `MyLoans` is scoped —
+///
+/// ```text
+/// context borrower: Member
+/// exposes:
+///     for loan in borrower.open_loans:
+///         loan.status
+/// ```
+///
+/// — so it shows a member the loans on *their* shelf and nobody else's. Ada
+/// can see her own; the same clause is what stops her seeing Bob's.
+#[test]
+fn a_scoped_surface_shows_a_reader_their_own_row() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+    given:
+        copy.status = available
+    1. she borrows it and looks at her shelf
+        ada does MemberBorrows(ada, copy) on MemberShelf creating loan: Loan
+        ada sees loan.status on MyLoans
+}",
+    );
+    let seen = &result.steps[0].outcomes[1];
+    assert_eq!(seen.verdict, Verdict::Specified, "{seen:?}");
+}
+
+/// And the direction a filter exists for. Answering "yes, that field is
+/// exposed" here would be a privacy claim about somebody else's data.
+#[test]
+fn a_scoped_surface_does_not_show_a_reader_somebody_else_s_row() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada:  Member
+        bob:  Member
+        copy: catalogue/Copy
+    given:
+        copy.status = available
+    1. bob borrows it and ada looks at her own shelf
+        bob does MemberBorrows(bob, copy) on MemberShelf creating loan: Loan
+        ada cannot see loan.status on MyLoans
+}",
+    );
+    let seen = &result.steps[0].outcomes[1];
+    assert_eq!(seen.verdict, Verdict::Specified, "{seen:?}");
+    assert!(seen.detail.as_deref().is_some_and(|why| why.contains("not to ada")), "{seen:?}");
+}
+
+/// The same journey against the *unscoped* surface, which does show it —
+/// so the pair of tests is about the two clauses and not about the two
+/// journeys.
+#[test]
+fn the_unscoped_surface_shows_the_same_row_to_the_same_reader() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada:  Member
+        bob:  Member
+        copy: catalogue/Copy
+    given:
+        copy.status = available
+    1. bob borrows it and ada looks at the shelf
+        bob does MemberBorrows(bob, copy) on MemberShelf creating loan: Loan
+        ada sees loan.status on MemberShelf
+}",
+    );
+    let seen = &result.steps[0].outcomes[1];
+    assert_eq!(seen.verdict, Verdict::Specified, "{seen:?}");
+}
+
+/// A surface scoped to something the reader is not an instance of. The tool
+/// declines rather than walking from the actor to a plausible context, because
+/// which one a person is at is what a `context` declares.
+#[test]
+fn a_surface_scoped_to_something_else_is_undecided_and_says_so() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+    given:
+        copy.status = available
+    1. the copy looks at a member's shelf
+        ada does MemberBorrows(ada, copy) on MemberShelf creating loan: Loan
+        loan sees loan.status on MyLoans
+}",
+    );
+    let seen = &result.steps[0].outcomes[1];
+    assert_eq!(seen.verdict, Verdict::Undecided, "{seen:?}");
+    assert!(
+        seen.detail.as_deref().is_some_and(|why| why.contains("scoped to `Member`")),
+        "{seen:?}"
+    );
+}
+
 /// An exposure written over a *type* shows every instance of it, and this
 /// fixture is the argument for being able to say so.
 ///
