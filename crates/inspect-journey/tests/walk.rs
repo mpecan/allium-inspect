@@ -443,6 +443,29 @@ fn a_scoped_surface_shows_a_reader_their_own_row() {
     assert_eq!(seen.verdict, Verdict::Specified, "{seen:?}");
 }
 
+/// A field of the context itself — `borrower.name` — rather than of something
+/// in a collection. It is *this* reader's name, and the same clause is what
+/// makes it not somebody else's.
+#[test]
+fn a_scoped_surface_shows_the_reader_their_own_field() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada: Member
+        bob: Member
+    1. she looks at her own shelf
+        ada sees ada.name on MyLoans
+        ada cannot see bob.name on MyLoans
+}",
+    );
+
+    let bad: Vec<_> = outcomes(&result)
+        .into_iter()
+        .filter(|(verdict, ..)| *verdict != Verdict::Specified)
+        .collect();
+    assert!(bad.is_empty(), "{bad:#?}");
+}
+
 /// And the direction a filter exists for. Answering "yes, that field is
 /// exposed" here would be a privacy claim about somebody else's data.
 #[test]

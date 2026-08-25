@@ -183,6 +183,7 @@ surface MyLoans {
     context borrower: Member
 
     exposes:
+        borrower.name
         for loan in borrower.open_loans:
             loan.status
 
