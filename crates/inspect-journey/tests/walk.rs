@@ -1500,3 +1500,113 @@ fn an_optional_argument_that_was_passed_is_what_was_passed() {
         .collect();
     assert!(bad.is_empty(), "{bad:#?}");
 }
+
+// --- stipulating a call --------------------------------------------------
+//
+// `may_reserve(member, book)` is named by the specification and defined
+// nowhere. That is an ordinary state for a spec to be in — the policy has not
+// been decided — and a permanent one for a simulator: there is nothing to work
+// out, now or ever. So somebody says, and the saying goes in the ledger.
+
+#[test]
+fn a_call_the_spec_never_defines_can_be_answered_by_the_journey() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada:  Member
+        book: catalogue/Book
+    1. she reserves it, and the policy says she may
+        stipulate may_reserve(ada, book) = true
+        ada does MemberReservesQuietly(ada, book) on MemberShelf
+        then ReserveQuietly fires
+}",
+    );
+
+    let bad: Vec<_> = outcomes(&result)
+        .into_iter()
+        .filter(|(verdict, ..)| *verdict != Verdict::Specified)
+        .collect();
+    assert!(bad.is_empty(), "{bad:#?}");
+    assert_eq!(result.stipulated, ["may_reserve(ada, book) = true"]);
+}
+
+/// The other answer, which has to be sayable too or the feature is a way of
+/// making journeys pass.
+#[test]
+fn a_call_answered_false_refuses_the_rule() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada:  Member
+        book: catalogue/Book
+    1. she reserves it, and the policy says she may not
+        stipulate may_reserve(ada, book) = false
+        ada does MemberReservesQuietly(ada, book) on MemberShelf
+        then ReserveQuietly does not fire
+}",
+    );
+
+    let act = &result.steps[0].outcomes[1];
+    assert_eq!(act.verdict, Verdict::Refused, "{act:?}");
+}
+
+/// Without one it stays undecided, which is the honest answer and the reason
+/// the clause exists.
+#[test]
+fn a_call_nobody_answered_is_still_undecided() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada:  Member
+        book: catalogue/Book
+    1. she reserves it
+        ada does MemberReservesQuietly(ada, book) on MemberShelf
+}",
+    );
+
+    let act = &result.steps[0].outcomes[0];
+    assert_eq!(act.verdict, Verdict::Undecided, "{act:?}");
+    assert!(
+        act.detail.as_deref().is_some_and(|why| why.contains("a function call is not simulated")),
+        "{act:?}"
+    );
+}
+
+/// An answer is about *these* arguments. Answering `may_reserve(ada, book)`
+/// says nothing about Bob, and matching it to him would be the tool inventing
+/// a policy nobody stated.
+#[test]
+fn an_answer_is_about_the_arguments_it_names() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada:  Member
+        bob:  Member
+        book: catalogue/Book
+    1. ada may, and nobody said anything about bob
+        stipulate may_reserve(ada, book) = true
+        bob does MemberReservesQuietly(bob, book) on MemberShelf
+}",
+    );
+
+    let act = &result.steps[0].outcomes[1];
+    assert_eq!(act.verdict, Verdict::Undecided, "{act:?}");
+}
+
+/// Every one of them is in the ledger. A journey can be told anything; it
+/// cannot be told it invisibly.
+#[test]
+fn a_stipulated_call_is_reported_like_every_other_stipulation() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada:  Member
+        book: catalogue/Book
+    1. two things said outright
+        stipulate ada.open_loan_count = 0
+        stipulate may_reserve(ada, book) = true
+}",
+    );
+
+    assert_eq!(result.stipulated, ["ada.open_loan_count = 0", "may_reserve(ada, book) = true"]);
+}

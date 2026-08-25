@@ -289,7 +289,16 @@ fn a_surface_lists_the_operations_its_actor_can_perform() {
     assert_eq!(shelf.actor.as_deref(), Some("Reader"));
     let offered: Vec<&str> =
         shelf.provides.iter().map(|operation| operation.trigger.as_str()).collect();
-    assert_eq!(offered, ["MemberBorrows", "MemberReturns", "MemberReportsLoss", "MemberReserves"]);
+    assert_eq!(
+        offered,
+        [
+            "MemberBorrows",
+            "MemberReturns",
+            "MemberReportsLoss",
+            "MemberReserves",
+            "MemberReservesQuietly"
+        ]
+    );
     assert_eq!(shelf.guarantees, ["ALoanIsVisibleToItsHolderOnly"]);
 }
 

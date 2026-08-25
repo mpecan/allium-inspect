@@ -140,6 +140,23 @@ rule PlaceReservation {
     )
 }
 
+-- The call this set has that nothing defines. `may_reserve` is a policy
+-- decision nobody has taken, which is an ordinary state for a specification to
+-- be in and a permanent one for a simulator: there is nothing to work out. A
+-- journey says what it comes back as, and says it on the record.
+rule ReserveQuietly {
+    when: MemberReservesQuietly(member, book)
+
+    requires: may_reserve(member, book)
+
+    ensures: Reservation.created(
+        book: book,
+        member: member,
+        placed_at: now,
+        status: waiting
+    )
+}
+
 rule CancelReservationOnWithdrawal {
     when: reservation: Reservation.book.status = withdrawn
 
@@ -212,6 +229,7 @@ surface MemberShelf {
         MemberReturns(loan)
         MemberReportsLoss(loan, note?)
         MemberReserves(reader, book)
+        MemberReservesQuietly(reader, book)
 
     @guarantee ALoanIsVisibleToItsHolderOnly
         -- A shelf shows the reader their own loans. Whose copy is out is a

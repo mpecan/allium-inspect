@@ -721,3 +721,80 @@ mod clock {
         assert!(matches!(given_value("1.day"), Term::Literal(_)));
     }
 }
+
+/// `stipulate may_invite(chat, she) = true` — the grammar half.
+mod stipulating_a_call {
+    use inspect_journey::{Clause, Stipulated, Term, parse};
+
+    fn clause(written: &str) -> Clause {
+        let source = format!(
+            "journey R {{\n    goal: x\n\n    1. a step\n        stipulate {written}\n}}\n"
+        );
+        let journeys = parse(&source).unwrap_or_else(|error| panic!("`{written}`: {error}"));
+        journeys[0].steps[0].clauses[0].clone()
+    }
+
+    #[test]
+    fn a_call_is_read_as_a_call() {
+        let Clause::Stipulate { subject, .. } = clause("may_invite(chat, she) = true") else {
+            panic!("not a stipulation");
+        };
+        let Stipulated::Call { name, arguments } = subject else { panic!("{subject:?}") };
+
+        assert_eq!(name, "may_invite");
+        assert_eq!(arguments.len(), 2);
+        assert_eq!(arguments[0].as_written(), "chat");
+    }
+
+    #[test]
+    fn a_call_with_no_arguments_is_still_a_call() {
+        let Clause::Stipulate { subject, .. } = clause("in_maintenance() = false") else {
+            panic!("not a stipulation");
+        };
+        let Stipulated::Call { name, arguments } = subject else { panic!("{subject:?}") };
+
+        assert_eq!(name, "in_maintenance");
+        assert!(arguments.is_empty());
+    }
+
+    /// The form that was there first, and still is.
+    #[test]
+    fn a_path_is_still_read_as_a_path() {
+        let Clause::Stipulate { subject, .. } = clause("ada.is_at_limit = false") else {
+            panic!("not a stipulation");
+        };
+        assert!(matches!(subject, Stipulated::Path(_)));
+    }
+
+    #[test]
+    fn a_call_may_take_a_literal() {
+        let Clause::Stipulate { subject, .. } = clause("within_hours(9, 17) = true") else {
+            panic!("not a stipulation");
+        };
+        let Stipulated::Call { arguments, .. } = subject else { panic!("{subject:?}") };
+        assert!(matches!(arguments[0], Term::Literal(_)));
+    }
+
+    #[test]
+    fn a_call_that_never_closes_is_refused() {
+        let source =
+            "journey R {\n    goal: x\n\n    1. s\n        stipulate may_invite(a, b = true\n}\n";
+        let error = parse(source).expect_err("it must refuse");
+        assert!(error.to_string().contains("does not close it"), "{error}");
+    }
+
+    #[test]
+    fn a_call_with_no_name_is_refused() {
+        let source = "journey R {\n    goal: x\n\n    1. s\n        stipulate (a, b) = true\n}\n";
+        let error = parse(source).expect_err("it must refuse");
+        assert!(error.to_string().contains("needs a name"), "{error}");
+    }
+
+    #[test]
+    fn the_written_form_reads_back_as_it_was_written() {
+        let Clause::Stipulate { subject, .. } = clause("may_invite(chat, she) = true") else {
+            panic!("not a stipulation");
+        };
+        assert_eq!(subject.as_written(), "may_invite(chat, she)");
+    }
+}

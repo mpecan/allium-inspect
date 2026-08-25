@@ -18,7 +18,7 @@ import {
 } from "./history";
 
 function emptyWorld(now = 0): World {
-  return { entities: {}, config: {}, now, next_ordinal: {} };
+  return { entities: {}, config: {}, answers: [], now, next_ordinal: {} };
 }
 
 function outcome(trigger: string, now: number, emitted: string[] = []): StepOutcome {

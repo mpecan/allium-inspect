@@ -25,6 +25,7 @@ function world(): World {
     config: { "lending.loan_limit": { kind: "int", value: 5 } },
     now: 0,
     next_ordinal: { Member: 2 },
+    answers: [],
   };
 }
 

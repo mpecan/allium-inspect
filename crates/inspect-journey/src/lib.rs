@@ -29,7 +29,9 @@ pub use evidence::{
     Claim, Declared, Frame, Manifest, Resolution, Shot, Standing, StepEvidence, StepId, Undeclared,
     claims, resolve, seal, step_texts,
 };
-pub use journey::{Assertion, Axis, Cast, Clause, Comparison, Given, Journey, Path, Step, Term};
+pub use journey::{
+    Assertion, Axis, Cast, Clause, Comparison, Given, Journey, Path, Step, Stipulated, Term,
+};
 pub use parse::{ParseError, parse};
 pub use report::{Strictness, as_json, passes, render};
 pub use run::{CastMember, Origin, Outcome, Walk, Walked, notes_outside_steps, walk};

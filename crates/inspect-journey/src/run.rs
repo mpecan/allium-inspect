@@ -21,13 +21,13 @@ use inspect_sim::{
     Value, enabled,
     step::{Sources, StepOutcome, step},
     value::EntityId,
-    world::{Event, World},
+    world::{Answer, Event, World},
 };
 
 use crate::{
     assert::Sight,
     check::{self, Verdict},
-    journey::{Assertion, Clause, Journey, Step, Term},
+    journey::{Assertion, Clause, Journey, Step, Stipulated, Term},
     outcome::{refusal, verdict_of},
 };
 
@@ -336,23 +336,41 @@ impl Walker<'_> {
             Clause::Sees { actor, path, surface, negated, line } => {
                 self.observe(&Sight { actor, path, surface, negated: *negated, line: *line }, about)
             }
-            Clause::Stipulate { path, value, line } => {
+            Clause::Stipulate { subject, value, line } => {
                 let value = self.value_of(value);
-                let written = format!("{} = {}", path.as_written(), value.render());
-                // Listed only once it landed. The ledger exists so a reader can
-                // see everything the journey was told rather than shown, and a
-                // line in it that never reached the world is a false receipt.
-                match self.assign(path, value) {
-                    Ok(()) => {
+                let written = format!("{} = {}", subject.as_written(), value.render());
+                match subject {
+                    // Listed only once it landed. The ledger exists so a reader
+                    // can see everything the journey was told rather than
+                    // shown, and a line in it that never reached the world is a
+                    // false receipt.
+                    Stipulated::Path(path) => match self.assign(path, value) {
+                        Ok(()) => {
+                            self.stipulated.push(written);
+                            Outcome {
+                                line: *line,
+                                verdict: Verdict::Specified,
+                                about,
+                                detail: None,
+                            }
+                        }
+                        Err(reason) => Outcome {
+                            line: *line,
+                            verdict: Verdict::Undecided,
+                            about,
+                            detail: Some(reason),
+                        },
+                    },
+                    // A call writes nowhere: there is no field to set, which is
+                    // the whole reason it needs saying. It is remembered and
+                    // answered from when the specification asks.
+                    Stipulated::Call { name, arguments } => {
+                        let arguments: Vec<Value> =
+                            arguments.iter().map(|term| self.value_of(term)).collect();
+                        self.world.answers.push(Answer { call: name.clone(), arguments, value });
                         self.stipulated.push(written);
                         Outcome { line: *line, verdict: Verdict::Specified, about, detail: None }
                     }
-                    Err(reason) => Outcome {
-                        line: *line,
-                        verdict: Verdict::Undecided,
-                        about,
-                        detail: Some(reason),
-                    },
                 }
             }
         }
@@ -591,8 +609,8 @@ fn about(clause: &Clause) -> String {
             let verb = if *negated { "cannot see" } else { "sees" };
             format!("{actor} {verb} {} on {surface}", path.as_written())
         }
-        Clause::Stipulate { path, value, .. } => {
-            format!("stipulate {} = {}", path.as_written(), value.as_written())
+        Clause::Stipulate { subject, value, .. } => {
+            format!("stipulate {} = {}", subject.as_written(), value.as_written())
         }
     }
 }

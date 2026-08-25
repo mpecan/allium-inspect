@@ -107,8 +107,8 @@ pub enum Clause {
     Then { assertion: Assertion, line: usize },
     /// `ada sees loan.status on MemberShelf`, or `cannot see`.
     Sees { actor: String, path: Path, surface: String, negated: bool, line: usize },
-    /// `stipulate ada.is_at_limit = false`
-    Stipulate { path: Path, value: Term, line: usize },
+    /// `stipulate ada.is_at_limit = false`, or `stipulate may_invite(g, a) = true`
+    Stipulate { subject: Stipulated, value: Term, line: usize },
 }
 
 impl Clause {
@@ -163,6 +163,34 @@ impl Comparison {
             Comparison::LessOrEqual => "<=",
             Comparison::Greater => ">",
             Comparison::GreaterOrEqual => ">=",
+        }
+    }
+}
+
+/// What a `stipulate` line is about.
+///
+/// A path writes into the world. A **call** cannot: `may_invite(group, issuer)`
+/// is a function the specification names and never defines, deliberately —
+/// the policy has not been decided — so there is nothing to write to and
+/// nothing this simulator could ever work out. It stays undecided forever, and
+/// forever is what `stipulate` is for.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Stipulated {
+    /// `ada.is_at_limit = false`
+    Path(Path),
+    /// `may_invite(chat, she) = true`
+    Call { name: String, arguments: Vec<Term> },
+}
+
+impl Stipulated {
+    #[must_use]
+    pub fn as_written(&self) -> String {
+        match self {
+            Stipulated::Path(path) => path.as_written(),
+            Stipulated::Call { name, arguments } => {
+                let inside: Vec<String> = arguments.iter().map(Term::as_written).collect();
+                format!("{name}({})", inside.join(", "))
+            }
         }
     }
 }

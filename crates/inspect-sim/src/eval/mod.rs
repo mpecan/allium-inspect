@@ -38,7 +38,7 @@ use std::{
     sync::LazyLock,
 };
 
-use allium_parser::ast::{CondBranch, Expr, Ident, QualifiedName};
+use allium_parser::ast::{CallArg, CondBranch, Expr, Ident, QualifiedName};
 // Re-exported for `apply`, which walks the same tree to decide what a
 // postcondition changes.
 pub use ast::{bare_name, span_of};
@@ -277,7 +277,7 @@ pub fn eval(expr: &Expr, env: &Env<'_>) -> Evaluation {
         // evaluated" is something a reader can act on and "unsupported" is not.
         Expr::Pipe { .. } => unsupported("a `|` alternation", expr, env),
         Expr::Lambda { .. } => unsupported("a lambda", expr, env),
-        Expr::Call { .. } => unsupported("a function call", expr, env),
+        Expr::Call { function, args, .. } => answered(expr, function, args, env),
         Expr::JoinLookup { entity, fields, .. } => {
             collections::join_lookup(expr, entity, fields, env)
         }
@@ -291,6 +291,40 @@ pub fn eval(expr: &Expr, env: &Env<'_>) -> Evaluation {
         Expr::Becomes { .. } => unsupported("a `becomes` assertion", expr, env),
         Expr::WhenGuard { .. } => unsupported("a `when` guard", expr, env),
         Expr::Within { .. } => unsupported("a `within` deadline", expr, env),
+    }
+}
+
+/// A call, answered only if somebody said what it comes back as.
+///
+/// The specification names functions it never defines — `may_invite(group,
+/// issuer)`, whose policy is still being decided — and no simulator can work
+/// one out. So a journey may say, with `stipulate may_invite(chat, she) =
+/// true`, and that saying is printed in the ledger above the walk.
+///
+/// Matched on argument *values*: the rule writes `may_invite(group, issuer)`
+/// and the journey writes `may_invite(chat, she)`, which are the same call
+/// about the same two things. An argument nothing settled matches nothing,
+/// because a stipulation about a value nobody knows is not about anything.
+fn answered(whole: &Expr, function: &Expr, args: &[CallArg], env: &Env<'_>) -> Evaluation {
+    let Expr::Ident(called) = function else {
+        return unsupported("a function call", whole, env);
+    };
+    let name = called.name.as_str();
+
+    let mut given = Vec::with_capacity(args.len());
+    let mut unresolved = Vec::new();
+    for argument in args {
+        let CallArg::Positional(value) = argument else {
+            return unsupported("a function call with named arguments", whole, env);
+        };
+        let evaluated = eval(value, env);
+        unresolved.extend(evaluated.unresolved);
+        given.push(evaluated.value);
+    }
+
+    match env.world.answer(name, &given) {
+        Some(answer) => Evaluation { value: answer.clone(), unresolved },
+        None => unsupported("a function call", whole, env).carrying(unresolved),
     }
 }
 

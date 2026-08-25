@@ -24,7 +24,9 @@
 
 use inspect_sim::{Value, seed};
 
-use crate::journey::{Assertion, Axis, Cast, Clause, Comparison, Given, Journey, Path, Step, Term};
+use crate::journey::{
+    Assertion, Axis, Cast, Clause, Comparison, Given, Journey, Path, Step, Stipulated, Term,
+};
 
 /// A journey file that could not be read.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -258,6 +260,35 @@ fn cast(text: &str, line: usize) -> Result<Cast, ParseError> {
     Ok(Cast { name: name.to_owned(), type_expr: type_expr.to_owned(), line })
 }
 
+/// What a `stipulate` line is about: a path, or a call.
+///
+/// A call is told apart by its shape rather than by looking it up, because the
+/// whole reason to write one is that the specification names a function it
+/// never defines — there is nothing to look it up in.
+fn stipulated(text: &str, line: usize) -> Result<Stipulated, ParseError> {
+    let Some((name, rest)) = text.split_once('(') else {
+        return Ok(Stipulated::Path(path(text, line)?));
+    };
+    let Some(inside) = rest.strip_suffix(')') else {
+        return fail(line, format!("`{text}` opens a call and does not close it"));
+    };
+
+    let name = name.trim();
+    if name.is_empty() {
+        return fail(line, "a call needs a name");
+    }
+
+    let mut arguments = Vec::new();
+    for part in split_arguments(inside) {
+        let part = part.trim();
+        if !part.is_empty() {
+            arguments.push(term(part, line)?);
+        }
+    }
+
+    Ok(Stipulated::Call { name: name.to_owned(), arguments })
+}
+
 /// `theme: dark, light`
 fn axis(text: &str, line: usize) -> Result<Axis, ParseError> {
     let Some((key, values)) = text.split_once(':') else {
@@ -343,9 +374,16 @@ fn clause(text: &str, line: usize) -> Result<Clause, ParseError> {
     }
     if let Some(rest) = text.strip_prefix("stipulate ") {
         let Some((left, right)) = split_once_operator(rest, "=") else {
-            return fail(line, "expected `stipulate <path> = <value>`");
+            return fail(
+                line,
+                "expected `stipulate <path> = <value>` or `stipulate <call> = <value>`",
+            );
         };
-        return Ok(Clause::Stipulate { path: path(left, line)?, value: term(right, line)?, line });
+        return Ok(Clause::Stipulate {
+            subject: stipulated(left.trim(), line)?,
+            value: term(right, line)?,
+            line,
+        });
     }
     if let Some((actor, rest)) = text.split_once(" does ") {
         return does(actor.trim(), rest.trim(), line);

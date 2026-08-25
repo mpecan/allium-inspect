@@ -62,6 +62,19 @@ impl Event {
     }
 }
 
+/// What somebody said a call comes back as.
+///
+/// Matched on argument *values* rather than on the text: a rule writes
+/// `may_invite(group, issuer)` where a journey writes `may_invite(chat, she)`,
+/// and those are the same call about the same two things.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../ui/src/lib/api/")]
+pub struct Answer {
+    pub call: String,
+    pub arguments: Vec<Value>,
+    pub value: Value,
+}
+
 /// Every instance, the configuration, and the time.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../ui/src/lib/api/")]
@@ -70,6 +83,15 @@ pub struct World {
     pub entities: BTreeMap<EntityId, Instance>,
     /// Configuration in force, keyed `module.parameter`.
     pub config: BTreeMap<String, Value>,
+    /// What a journey answered on the specification's behalf.
+    ///
+    /// A specification names functions it never defines — `may_invite(group,
+    /// issuer)`, whose policy has not been decided — and no simulator can work
+    /// one out. Somebody has to say, and what they said is state: it belongs
+    /// beside the config, which is the other thing here that came from outside
+    /// the world rather than from anything that happened in it.
+    #[serde(default)]
+    pub answers: Vec<Answer>,
     /// The current time, in milliseconds. Advanced only by the user.
     ///
     /// `number` on the wire; see the note on [`Value::Int`].
@@ -138,6 +160,27 @@ impl World {
         let previous = instance.field(field);
         instance.set(field, value);
         Some(previous)
+    }
+
+    /// The configuration parameter `name`, looked up for `module`.
+    ///
+    /// Tried qualified first, then bare. A rule in `messaging` writing
+    /// `config.max_attachment_bytes` means its own module's parameter, but a
+    /// world seeded by hand may name it either way and both readings are what
+    /// What somebody said this call comes back as, if anybody said.
+    ///
+    /// An argument nothing settled matches nothing: a stipulation about a value
+    /// nobody knows is not about anything, and matching it would answer a
+    /// question nobody actually asked.
+    #[must_use]
+    pub fn answer(&self, call: &str, arguments: &[Value]) -> Option<&Value> {
+        if arguments.iter().any(Value::is_unknown) {
+            return None;
+        }
+        self.answers
+            .iter()
+            .find(|answer| answer.call == call && answer.arguments == arguments)
+            .map(|answer| &answer.value)
     }
 
     /// The configuration parameter `name`, looked up for `module`.

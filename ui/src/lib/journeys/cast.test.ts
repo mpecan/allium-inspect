@@ -24,6 +24,7 @@ function world(entities: Instance[], config: World["config"] = {}): World {
     config,
     now: 0,
     next_ordinal: {},
+    answers: [],
   };
 }
 
