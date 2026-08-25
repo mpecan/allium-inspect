@@ -330,6 +330,22 @@
     cursor: pointer;
   }
 
+  /* A plate is scenery, and scenery does not take clicks.
+   *
+   * Svelte Flow wraps every node in an element of its own, and the wrapper is
+   * outside the component — so `pointer-events: none` on the hull itself left
+   * the wrapper catching everything. Clicking the empty part of a file's plate
+   * fired `onnodeclick` with `archive::hull`, an id no construct has: the
+   * selection became it, `paint` marked the plate selected, and Svelte Flow
+   * elevated the selected node to `z-index: 999` — so the box a reader clicked
+   * to look *into* covered every construct inside it.
+   *
+   * Inert, the click falls through to the pane, which clears the selection.
+   * That is what clicking the background of a file should mean anyway. */
+  .canvas :global(.svelte-flow__node-hull) {
+    pointer-events: none;
+  }
+
   .canvas :global(.svelte-flow__handle) {
     opacity: 0;
     pointer-events: none;

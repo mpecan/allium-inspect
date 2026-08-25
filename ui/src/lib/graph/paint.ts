@@ -28,7 +28,9 @@ export function paint(
   trace: Trace | null,
 ): FlowNode[] {
   const measured = new Map(
-    previous.flatMap((node) => (node.measured ? [[node.id, node] as const] : [])),
+    previous.flatMap((node) =>
+      node.measured ? [[node.id, node] as const] : [],
+    ),
   );
   return placed.map((node) => {
     const carried = measured.get(node.id);
@@ -37,7 +39,12 @@ export function paint(
       measured: carried?.measured,
       width: carried?.width,
       height: carried?.height,
-      selected: node.id === selected,
+      // Never a hull. Svelte Flow elevates the selected node above its
+      // neighbours, which is right for a construct and ruinous for the plate
+      // *behind* a file's constructs — it comes forward and hides them. The
+      // plate is inert on the canvas, so a click cannot select one; this is
+      // for the id arriving from anywhere else at all.
+      selected: node.type !== "hull" && node.id === selected,
       data: {
         ...node.data,
         dimmed: trace !== null && !trace.nodes.has(node.id),

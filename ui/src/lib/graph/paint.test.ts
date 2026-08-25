@@ -18,6 +18,16 @@ function canvasWrote(id: string): FlowNode {
   return { ...placed(id), measured: { width: 120, height: 40 }, width: 120, height: 40 };
 }
 
+/** A file's plate, as `Canvas.svelte` builds it. */
+function hull(id: string): FlowNode {
+  return {
+    id,
+    type: "hull",
+    position: { x: 0, y: 0 },
+    data: { module: "lending", held: 12, width: 400, height: 300 },
+  };
+}
+
 const trace: Trace = { nodes: new Set(["a"]), edges: new Set(), depth: 1 };
 
 describe("paint", () => {
@@ -28,6 +38,21 @@ describe("paint", () => {
     const [node] = paint([placed("a")], [canvasWrote("a")], null, null);
     expect(node?.measured).toEqual({ width: 120, height: 40 });
     expect(node?.width).toBe(120);
+  });
+
+  // Svelte Flow elevates the selected node above its neighbours, which is
+  // right for a construct and ruinous for the plate *behind* a file's
+  // constructs: it comes forward and hides every one of them. That is what
+  // clicking the empty part of a plate used to do, and this is the half of the
+  // fix that holds if the id ever arrives from somewhere other than a click.
+  it("never marks a file's plate selected, whatever is selected", () => {
+    const [plate] = paint([hull("lending::hull")], [], "lending::hull", null);
+    expect(plate?.selected).toBe(false);
+  });
+
+  it("still marks the selected construct selected", () => {
+    const [node] = paint([placed("a")], [], "a", null);
+    expect(node?.selected).toBe(true);
   });
 
   it("leaves a node the canvas has not measured yet unmeasured", () => {
