@@ -679,6 +679,46 @@ fn a_journey_that_changes_what_it_inherited_says_so() {
     assert_eq!(seen.verdict, Verdict::Specified, "{seen:?}");
 }
 
+/// An override collides with the line it is *about*, and with no other.
+///
+/// Marking every inherited line the moment a journey has any `given` at all
+/// would be the ledger crying wolf: a reader who is told three things were
+/// changed when one was stops reading it.
+#[test]
+fn an_override_marks_the_line_it_collides_with_and_no_other() {
+    let result = walked_nth(
+        "\
+world {
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+    given:
+        copy.status = available
+        ada.name = \"Ada\"
+}
+
+journey SheBorrowsSomethingGone {
+    given:
+        copy.status = lost
+    1. she cannot borrow it
+        ada cannot do MemberBorrows(ada, copy) on MemberShelf
+}
+",
+        0,
+    );
+    let marked: Vec<(&str, bool)> =
+        result.inherited.iter().map(|line| (line.said.as_str(), line.overridden)).collect();
+    assert_eq!(
+        marked,
+        [
+            ("ada: Member", false),
+            ("copy: catalogue/Copy", false),
+            ("copy.status = available", true),
+            ("ada.name = \"Ada\"", false),
+        ]
+    );
+}
+
 /// A journey that declined it inherits nothing, and its report says nothing
 /// about a world it is not in.
 #[test]
