@@ -23,7 +23,7 @@ use allium_parser::{
 };
 use inspect_model::{
     Node, NodeDetail, NodeKind, SpecGraph,
-    graph::{EntityDetail, EntityField, EntityKind, TransitionEdge, TransitionGraph},
+    graph::{EntityDetail, EntityField, EntityKind, EnumDetail, TransitionEdge, TransitionGraph},
 };
 use inspect_sim::{
     Effect, Value,
@@ -66,10 +66,28 @@ fn spec() -> SpecGraph {
     graph.nodes.push(Node::new("lending", NodeKind::Entity, "Loan").with(NodeDetail::Entity(
         EntityDetail {
             kind: EntityKind::Internal,
-            fields: vec![EntityField::new("copy", "catalogue/Copy"), loan_status],
+            fields: vec![
+                EntityField::new("copy", "catalogue/Copy"),
+                loan_status,
+                // Typed by an enumeration declared elsewhere, which carries
+                // its states instead of the field carrying them. Qualified,
+                // because an enumeration is filed under its bare name in the
+                // module that declares it and the two have to meet.
+                EntityField::new("wanted_as", "catalogue/Medium"),
+            ],
             transitions: Vec::new(),
             parent: None,
         },
+    )));
+
+    // Two of them, and `Binding` first, because a spec has more than one
+    // enumeration and the field names which. Finding *an* enumeration rather
+    // than *the* one would let a state of any of them land in any field.
+    graph.nodes.push(Node::new("catalogue", NodeKind::Enum, "Binding").with(NodeDetail::Enum(
+        EnumDetail { values: ["hardback", "paperback"].map(ToOwned::to_owned).to_vec() },
+    )));
+    graph.nodes.push(Node::new("catalogue", NodeKind::Enum, "Medium").with(NodeDetail::Enum(
+        EnumDetail { values: ["print", "audio"].map(ToOwned::to_owned).to_vec() },
     )));
 
     graph.normalise();
@@ -412,6 +430,59 @@ fn applying_is_deterministic() {
     let (second, _, two) = apply(&clause, &[]);
     assert_eq!(first, second);
     assert_eq!(one, two);
+}
+
+// --- states, and the two places a field's are written ----------------------
+
+/// `status: open | returned` carries its own states.
+#[test]
+fn a_state_a_field_declares_itself_is_stored_as_one() {
+    let (_, _, world) = apply(&creation("Loan", vec![("status", ident("open"))]), &[]);
+    let loan = world.instance(&EntityId::new("Loan", 1)).expect("created");
+    assert_eq!(loan.fields.get("status"), Some(&Value::Enum("open".to_owned())));
+}
+
+/// `wanted_as: catalogue/Medium` carries none, and names an enumeration that
+/// does. Reading only the first place left `Receipt.created(kind: read)`
+/// storing an unknown — so a rule guarding on `not exists Receipt{…, kind:
+/// read}` could not tell whether it had already recorded one.
+#[test]
+fn a_state_the_enumeration_a_field_names_declares_is_stored_as_one() {
+    let (_, _, world) = apply(&creation("Loan", vec![("wanted_as", ident("print"))]), &[]);
+    let loan = world.instance(&EntityId::new("Loan", 1)).expect("created");
+    assert_eq!(loan.fields.get("wanted_as"), Some(&Value::Enum("print".to_owned())));
+}
+
+/// Checked rather than accepted on sight, in both places. A misspelling that
+/// became a state would be a state nothing in the lifecycle mentions, and the
+/// panel would draw a world the spec cannot reach.
+#[test]
+fn a_state_neither_place_declares_stays_unknown_and_says_why() {
+    for (field, wrong) in [("status", "returnd"), ("wanted_as", "papyrus")] {
+        let (_, reasons, world) = apply(&creation("Loan", vec![(field, ident(wrong))]), &[]);
+        let loan = world.instance(&EntityId::new("Loan", 1)).expect("created");
+        assert_eq!(loan.fields.get(field), Some(&Value::Unknown), "{field} took `{wrong}`");
+        assert!(
+            reasons.iter().any(|why| why.contains(wrong)),
+            "no reason naming `{wrong}`: {reasons:?}"
+        );
+    }
+}
+
+/// And the enumeration has to be the one the field names. A spec has several,
+/// and taking the first one found would let a state of any of them land in a
+/// field typed by another — `wanted_as: hardback` on a field of `Medium`.
+#[test]
+fn a_state_of_some_other_enumeration_is_not_this_fields() {
+    let (_, _, world) = apply(&creation("Loan", vec![("wanted_as", ident("hardback"))]), &[]);
+    let loan = world.instance(&EntityId::new("Loan", 1)).expect("created");
+    assert_eq!(loan.fields.get("wanted_as"), Some(&Value::Unknown));
+
+    // Nor does a field typed by something that is not an enumeration at all
+    // take one's states.
+    let (_, _, world) = apply(&creation("Loan", vec![("copy", ident("print"))]), &[]);
+    let loan = world.instance(&EntityId::new("Loan", 1)).expect("created");
+    assert_eq!(loan.fields.get("copy"), Some(&Value::Unknown));
 }
 
 // --- where a created instance comes from ----------------------------------

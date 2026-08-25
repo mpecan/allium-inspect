@@ -521,6 +521,16 @@ mod tests {
         assert!(entity.as_rule().is_none());
         assert!(entity.as_trigger().is_none());
         assert!(entity.as_surface().is_none());
+        assert!(entity.as_enum().is_none());
+
+        // The states of a field typed `kind: ReceiptKind` are here rather than
+        // on the field, and the simulator reads them through this.
+        let medium = NodeDetail::Enum(EnumDetail {
+            values: ["print", "audio"].map(ToOwned::to_owned).to_vec(),
+        });
+        assert_eq!(medium.as_enum().map(|detail| detail.values.len()), Some(2));
+        assert!(medium.as_entity().is_none());
+        assert!(NodeDetail::None.as_enum().is_none());
 
         assert!(NodeDetail::None.as_entity().is_none());
     }
