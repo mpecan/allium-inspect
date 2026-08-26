@@ -138,6 +138,7 @@ fn statically(journey: &inspect_journey::Journey, graph: &SpecGraph) -> Walk {
         .collect();
     Walk {
         name: journey.name.clone(),
+        title: inspect_journey::title::readable(&journey.name),
         cast: Vec::new(),
         goal: journey.goal.clone(),
         ends: journey.ends.clone(),

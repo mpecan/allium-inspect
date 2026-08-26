@@ -35,6 +35,7 @@ function member(name: string, entity: string | null): CastMember {
 function walk(worlds: World[]): Walk {
   return {
     name: "J",
+    title: "J",
     cast: [],
     goal: [],
     ends: [],

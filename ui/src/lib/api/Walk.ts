@@ -7,7 +7,20 @@ import type { Walked } from "./Walked";
 /**
  * What became of a journey.
  */
-export type Walk = { name: string, 
+export type Walk = { 
+/**
+ * The journey's name, which is its identity: an evidence marker says
+ * `journey: <name>.3`, and the panel finds a walk by it.
+ */
+name: string, 
+/**
+ * The same name with its words apart, for a heading.
+ *
+ * Derived rather than declared. A journey already says what it is for in
+ * `goal:`, in the author's own words; a second place to write the same
+ * thing differently is a second place for them to disagree.
+ */
+title: string, 
 /**
  * Everybody the journey named, in the order the names were bound.
  */

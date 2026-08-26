@@ -45,6 +45,7 @@ function walk(
 ): Walk {
   return {
     name,
+    title: name,
     cast: [
       {
         name: "ada",
@@ -154,6 +155,27 @@ describe("Journeys", () => {
     });
     expect(screen.getByText(/Told rather than shown/)).toBeTruthy();
     expect(screen.getByText("ada.is_at_limit = false")).toBeTruthy();
+  });
+
+  // A column of `SheReadsWhatArrivedAndHeIsToldSheDid` is work nobody should
+  // be doing. The identifier is what an evidence marker spells and what
+  // everything keys on, so it stays one hover away rather than going.
+  it("heads a journey with its words apart, and keeps the name to hand", () => {
+    const one = walk("A", [line("specified", "then x = 1")]);
+    render(Journeys, {
+      report: report([
+        {
+          ...one,
+          name: "SheReadsWhatArrived",
+          title: "She Reads What Arrived",
+        },
+      ]),
+      failure: null,
+    });
+    const heading = screen.getByRole("heading", {
+      name: "She Reads What Arrived",
+    });
+    expect(heading.getAttribute("title")).toBe("SheReadsWhatArrived");
   });
 
   it("shows what the file laid out before this journey said anything", () => {

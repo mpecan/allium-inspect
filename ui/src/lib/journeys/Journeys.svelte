@@ -186,7 +186,10 @@
               onclick={() => (chosen = entry.walk.name)}
             >
               <Verdict kind={MARK[verdict]} label={MEANING[verdict]} />
-              <span class="name">{entry.walk.name}</span>
+              <!-- The readable name. The identifier is what everything keys
+                   on and is one hover away, because an evidence marker spells
+                   it and somebody reading a marker has to find it here. -->
+              <span class="name" title={entry.walk.name}>{entry.walk.title}</span>
               <span class="file">{entry.file}</span>
             </button>
           </li>
@@ -218,7 +221,7 @@
       <header>
         <div class="title">
           <Verdict kind={MARK[verdict]} label={MEANING[verdict]} />
-          <h2>{walk.name}</h2>
+          <h2 title={walk.name}>{walk.title}</h2>
         </div>
       </header>
 

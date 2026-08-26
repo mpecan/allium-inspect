@@ -152,6 +152,7 @@ mod tests {
     fn walk_of(name: &str, outcomes: Vec<(Verdict, &str)>) -> Walk {
         Walk {
             name: name.to_owned(),
+            title: inspect_journey::title::readable(name),
             cast: Vec::new(),
             goal: vec!["she does the thing".to_owned()],
             ends: vec!["it is done".to_owned()],

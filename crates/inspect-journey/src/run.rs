@@ -133,7 +133,15 @@ impl Walked {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../ui/src/lib/api/")]
 pub struct Walk {
+    /// The journey's name, which is its identity: an evidence marker says
+    /// `journey: <name>.3`, and the panel finds a walk by it.
     pub name: String,
+    /// The same name with its words apart, for a heading.
+    ///
+    /// Derived rather than declared. A journey already says what it is for in
+    /// `goal:`, in the author's own words; a second place to write the same
+    /// thing differently is a second place for them to disagree.
+    pub title: String,
     /// Everybody the journey named, in the order the names were bound.
     pub cast: Vec<CastMember>,
     /// What the journey said it was for, and how it said it ends.
@@ -268,6 +276,7 @@ pub fn walk(journey: &Journey, spec: &SpecGraph, program: &Program, sources: &So
 
     Walk {
         name: journey.name.clone(),
+        title: crate::title::readable(&journey.name),
         cast: walker.cast,
         goal: journey.goal.clone(),
         ends: journey.ends.clone(),

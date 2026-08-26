@@ -60,7 +60,11 @@ pub fn render(walks: &[Walk]) -> String {
     let mut out = String::new();
     for walk in walks {
         let holds = walk.steps.iter().filter(|step| step.verdict() == Verdict::Specified).count();
-        out.push_str(&format!("{}  —  {} of {} steps hold\n", walk.name, holds, walk.steps.len()));
+        // The readable name in the heading, because a column of PascalCase is
+        // work nobody should be doing. The identifier is one line down, on the
+        // journeys that carry a `from the file` ledger, and in the JSON — and
+        // it is what an evidence marker and the panel both key on.
+        out.push_str(&format!("{}  —  {} of {} steps hold\n", walk.title, holds, walk.steps.len()));
 
         // What it was told rather than shown, first and always. An agent can
         // make any journey pass; it cannot make one pass invisibly.
@@ -128,6 +132,7 @@ pub fn as_json(walks: &[Walk]) -> serde_json::Value {
             .map(|walk| {
                 serde_json::json!({
                     "journey": walk.name,
+                    "title": walk.title,
                     "verdict": walk.verdict().as_str(),
                     "stipulated": walk.stipulated,
                     "inherited": walk.inherited.iter().map(|line| serde_json::json!({
@@ -175,6 +180,7 @@ mod tests {
             ends: vec!["the thing is done".to_owned()],
             line: 1,
             steps,
+            title: crate::title::readable(name),
             stipulated,
             inherited: Vec::new(),
             notes: Vec::new(),
