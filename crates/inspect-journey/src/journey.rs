@@ -57,6 +57,26 @@ pub struct Journey {
     /// from a world where she has one, and belongs in the file with the others
     /// about her.
     pub inherits: Option<Shared>,
+    /// `after: SomebodyArrivesAndReachesAFriend` — the journey this one
+    /// continues from.
+    ///
+    /// Journeys do not happen in a vacuum. Somebody arrives, and *then* reads
+    /// what was sent to them, and *then* takes it back — three journeys about
+    /// one afternoon, and the second and third spent their `given` blocks
+    /// rebuilding what the first had already established. Written down, the
+    /// chain reads as a life rather than as three unrelated mornings.
+    ///
+    /// The named journey is walked to its end and this one starts in the world
+    /// it left. Its own `cast` and `given` go on top of that, and its file's
+    /// `world` is **not** laid out again — the journey it follows already
+    /// started from one, and a second over the top would make a second `ada`.
+    ///
+    /// What makes this safe is different in kind from what makes `world` safe.
+    /// A world is a list of lines and they are all reported; the end state of
+    /// another journey is a world and cannot be. What can be said — and is —
+    /// is that the ground under this is itself checked, and what its verdict
+    /// was. A journey standing on one that does not hold cannot hold either.
+    pub after: Option<String>,
     pub steps: Vec<Step>,
     /// The outcome, in words.
     pub ends: Vec<String>,

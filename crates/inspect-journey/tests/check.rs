@@ -46,7 +46,10 @@ fn library() -> SpecGraph {
 fn notes(source: &str) -> Vec<(Verdict, String)> {
     let journeys = parse(source).expect("the journey parses");
     let graph = library();
-    check(&journeys[0], &graph).into_iter().map(|note| (note.verdict, note.message)).collect()
+    check(&journeys[0], &journeys, &graph)
+        .into_iter()
+        .map(|note| (note.verdict, note.message))
+        .collect()
 }
 
 const BORROWING: &str = include_str!("fixtures/lending.journey");
@@ -58,7 +61,7 @@ fn a_journey_the_spec_supports_has_nothing_to_report() {
     let journeys = parse(BORROWING).expect("parses");
     let graph = library();
     for journey in &journeys {
-        let found = check(journey, &graph);
+        let found = check(journey, &journeys, &graph);
         assert!(found.is_empty(), "{}: {found:?}", journey.name);
     }
 }

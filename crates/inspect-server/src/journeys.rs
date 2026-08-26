@@ -9,13 +9,11 @@
 //! alternative is a journey silently vanishing from the list, which reads as
 //! "it passed".
 
-use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-};
+use std::{collections::BTreeMap, path::PathBuf};
 
 use inspect_journey::{
-    Axis, Resolution, StepId, Verdict, Walk, parse, resolve as stand, step_texts, walk,
+    Axis, Resolution, StepId, Verdict, Walk, journey::Journey, parse, resolve as stand, step_texts,
+    walk,
 };
 use inspect_model::{Program, SpecGraph};
 
@@ -73,8 +71,22 @@ impl JourneyReport {
         sources: &Sources,
         evidence: &Evidence,
     ) -> Self {
-        let files: Vec<JourneyFile> =
-            files.iter().map(|path| read_one(path, graph, program, sources)).collect();
+        // Every file is read before any journey is walked, because a journey
+        // may continue from one in another file — `arriving` into `ordinary`
+        // into `losing` is a life, and a life does not stop at a file boundary.
+        let read: Vec<(JourneyFile, Vec<Journey>)> = files.iter().map(read_one).collect();
+        let everything: Vec<Journey> =
+            read.iter().flat_map(|(_, journeys)| journeys.iter().cloned()).collect();
+        let files: Vec<JourneyFile> = read
+            .into_iter()
+            .map(|(mut file, journeys)| {
+                file.walks = journeys
+                    .iter()
+                    .map(|journey| walk(journey, &everything, graph, program, sources))
+                    .collect();
+                file
+            })
+            .collect();
         let walks = files.iter().flat_map(|file| file.walks.iter());
         let total = walks.clone().count();
         let holding = walks.filter(|walk| walk.verdict() == Verdict::Specified).count();
@@ -110,7 +122,8 @@ impl JourneyReport {
     }
 }
 
-fn read_one(path: &Path, graph: &SpecGraph, program: &Program, sources: &Sources) -> JourneyFile {
+/// One file's text and the journeys in it, before anything is walked.
+fn read_one(path: &PathBuf) -> (JourneyFile, Vec<Journey>) {
     let name = path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -127,20 +140,19 @@ fn read_one(path: &Path, graph: &SpecGraph, program: &Program, sources: &Sources
         Ok(text) => text,
         Err(error) => {
             file.error = Some(format!("could not be read: {error}"));
-            return file;
+            return (file, Vec::new());
         }
     };
     file.text.clone_from(&text);
     match parse(&text) {
         // The parse error already names its own line, which is what turns it
         // into somewhere to go rather than a complaint about a file.
-        Err(error) => file.error = Some(error.to_string()),
-        Ok(journeys) => {
-            file.walks =
-                journeys.iter().map(|journey| walk(journey, graph, program, sources)).collect();
+        Err(error) => {
+            file.error = Some(error.to_string());
+            (file, Vec::new())
         }
+        Ok(journeys) => (file, journeys),
     }
-    file
 }
 
 #[cfg(test)]

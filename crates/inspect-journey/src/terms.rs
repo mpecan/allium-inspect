@@ -13,8 +13,9 @@
 use inspect_sim::{Value, seed};
 
 use crate::{
+    clauses::split_arguments,
     journey::{Path, Term},
-    parse::{ParseError, fail, split_arguments},
+    parse::{ParseError, fail},
 };
 
 /// `loan.copy.status`

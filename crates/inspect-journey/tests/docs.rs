@@ -228,7 +228,7 @@ fn every_journey_example_names_only_what_the_fixture_spec_declares() {
             let journeys = parse(&source).expect("it parsed in the test above");
 
             for journey in &journeys {
-                let missing: Vec<String> = check(journey, &graph)
+                let missing: Vec<String> = check(journey, &journeys, &graph)
                     .into_iter()
                     .filter(|note| note.verdict == Verdict::Unspecified)
                     .map(|note| note.message)

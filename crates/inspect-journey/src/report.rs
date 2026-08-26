@@ -66,6 +66,23 @@ pub fn render(walks: &[Walk]) -> String {
         // it is what an evidence marker and the panel both key on.
         out.push_str(&format!("{}  —  {} of {} steps hold\n", walk.title, holds, walk.steps.len()));
 
+        // The ground before anything else, because everything below is answered
+        // in a world this journey did not make. A list of lines cannot be given
+        // for it — the end state of another journey is a world — so what is
+        // given instead is the thing that decides whether any of this means
+        // anything: whether the ground itself held.
+        if let Some(standing) = &walk.after {
+            let how = if standing.verdict == Verdict::Specified {
+                String::new()
+            } else {
+                ", so this begins somewhere the spec does not fully support".to_owned()
+            };
+            out.push_str(&format!(
+                "    after  {}  —  {} of {} steps held{how}\n",
+                standing.journey, standing.held, standing.of
+            ));
+        }
+
         // What it was told rather than shown, first and always. An agent can
         // make any journey pass; it cannot make one pass invisibly.
         //
@@ -79,8 +96,12 @@ pub fn render(walks: &[Walk]) -> String {
             let mark = if line.overridden { "overridden " } else { "" };
             out.push_str(&format!("    from the file  {mark}{}\n", line.said));
         }
-        for stipulation in &walk.stipulated {
-            out.push_str(&format!("    stipulated  {stipulation}\n"));
+        for told in &walk.stipulated {
+            let whose = told
+                .through
+                .as_ref()
+                .map_or_else(String::new, |journey| format!("through {journey}  "));
+            out.push_str(&format!("    stipulated  {whose}{}\n", told.said));
         }
 
         // What is wrong with the journey outside its steps, before the steps.
@@ -134,7 +155,16 @@ pub fn as_json(walks: &[Walk]) -> serde_json::Value {
                     "journey": walk.name,
                     "title": walk.title,
                     "verdict": walk.verdict().as_str(),
-                    "stipulated": walk.stipulated,
+                    "stipulated": walk.stipulated.iter().map(|told| serde_json::json!({
+                        "said": told.said,
+                        "through": told.through,
+                    })).collect::<Vec<_>>(),
+                    "after": walk.after.as_ref().map(|standing| serde_json::json!({
+                        "journey": standing.journey,
+                        "verdict": standing.verdict.as_str(),
+                        "held": standing.held,
+                        "of": standing.of,
+                    })),
                     "inherited": walk.inherited.iter().map(|line| serde_json::json!({
                         "said": line.said,
                         "line": line.line,
@@ -181,8 +211,12 @@ mod tests {
             line: 1,
             steps,
             title: crate::title::readable(name),
-            stipulated,
+            stipulated: stipulated
+                .into_iter()
+                .map(|said| crate::run::Stipulation { said, through: None })
+                .collect(),
             inherited: Vec::new(),
+            after: None,
             notes: Vec::new(),
         }
     }
@@ -373,7 +407,11 @@ mod tests {
         let document = as_json(&[result]);
         assert_eq!(document[0]["journey"], "J");
         assert_eq!(document[0]["verdict"], "unspecified");
-        assert_eq!(document[0]["stipulated"][0], "ada.x = 1");
+        // An object rather than a bare string, because a chain carries its
+        // stipulations forward and a reader has to be able to tell what *this*
+        // journey was told from what it walked in on.
+        assert_eq!(document[0]["stipulated"][0]["said"], "ada.x = 1");
+        assert_eq!(document[0]["stipulated"][0]["through"], serde_json::Value::Null);
         assert_eq!(document[0]["steps"][0]["number"], 3);
         assert_eq!(document[0]["steps"][0]["outcomes"][0]["line"], 7);
         assert_eq!(document[0]["steps"][0]["outcomes"][0]["verdict"], "unspecified");

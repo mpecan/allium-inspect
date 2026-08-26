@@ -295,6 +295,36 @@
         </ul>
       {/if}
 
+      {#if walk.after}
+        <!-- Before everything, because everything below is answered in a world
+             this journey did not make. A list of lines cannot be given for the
+             end state of another journey — it is a world — so what is given is
+             the thing that decides whether any of this means anything. -->
+        <div class="stipulated ground" class:unsound={walk.after.verdict !== "specified"}>
+          <h3>Continues from</h3>
+          <p class="prose">
+            This journey starts where <strong>{walk.after.title}</strong> ended,
+            and never says again what that one established.
+            {#if walk.after.verdict === "specified"}
+              That one holds end to end, so this one begins somewhere the
+              specification supports.
+            {:else}
+              <strong>That one does not hold</strong>, so this one begins
+              somewhere the specification does not fully support — and cannot
+              come out better than it.
+            {/if}
+          </p>
+          <ul>
+            <li>
+              <code>{walk.after.journey}</code>
+              <span class="whereabouts">
+                {walk.after.held} of {walk.after.of} steps held
+              </span>
+            </li>
+          </ul>
+        </div>
+      {/if}
+
       {#if walk.inherited.length > 0}
         <!-- Before the journey's own, because it was there before the journey
              said anything. A step holding on account of a line elsewhere in
@@ -329,8 +359,11 @@
             act. Everything below stands on them.
           </p>
           <ul>
-            {#each walk.stipulated as fact (fact)}
-              <li><code>{fact}</code></li>
+            {#each walk.stipulated as fact (fact.said + (fact.through ?? ""))}
+              <li>
+                {#if fact.through}<span class="whereabouts">through {fact.through}</span>{/if}
+                <code>{fact.said}</code>
+              </li>
             {/each}
           </ul>
         </div>
@@ -690,13 +723,24 @@
 
   /* The same device, a step quieter: what a file laid out is context, and what
      this journey was *told* is the thing a reader is being asked to weigh. */
-  .inherited {
+  .inherited,
+  .ground {
     border-color: var(--line-strong);
     background: var(--ground-raised);
   }
 
-  .inherited h3 {
+  /* Ground that does not hold is the one thing here a reader must not skim. */
+  .ground.unsound {
+    border-color: var(--verdict-unknown);
+  }
+
+  .inherited h3,
+  .ground h3 {
     color: var(--ink-dim);
+  }
+
+  .ground.unsound h3 {
+    color: var(--verdict-unknown);
   }
 
   .overridden {

@@ -59,7 +59,18 @@ fn walked(source: &str) -> Walk {
 fn walked_nth(source: &str, at: usize) -> Walk {
     let journeys = parse(source).expect("the journey parses");
     let (graph, program, sources) = library();
-    walk(&journeys[at], &graph, &program, &sources)
+    walk(&journeys[at], &journeys, &graph, &program, &sources)
+}
+
+/// What a walk was told, as plain lines.
+fn told(walk: &Walk) -> Vec<String> {
+    walk.stipulated
+        .iter()
+        .map(|told| match &told.through {
+            Some(journey) => format!("through {journey}  {}", told.said),
+            None => told.said.clone(),
+        })
+        .collect()
 }
 
 /// Every outcome, flattened, for asserting about a whole walk.
@@ -80,7 +91,7 @@ fn a_copy_goes_out_and_comes_back() {
     // back on the shelf.
     let journeys = parse(BORROWING).expect("parses");
     let (graph, program, sources) = library();
-    let result = walk(&journeys[0], &graph, &program, &sources);
+    let result = walk(&journeys[0], &journeys, &graph, &program, &sources);
 
     let bad: Vec<_> = outcomes(&result)
         .into_iter()
@@ -94,7 +105,7 @@ fn a_copy_goes_out_and_comes_back() {
 fn borrowing_makes_the_rule_fire_and_moves_the_copy() {
     let journeys = parse(BORROWING).expect("parses");
     let (graph, program, sources) = library();
-    let result = walk(&journeys[0], &graph, &program, &sources);
+    let result = walk(&journeys[0], &journeys, &graph, &program, &sources);
     let first = &result.steps[0];
 
     assert_eq!(first.number, 1);
@@ -110,7 +121,7 @@ fn a_step_catches_what_the_rule_created_and_later_steps_use_it() {
     // that the loan it is about to talk about will be called `Loan#1`.
     let journeys = parse(BORROWING).expect("parses");
     let (graph, program, sources) = library();
-    let result = walk(&journeys[0], &graph, &program, &sources);
+    let result = walk(&journeys[0], &journeys, &graph, &program, &sources);
 
     let returned = &result.steps[2];
     assert_eq!(returned.title, "she brings it back");
@@ -133,7 +144,7 @@ fn the_second_journey_asks_for_something_this_spec_does_not_deliver() {
     // spec has a rule to fix, and the line number to fix it against.
     let journeys = parse(BORROWING).expect("parses");
     let (graph, program, sources) = library();
-    let result = walk(&journeys[1], &graph, &program, &sources);
+    let result = walk(&journeys[1], &journeys, &graph, &program, &sources);
 
     let overdue = &result.steps[1];
     assert_eq!(overdue.title, "the loan period runs out on its own");
@@ -152,7 +163,7 @@ fn a_rule_the_world_never_makes_true_is_undecided_rather_than_denied() {
     // this design exists to refuse.
     let journeys = parse(BORROWING).expect("parses");
     let (graph, program, sources) = library();
-    let result = walk(&journeys[1], &graph, &program, &sources);
+    let result = walk(&journeys[1], &journeys, &graph, &program, &sources);
     let fires = &result.steps[1].outcomes[1];
     assert_ne!(fires.verdict, Verdict::Refused, "a rule nobody can decide is not a refusal");
 }
@@ -167,7 +178,7 @@ fn does_not_fire_errs_toward_not_knowing_too() {
     // toward "I do not know" — is the one this tool errs in everywhere else.
     let journeys = parse(BORROWING).expect("parses");
     let (graph, program, sources) = library();
-    let result = walk(&journeys[0], &graph, &program, &sources);
+    let result = walk(&journeys[0], &journeys, &graph, &program, &sources);
 
     let waiting = &result.steps[1];
     assert_eq!(waiting.outcomes[1].about, "then LoanFallsOverdue does not fire");
@@ -351,7 +362,7 @@ fn a_stipulation_gets_past_it_and_is_reported() {
         ada does MemberBorrows(ada, copy) on MemberShelf
 }",
     );
-    assert_eq!(result.stipulated, ["ada.is_at_limit = false"]);
+    assert_eq!(told(&result), ["ada.is_at_limit = false"]);
     let act = &result.steps[0].outcomes[1];
     assert_eq!(act.verdict, Verdict::Specified, "{act:?}");
 }
@@ -600,6 +611,183 @@ fn a_state_no_enumeration_declares_is_still_unknown() {
     );
     let seen = &result.steps[0].outcomes[1];
     assert_eq!(seen.verdict, Verdict::Refused, "{seen:?}");
+}
+
+// --- one journey continuing from another ----------------------------------
+
+/// A life, in three journeys. The second and third say nothing about the world
+/// they start in, because the one before them made it.
+const A_LIFE: &str = "\
+journey SheBorrowsACopy {
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+    given:
+        copy.status = available
+
+    1. she borrows it
+        ada does MemberBorrows(ada, copy) on MemberShelf creating loan: Loan
+        then loan.status = open
+}
+
+journey AndBringsItBack {
+    after: SheBorrowsACopy
+
+    1. she brings it back, without saying again that she had it
+        ada does MemberReturns(loan) on MemberShelf
+        then loan.status = returned
+        then copy.status = available
+}
+
+journey AndCannotBringItBackTwice {
+    after: AndBringsItBack
+
+    1. the second return is refused
+        ada cannot do MemberReturns(loan) on MemberShelf
+}
+";
+
+#[test]
+fn a_journey_starts_where_the_one_before_it_ended() {
+    let result = walked_nth(A_LIFE, 1);
+    let bad: Vec<_> = outcomes(&result)
+        .into_iter()
+        .filter(|(verdict, ..)| *verdict != Verdict::Specified)
+        .collect();
+    assert!(bad.is_empty(), "{bad:#?}");
+}
+
+/// Three deep, because a life is longer than two mornings — and each link only
+/// has to know the one before it.
+#[test]
+fn a_chain_carries_as_far_as_it_is_written() {
+    let result = walked_nth(A_LIFE, 2);
+    assert_eq!(result.verdict(), Verdict::Specified, "{:#?}", outcomes(&result));
+}
+
+/// A list of lines cannot be given for the end state of another journey — it
+/// is a world. What can be given is whether the ground itself held, which is
+/// what decides whether any of this means anything.
+#[test]
+fn the_report_names_the_ground_and_how_it_came_out() {
+    let result = walked_nth(A_LIFE, 1);
+    let ground = result.after.expect("stands on something");
+    assert_eq!(ground.journey, "SheBorrowsACopy");
+    assert_eq!(ground.title, "She Borrows A Copy");
+    assert_eq!((ground.held, ground.of), (1, 1));
+    assert_eq!(ground.verdict, Verdict::Specified);
+}
+
+/// The rule that makes any of this safe. Every step here was answered in a
+/// world the journey below built, so a green report over a broken foundation
+/// is the invisible pass this design refuses — with more distance between the
+/// two halves of it than usual.
+#[test]
+fn a_journey_can_never_come_out_better_than_the_ground_it_stands_on() {
+    let result = walked_nth(
+        "\
+journey TheGroundGivesWay {
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+    1. she borrows a copy nobody described
+        ada does MemberBorrows(ada, copy) on MemberShelf
+}
+
+journey WhatStandsOnIt {
+    after: TheGroundGivesWay
+    cast:
+        bea: Member
+    given:
+        bea.name = \"Bea\"
+    1. this journey's own step is fine
+        then bea.name = \"Bea\"
+}
+",
+        1,
+    );
+    // Its own step holds.
+    assert_eq!(result.steps[0].verdict(), Verdict::Specified);
+    // And the walk does not.
+    assert_eq!(result.verdict(), Verdict::Undecided);
+}
+
+/// A chain carries its stipulations forward, and says whose they were. An
+/// agent that could make this journey pass by stipulating in the one before it
+/// would have found the loophole the rule exists to close.
+#[test]
+fn what_an_earlier_journey_was_told_is_reported_here_too() {
+    let result = walked_nth(
+        "\
+journey SheIsWithinHerLimit {
+    cast:
+        ada: Member
+    1. she is not at her limit
+        stipulate ada.is_at_limit = false
+        then ada.is_at_limit = false
+}
+
+journey AndSoSheBorrows {
+    after: SheIsWithinHerLimit
+    1. it is still true, and this journey never said it
+        then ada.is_at_limit = false
+}
+",
+        1,
+    );
+    assert_eq!(told(&result), ["through SheIsWithinHerLimit  ada.is_at_limit = false"]);
+}
+
+/// A chain that comes back to where it started would run until the stack gave
+/// out. Reported and not followed: the journeys in it are real and their steps
+/// are still worth walking, and only the loop is refused.
+#[test]
+fn a_circle_of_journeys_is_named_rather_than_followed() {
+    let result = walked_nth(
+        "\
+journey RoundAndRound {
+    after: BackAgain
+    cast:
+        ada: Member
+    1. she acts
+        then ada.name = ada.name
+}
+
+journey BackAgain {
+    after: RoundAndRound
+    1. she acts
+        then ada.name = ada.name
+}
+",
+        0,
+    );
+    let circle = result
+        .notes
+        .iter()
+        .find(|note| note.detail.as_deref().is_some_and(|why| why.contains("in a circle")))
+        .expect("the circle is reported");
+    assert_eq!(circle.verdict, Verdict::Unspecified);
+    assert!(
+        circle.detail.as_deref().is_some_and(|why| why.contains("RoundAndRound → BackAgain")),
+        "{circle:?}"
+    );
+}
+
+#[test]
+fn following_a_journey_nobody_wrote_says_so() {
+    let result = walked_nth(
+        "journey Nowhere {\n    after: AJourneyNobodyWrote\n    1. she acts\n        then \
+         BorrowCopy does not fire\n}\n",
+        0,
+    );
+    assert!(
+        result.notes.iter().any(|note| note
+            .detail
+            .as_deref()
+            .is_some_and(|why| why.contains("no journey called `AJourneyNobodyWrote`"))),
+        "{:#?}",
+        result.notes
+    );
 }
 
 // --- the world a file lays out --------------------------------------------
@@ -1176,7 +1364,7 @@ fn a_false_that_follows_something_undecided_is_not_a_refusal() {
     // everywhere else, and the reason `undecided` exists at all.
     let journeys = parse(BORROWING).expect("parses");
     let (graph, program, sources) = library();
-    let result = walk(&journeys[1], &graph, &program, &sources);
+    let result = walk(&journeys[1], &journeys, &graph, &program, &sources);
 
     let overdue = &result.steps[1];
     let consequence = &overdue.outcomes[2];
@@ -1632,7 +1820,7 @@ fn a_stipulation_reaches_through_a_reference_to_the_field_it_names() {
         .expect("the stipulation is reported");
     assert_eq!(stipulation.verdict, Verdict::Specified, "the write lands: {stipulation:?}");
     assert_eq!(
-        walk.stipulated,
+        told(&walk),
         vec!["loan.member.name = \"Ada Lovelace\"".to_owned()],
         "and is listed once it has"
     );
@@ -1677,7 +1865,7 @@ fn a_stipulation_that_wrote_nothing_says_so_instead_of_printing_itself() {
     assert!(
         walk.stipulated.is_empty(),
         "nothing was written, so the ledger lists nothing: {:?}",
-        walk.stipulated
+        told(&walk)
     );
 }
 
@@ -1717,7 +1905,7 @@ fn a_stipulation_writes_the_field_it_names_and_not_the_first_one() {
     assert!(
         walk.stipulated.is_empty(),
         "a write that could not be followed lists nothing: {:?}",
-        walk.stipulated
+        told(&walk)
     );
 }
 
@@ -2125,7 +2313,7 @@ fn a_call_the_spec_never_defines_can_be_answered_by_the_journey() {
         .filter(|(verdict, ..)| *verdict != Verdict::Specified)
         .collect();
     assert!(bad.is_empty(), "{bad:#?}");
-    assert_eq!(result.stipulated, ["may_reserve(ada, book) = true"]);
+    assert_eq!(told(&result), ["may_reserve(ada, book) = true"]);
 }
 
 /// The other answer, which has to be sayable too or the feature is a way of
@@ -2206,7 +2394,7 @@ fn a_stipulated_call_is_reported_like_every_other_stipulation() {
 }",
     );
 
-    assert_eq!(result.stipulated, ["ada.open_loan_count = 0", "may_reserve(ada, book) = true"]);
+    assert_eq!(told(&result), ["ada.open_loan_count = 0", "may_reserve(ada, book) = true"]);
 }
 
 // --- a call a surface exposes --------------------------------------------

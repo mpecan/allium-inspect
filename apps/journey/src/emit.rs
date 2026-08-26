@@ -159,6 +159,7 @@ mod tests {
             line: 4,
             stipulated: Vec::new(),
             inherited: Vec::new(),
+            after: None,
             notes: Vec::new(),
             steps: vec![inspect_journey::Walked {
                 number: 1,

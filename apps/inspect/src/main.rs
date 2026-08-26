@@ -192,23 +192,32 @@ fn check_journeys(
     strict: bool,
     json: bool,
 ) -> Result<(), String> {
-    let mut walks = Vec::new();
+    // Every file is read before any journey is walked, because a journey may
+    // continue from one in another file — `arriving` into `ordinary` into
+    // `losing` is a life, and a life does not stop at a file boundary.
+    let mut everything = Vec::new();
     for file in files {
         let source = std::fs::read_to_string(file)
             .map_err(|error| format!("could not read {}: {error}", file.display()))?;
         // A file that does not parse names its own line, and the path is what
         // turns that into somewhere to go.
-        let journeys = inspect_journey::parse(&source)
-            .map_err(|error| format!("{}:{error}", file.display()))?;
-        for journey in &journeys {
-            walks.push(inspect_journey::walk(
+        everything.extend(
+            inspect_journey::parse(&source)
+                .map_err(|error| format!("{}:{error}", file.display()))?,
+        );
+    }
+    let walks: Vec<_> = everything
+        .iter()
+        .map(|journey| {
+            inspect_journey::walk(
                 journey,
+                &everything,
                 &inspection.graph,
                 &inspection.program,
                 inspection.sources_by_module(),
-            ));
-        }
-    }
+            )
+        })
+        .collect();
 
     if json {
         let document = serde_json::to_string_pretty(&inspect_journey::as_json(&walks))

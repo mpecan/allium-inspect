@@ -61,8 +61,9 @@ function walk(
     steps: [
       { number: 1, title: "she borrows it", line: 8, outcomes, world: world() },
     ],
-    stipulated,
+    stipulated: stipulated.map((said) => ({ said, through: null })),
     inherited,
+    after: null,
     notes: [],
   };
 }
@@ -176,6 +177,60 @@ describe("Journeys", () => {
       name: "She Reads What Arrived",
     });
     expect(heading.getAttribute("title")).toBe("SheReadsWhatArrived");
+  });
+
+  // A list of lines cannot be given for the end state of another journey — it
+  // is a world. What can be given is whether the ground itself held.
+  it("names the journey this one continues from, and how it came out", () => {
+    const one = walk("A", [line("specified", "then x = 1")]);
+    render(Journeys, {
+      report: report([
+        {
+          ...one,
+          after: {
+            journey: "SheBorrowsACopy",
+            title: "She Borrows A Copy",
+            verdict: "specified",
+            held: 3,
+            of: 3,
+          },
+        },
+      ]),
+      failure: null,
+    });
+    expect(screen.getByText(/Continues from/)).toBeTruthy();
+    expect(screen.getByText("She Borrows A Copy")).toBeTruthy();
+    expect(screen.getByText(/3 of 3 steps held/)).toBeTruthy();
+  });
+
+  // The one thing here a reader must not skim past.
+  it("says plainly when the ground under a journey does not hold", () => {
+    const one = walk("A", [line("specified", "then x = 1")]);
+    const { container } = render(Journeys, {
+      report: report([
+        {
+          ...one,
+          after: {
+            journey: "TheGroundGivesWay",
+            title: "The Ground Gives Way",
+            verdict: "undecided",
+            held: 1,
+            of: 3,
+          },
+        },
+      ]),
+      failure: null,
+    });
+    expect(screen.getByText(/does not hold/)).toBeTruthy();
+    expect(container.querySelector(".ground.unsound")).toBeTruthy();
+  });
+
+  it("says nothing about ground when a journey stands on none", () => {
+    render(Journeys, {
+      report: report([walk("A", [line("specified", "then x = 1")])]),
+      failure: null,
+    });
+    expect(screen.queryByText(/Continues from/)).toBeNull();
   });
 
   it("shows what the file laid out before this journey said anything", () => {

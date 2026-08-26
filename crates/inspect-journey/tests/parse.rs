@@ -160,6 +160,42 @@ fn seeing_names_one_value_on_one_surface() {
     assert!(!negated);
 }
 
+/// `after:` names the journey this one continues from. It is also a clause —
+/// `after 1.hour` — and the two are told apart the way every block key is: a
+/// colon, and a place above the steps rather than under one.
+#[test]
+fn a_journey_can_say_which_journey_it_continues_from() {
+    let journeys = parse("journey B {\n    after: A\n    1. she acts\n        then x = 1\n}\n")
+        .expect("parses");
+    assert_eq!(journeys[0].after.as_deref(), Some("A"));
+}
+
+#[test]
+fn an_ordinary_journey_continues_from_nothing() {
+    assert!(first().after.is_none());
+}
+
+/// The clause is untouched: `after 1.hour` under a step is still time passing.
+#[test]
+fn after_under_a_step_is_still_time_passing() {
+    let journeys =
+        parse("journey B {\n    1. a day goes by\n        after 1.day\n}\n").expect("parses");
+    assert!(journeys[0].after.is_none());
+    assert!(matches!(journeys[0].steps[0].clauses[0], Clause::After { .. }));
+}
+
+#[test]
+fn a_journey_continues_from_one_journey() {
+    let error = parse("journey B {\n    after: A\n    after: C\n}\n").expect_err("only one");
+    assert!(error.message.contains("this is the second"), "{error:?}");
+}
+
+#[test]
+fn continuing_from_nothing_named_is_refused() {
+    let error = parse("journey B {\n    after:\n}\n").expect_err("names none");
+    assert!(error.message.contains("names none"), "{error:?}");
+}
+
 // --- the world a file lays out ------------------------------------------
 
 const WITH_A_WORLD: &str = "\

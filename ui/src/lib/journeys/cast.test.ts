@@ -41,6 +41,7 @@ function walk(worlds: World[]): Walk {
     ends: [],
     line: 1,
     stipulated: [],
+    after: null,
     inherited: [],
     notes: [],
     steps: worlds.map((each, at) => ({

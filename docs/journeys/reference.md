@@ -188,6 +188,80 @@ TheCopyIsAlreadyGone  —  1 of 1 steps hold
 A journey that inherits nothing reports nothing here — printing its own `given`
 block back at it would say nothing at all.
 
+## `after` — the journey this one continues from
+
+Journeys do not happen in a vacuum. Somebody arrives, and *then* reads what was
+sent to them, and *then* takes it back — three journeys about one afternoon, and
+the second and third spend their `given` blocks rebuilding what the first
+already established.
+
+```
+journey SheBorrowsACopy {
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+    given:
+        copy.status = available
+
+    1. she borrows it
+        ada does MemberBorrows(ada, copy) on MemberShelf creating loan: Loan
+}
+
+journey AndBringsItBack {
+    after: SheBorrowsACopy
+
+    1. she brings it back, without saying again that she had it
+        ada does MemberReturns(loan) on MemberShelf
+        then loan.status = returned
+}
+```
+
+The named journey is walked to its end and this one starts in the world it
+left — its cast, its instances, everything a step of it caught. This journey's
+own `cast` and `given` go on top. Its file's `world` is **not** laid out again:
+the journey it follows already started from one, and a second over the top would
+make a second `ada`.
+
+Chains carry as far as they are written, and across files: a name is unique
+across the whole set, and a life does not stop at a file boundary. Written down,
+the chain reads as a life rather than as three unrelated mornings.
+
+A journey that continues from one that does not exist is told so. So is a circle
+of them — reported and not followed, because the journeys in it are real and
+their steps are still worth walking; only the loop is refused.
+
+`after:` is also a clause — `after 1.hour` — and the two are told apart the way
+every block key is: a colon, and a place above the steps rather than under one.
+
+### What makes it safe
+
+Different in kind from what makes `world` safe. A world is a list of lines and
+every one of them is reported; the end state of another journey **is a world**
+and cannot be listed. What can be said, and is, is that the ground under this is
+itself checked, and what its verdict was:
+
+```text
+And Brings It Back  —  1 of 1 steps hold
+    after  SheBorrowsACopy  —  1 of 1 steps held
+   1. she brings it back, without saying again that she had it   holds
+```
+
+And when it did not hold, the line says so and **the journey standing on it
+cannot come out better than it**:
+
+```text
+What Stands On It  —  1 of 1 steps hold
+    after  TheGroundGivesWay  —  0 of 1 steps held, so this begins somewhere the spec does not fully support
+```
+
+Every step above was answered in a world that journey built, so a green report
+over a broken foundation is the same invisible pass everything else here
+refuses — with more distance between the two halves of it than usual.
+
+A chain also carries its **stipulations** forward, each marked with whose it
+was. An agent that could make this journey pass by stipulating in the one before
+it would have found the loophole that rule exists to close.
+
 ## Steps
 
 A step is a line beginning `<number>.` followed by a sentence:

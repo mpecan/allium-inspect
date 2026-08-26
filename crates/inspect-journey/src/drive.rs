@@ -16,7 +16,11 @@
 
 use inspect_sim::{StepOutcome, Value, enabled, step::step, world::Event};
 
-use crate::run::{Settled, Walker, already_ran};
+use crate::{
+    check,
+    journey::Journey,
+    run::{Ground, Settled, Walked, Walker, already_ran},
+};
 
 impl Walker<'_> {
     /// Fire an event, and everything it sets off.
@@ -128,6 +132,79 @@ impl Walker<'_> {
             }
         }
         Settled::No { rounds: ROUNDS }
+    }
+}
+
+impl Walker<'_> {
+    /// Walk the journey this one continues from, and stay in the world it left.
+    ///
+    /// Its steps are *run* and not reported: a reader looking at this journey
+    /// asked about this journey, and pasting another one's steps above it would
+    /// bury the one they came for. What comes back instead is the fact that
+    /// decides whether any of this means anything — the verdict of the ground
+    /// it is standing on.
+    ///
+    /// Recursive, because a life is longer than two mornings, and guarded
+    /// because a chain that comes back to where it started would otherwise run
+    /// until the stack gave out. A cycle is reported and not followed: the
+    /// journeys in it are real and their steps are still worth walking, and
+    /// only the loop is refused.
+    pub(crate) fn stand_on(
+        &mut self,
+        named: &str,
+        everything: &[Journey],
+        chain: &mut Vec<String>,
+    ) {
+        if chain.iter().any(|earlier| earlier == named) {
+            chain.push(named.to_owned());
+            self.notes.push(crate::Outcome {
+                line: 0,
+                verdict: check::Verdict::Unspecified,
+                about: format!("after {named}"),
+                detail: Some(format!(
+                    "these journeys continue from each other in a circle: {}",
+                    chain.join(" → ")
+                )),
+            });
+            return;
+        }
+
+        let Some(earlier) = everything.iter().find(|candidate| candidate.name == named) else {
+            self.notes.push(crate::Outcome {
+                line: 0,
+                verdict: check::Verdict::Unspecified,
+                about: format!("after {named}"),
+                detail: Some(format!("no journey called `{named}` was read")),
+            });
+            return;
+        };
+
+        chain.push(named.to_owned());
+        if let Some(before) = &earlier.after {
+            self.stand_on(before, everything, chain);
+        }
+
+        // Whatever it says it was told is said in its name from here on, so a
+        // reader can tell what this journey was told from what it walked in on.
+        let was = self.standing_on.replace(named.to_owned());
+        self.lay_out(earlier);
+        let checked = check::check(earlier, everything, self.spec);
+        let steps: Vec<Walked> =
+            earlier.steps.iter().map(|step| self.walk_step(step, &checked)).collect();
+        self.standing_on = was;
+
+        let held = steps.iter().filter(|step| step.verdict() == check::Verdict::Specified).count();
+        let verdict = crate::run::worst(steps.iter().map(Walked::verdict));
+        // The nearest ground wins the line, and a break anywhere below it is
+        // already in that verdict — a journey whose predecessor stood on
+        // something broken did not hold either.
+        self.after = Some(Ground {
+            journey: named.to_owned(),
+            title: crate::title::readable(named),
+            verdict,
+            held,
+            of: steps.len(),
+        });
     }
 }
 

@@ -13,7 +13,7 @@
 //! sets like `OutboxEntry.awaiting` naming the devices that do not have it yet.
 
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use ts_rs::TS;
 
 use inspect_model::{NodeKind, Program, SpecGraph};
@@ -24,6 +24,10 @@ use inspect_sim::{
     world::{Answer, Event, World},
 };
 
+pub use crate::shapes::{
+    CastMember, Ground, Inherited, Origin, Stipulation, Walk, Walked, notes_outside_steps,
+};
+pub(crate) use crate::shapes::{Settled, worst};
 use crate::{
     assert::Sight,
     check::{self, Verdict},
@@ -43,215 +47,21 @@ pub struct Outcome {
     pub detail: Option<String>,
 }
 
-/// Where a name in a journey came from.
-///
-/// Worth distinguishing because the three are read differently. A cast member
-/// is somebody the journey declared up front; a given is an instance it
-/// described in detail; and a catch is a thing that did not exist until a step
-/// created it — which is the only one whose absence is a fault rather than a
-/// choice.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-#[ts(export, export_to = "../../../ui/src/lib/api/")]
-pub enum Origin {
-    /// Named in the `cast` block.
-    Cast,
-    /// Described in the `given` block.
-    Given,
-    /// Caught by a step: `creating loan: Loan`.
-    Caught,
-}
-
-/// One line the file's world laid out, and what this journey did with it.
-///
-/// The three cases a reader has to be able to tell apart, and the third is the
-/// dangerous one: what the journey said, what it inherited, and what it
-/// inherited **and then changed**.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../../ui/src/lib/api/")]
-pub struct Inherited {
-    /// The line as the world wrote it: `ada.status = active`.
-    pub said: String,
-    /// Where in the file it was written.
-    pub line: usize,
-    /// Whether this journey went on to set the same thing itself.
-    ///
-    /// Allowed and reported, not forbidden. Eight journeys wanting the same
-    /// two-member membership and one wanting it `departed` is the ordinary
-    /// case; forbidding the override splits the file, and allowing it silently
-    /// is the thing that must not happen.
-    pub overridden: bool,
-}
-
-/// Somebody or something the journey named, and what it resolved to.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../../ui/src/lib/api/")]
-pub struct CastMember {
-    /// What the journey calls them: `ada`, `loan`.
-    pub name: String,
-    /// As written, so `catalogue/Copy` keeps its module.
-    pub type_expr: String,
-    /// The instance in the world, once there was one.
-    ///
-    /// `None` when a step that was supposed to create it did not — which is
-    /// the whole reason this is an option rather than a string.
-    pub entity: Option<String>,
-    pub origin: Origin,
-    pub line: usize,
-}
-
-/// What became of one step.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../../ui/src/lib/api/")]
-pub struct Walked {
-    pub number: u32,
-    pub title: String,
-    /// Where the step is written, for going there.
-    ///
-    /// The step's own heading rather than its first clause, because that is the
-    /// line a reader scrubbing the walk wants the source strip to land on.
-    pub line: usize,
-    pub outcomes: Vec<Outcome>,
-    /// The world as it stood when this step finished.
-    ///
-    /// Kept per step rather than only at the end, because the question a
-    /// journey raises about a value is *when* it became that — and a single
-    /// final state answers "what is Ada's loan now" while hiding the step that
-    /// made it so.
-    pub world: World,
-}
-
-impl Walked {
-    /// The worst thing that happened in this step.
-    #[must_use]
-    pub fn verdict(&self) -> Verdict {
-        worst(self.outcomes.iter().map(|outcome| outcome.verdict))
-    }
-}
-
-/// What became of a journey.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../../ui/src/lib/api/")]
-pub struct Walk {
-    /// The journey's name, which is its identity: an evidence marker says
-    /// `journey: <name>.3`, and the panel finds a walk by it.
-    pub name: String,
-    /// The same name with its words apart, for a heading.
-    ///
-    /// Derived rather than declared. A journey already says what it is for in
-    /// `goal:`, in the author's own words; a second place to write the same
-    /// thing differently is a second place for them to disagree.
-    pub title: String,
-    /// Everybody the journey named, in the order the names were bound.
-    pub cast: Vec<CastMember>,
-    /// What the journey said it was for, and how it said it ends.
-    ///
-    /// Carried on the report rather than left in the source, because the whole
-    /// question a reader has is whether the spec delivers *this* — and a list
-    /// of verdicts with the intent stripped off cannot be read against it.
-    pub goal: Vec<String>,
-    pub ends: Vec<String>,
-    /// Where the journey starts in its file, for going there.
-    pub line: usize,
-    pub steps: Vec<Walked>,
-    /// What the journey was told rather than shown, always reported.
-    pub stipulated: Vec<String>,
-    /// Every line the file's `world` laid out, and what became of it.
-    ///
-    /// Empty unless the journey inherits one, because otherwise this would
-    /// print a journey's own `given` block back at it and say nothing. When it
-    /// does inherit, this is the whole of what makes that safe: a step holding
-    /// because of a line somewhere else in the file is passing invisibly, and
-    /// this is where it stops being invisible.
-    pub inherited: Vec<Inherited>,
-    /// What was wrong with the journey outside its steps.
-    ///
-    /// Counted in the verdict, because the flagship case of this whole design
-    /// is a requirement nobody has met — and a cast naming a type the spec
-    /// does not have is exactly that, one line before the steps begin.
-    pub notes: Vec<Outcome>,
-}
-
-impl Walk {
-    #[must_use]
-    pub fn verdict(&self) -> Verdict {
-        worst(
-            self.steps
-                .iter()
-                .map(Walked::verdict)
-                .chain(self.notes.iter().map(|note| note.verdict)),
-        )
-    }
-}
-
-/// Check notes that sit on no step clause, as outcomes.
-///
-/// `walk_step` reports the notes on a clause line and nothing else, so a
-/// cast member whose type the spec does not have was computed and then
-/// dropped by every consumer. Shared with `--check`, because a cast the spec
-/// cannot supply is the same fault whether or not anybody ran the journey.
-#[must_use]
-pub fn notes_outside_steps(journey: &Journey, notes: &[check::Note]) -> Vec<Outcome> {
-    let clause_lines: BTreeSet<usize> =
-        journey.steps.iter().flat_map(|step| step.clauses.iter().map(Clause::line)).collect();
-    notes
-        .iter()
-        .filter(|note| note.verdict != Verdict::Specified && !clause_lines.contains(&note.line))
-        .map(|note| Outcome {
-            line: note.line,
-            verdict: note.verdict,
-            about: describes(journey, note.line),
-            detail: Some(note.message.clone()),
-        })
-        .collect()
-}
-
-/// What a journey line outside the steps is about, for reporting.
-///
-/// The check reports a line and a message; a reader needs to know which part
-/// of the journey the line *was*. Cast and `given` are the only two places a
-/// note can land outside a step, so those are the two it names.
-fn describes(journey: &Journey, line: usize) -> String {
-    if let Some(member) = journey.cast.iter().find(|member| member.line == line) {
-        return format!("cast {}: {}", member.name, member.type_expr);
-    }
-    if let Some(crate::journey::Given::Instance { name, type_expr, .. }) =
-        journey.given.iter().find(|given| given.line() == line)
-    {
-        return format!("given {name}: {type_expr}");
-    }
-    format!("line {line}")
-}
-
-/// Whether the world stopped changing on its own.
-///
-/// Reaching the bound used to push a sentence into `undecided`, which is a list
-/// of *rule names* matched by exact equality — so it matched nothing, nothing
-/// read it, and the two tests asserting it never appeared could not fail.
-pub(crate) enum Settled {
-    Yes,
-    No { rounds: usize },
-}
-
-/// The worst of several, in the order a reader cares about them.
-fn worst(verdicts: impl Iterator<Item = Verdict>) -> Verdict {
-    fn rank(verdict: Verdict) -> u8 {
-        match verdict {
-            Verdict::Specified => 0,
-            Verdict::Remark => 1,
-            Verdict::Unexposed => 2,
-            Verdict::Undecided => 3,
-            Verdict::Unspecified => 4,
-            Verdict::Refused => 5,
-        }
-    }
-    verdicts.max_by_key(|verdict| rank(*verdict)).unwrap_or(Verdict::Specified)
-}
-
 /// Walk `journey` against `spec`.
 #[must_use]
-pub fn walk(journey: &Journey, spec: &SpecGraph, program: &Program, sources: &Sources) -> Walk {
-    let checked = check::check(journey, spec);
+/// Walk one journey against the specification.
+///
+/// `everything` is every journey that was read, because a journey may say it
+/// continues from another and that one has to be found — across files, since
+/// a name is unique across the set and a life does not stop at a file boundary.
+pub fn walk(
+    journey: &Journey,
+    everything: &[Journey],
+    spec: &SpecGraph,
+    program: &Program,
+    sources: &Sources,
+) -> Walk {
+    let checked = check::check(journey, everything, spec);
     let mut walker = Walker {
         spec,
         program,
@@ -260,11 +70,19 @@ pub fn walk(journey: &Journey, spec: &SpecGraph, program: &Program, sources: &So
         bound: BTreeMap::new(),
         stipulated: Vec::new(),
         inherited: Vec::new(),
+        after: None,
+        standing_on: None,
         cast: Vec::new(),
         fired: Vec::new(),
         undecided: Vec::new(),
         notes: Vec::new(),
     };
+    // The ground first, when this journey stands on some. Everything below —
+    // the world it lays out, the names it binds, the steps it takes — happens
+    // in the world the journey it follows left behind.
+    if let Some(named) = &journey.after {
+        walker.stand_on(named, everything, &mut vec![journey.name.clone()]);
+    }
     walker.lay_out(journey);
 
     let steps: Vec<Walked> =
@@ -284,6 +102,7 @@ pub fn walk(journey: &Journey, spec: &SpecGraph, program: &Program, sources: &So
         steps,
         stipulated: walker.stipulated,
         inherited: walker.inherited,
+        after: walker.after,
         notes,
     }
 }
@@ -295,8 +114,11 @@ pub(crate) struct Walker<'a> {
     pub(crate) world: World,
     /// Every name the journey has bound to something in the world.
     pub(crate) bound: BTreeMap<String, EntityId>,
-    pub(crate) stipulated: Vec<String>,
+    pub(crate) stipulated: Vec<Stipulation>,
     pub(crate) inherited: Vec<Inherited>,
+    pub(crate) after: Option<Ground>,
+    /// Which journey's steps are running, when it is not this one's.
+    pub(crate) standing_on: Option<String>,
     /// Everybody the journey has named, in the order they were bound.
     pub(crate) cast: Vec<CastMember>,
     /// Rules that ran since the last clause, for `then … fires`.
@@ -314,7 +136,7 @@ pub(crate) struct Walker<'a> {
 
 impl Walker<'_> {
     /// One step: every clause in the order it was written.
-    fn walk_step(&mut self, step: &Step, notes: &[check::Note]) -> Walked {
+    pub(crate) fn walk_step(&mut self, step: &Step, notes: &[check::Note]) -> Walked {
         let mut outcomes = Vec::new();
         for clause in &step.clauses {
             // A line the spec cannot support is not run. Firing an act at a
@@ -397,7 +219,10 @@ impl Walker<'_> {
                     // false receipt.
                     Subject::Path(path) => match self.assign(path, value) {
                         Ok(()) => {
-                            self.stipulated.push(written);
+                            self.stipulated.push(Stipulation {
+                                said: written,
+                                through: self.standing_on.clone(),
+                            });
                             Outcome {
                                 line: *line,
                                 verdict: Verdict::Specified,
@@ -419,7 +244,8 @@ impl Walker<'_> {
                         let arguments: Vec<Value> =
                             arguments.iter().map(|term| self.value_of(term)).collect();
                         self.world.answers.push(Answer { call: name.clone(), arguments, value });
-                        self.stipulated.push(written);
+                        self.stipulated
+                            .push(Stipulation { said: written, through: self.standing_on.clone() });
                         Outcome { line: *line, verdict: Verdict::Specified, about, detail: None }
                     }
                 }

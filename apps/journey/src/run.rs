@@ -10,7 +10,7 @@
 
 use std::{collections::BTreeMap, io::Write, path::Path};
 
-use inspect_journey::{Strictness, Walk};
+use inspect_journey::{Strictness, Walk, journey::Journey};
 use inspect_model::{
     AlliumRunner, FileReader, Ingestion, Program, SourceReader, SpecGraph, ingest, module_name,
 };
@@ -49,10 +49,26 @@ pub fn all<R: AlliumRunner, W: Write>(
     // Exactly one subcommand walks. Anything else answers from the graph alone.
     let walking = matches!(command, Command::Walk(_));
 
+    // Every journey file is read before any of them is walked, because a
+    // journey may continue from one in another file — `arriving` into
+    // `ordinary` into `losing` is a life, and a life does not stop at a file
+    // boundary. The documents are still emitted one file at a time, which is
+    // what `allium analyse specs/` does and what a Makefile expects.
+    let read: Vec<(Vec<Journey>, Option<String>)> =
+        found.journeys.iter().map(|file| contents(file)).collect();
+    let everything: Vec<Journey> =
+        read.iter().flat_map(|(journeys, _)| journeys.iter().cloned()).collect();
+
     let mut worst = CLEAN;
-    for file in &found.journeys {
+    for (file, (journeys, error)) in found.journeys.iter().zip(&read) {
         let name = file.to_string_lossy().into_owned();
-        let (walks, error) = read_one(walking, file, &graph, &program, &sources);
+        let against = Against {
+            everything: &everything,
+            graph: &graph,
+            program: &program,
+            sources: &sources,
+        };
+        let (walks, error) = (walked(walking, journeys, &against), error.clone());
 
         let written = if run.text {
             text_report(&name, &walks, error.as_deref())
@@ -76,42 +92,57 @@ pub fn all<R: AlliumRunner, W: Write>(
 /// reaches here — it asks what a run *showed*, not what the spec permits — and
 /// a match over every subcommand would need an arm for it that could only be a
 /// guess about a case that cannot arrive.
-fn read_one(
-    walking: bool,
-    file: &Path,
-    graph: &SpecGraph,
-    program: &Program,
-    sources: &Sources,
-) -> (Vec<Walk>, Option<String>) {
+fn contents(file: &Path) -> (Vec<Journey>, Option<String>) {
     let text = match std::fs::read_to_string(file) {
         Ok(text) => text,
         Err(error) => return (Vec::new(), Some(format!("could not be read: {error}"))),
     };
-    let journeys = match inspect_journey::parse(&text) {
-        Ok(journeys) => journeys,
-        Err(error) => return (Vec::new(), Some(error.to_string())),
-    };
+    match inspect_journey::parse(&text) {
+        Ok(journeys) => (journeys, None),
+        Err(error) => (Vec::new(), Some(error.to_string())),
+    }
+}
 
-    let walks = journeys
+/// One file's journeys, walked or checked.
+///
+/// Takes whether to walk rather than the whole subcommand. `evidence` never
+/// reaches here — it asks what a run *showed*, not what the spec permits — and
+/// a match over every subcommand would need an arm for it that could only be a
+/// guess about a case that cannot arrive.
+fn walked(walking: bool, journeys: &[Journey], against: &Against<'_>) -> Vec<Walk> {
+    let Against { everything, graph, program, sources } = *against;
+    journeys
         .iter()
         .map(|journey| {
             if walking {
-                inspect_journey::walk(journey, graph, program, sources)
+                inspect_journey::walk(journey, everything, graph, program, sources)
             } else {
                 // Static only: what can be answered from the graph, without a
                 // world. The checker's notes become the outcomes, so the
                 // document has the same shape either way and a caller reads one
                 // parser.
-                statically(journey, graph)
+                statically(journey, everything, graph)
             }
         })
-        .collect();
-    (walks, None)
+        .collect()
+}
+
+/// What every journey is answered against, gathered so the call reads.
+struct Against<'a> {
+    /// Every journey that was read, because one may continue from another.
+    everything: &'a [Journey],
+    graph: &'a SpecGraph,
+    program: &'a Program,
+    sources: &'a Sources,
 }
 
 /// A journey checked against the graph and not run.
-fn statically(journey: &inspect_journey::Journey, graph: &SpecGraph) -> Walk {
-    let notes = inspect_journey::check(journey, graph);
+fn statically(
+    journey: &inspect_journey::Journey,
+    everything: &[Journey],
+    graph: &SpecGraph,
+) -> Walk {
+    let notes = inspect_journey::check(journey, everything, graph);
     let steps = journey
         .steps
         .iter()
@@ -145,6 +176,9 @@ fn statically(journey: &inspect_journey::Journey, graph: &SpecGraph) -> Walk {
         line: journey.line,
         steps,
         stipulated: Vec::new(),
+        // `check` never lays a world out and never stands on another journey,
+        // so there is nothing here to report either.
+        after: None,
         // `check` answers from the graph and never lays a world out, so there
         // is nothing inherited to report — the question it asks is about names
         // the spec declares, not about the world they would be in.

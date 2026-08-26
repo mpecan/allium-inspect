@@ -65,9 +65,9 @@ pub enum Verdict {
 
 /// Check `journey` against `graph`, in the order it was written.
 #[must_use]
-pub fn check(journey: &Journey, graph: &SpecGraph) -> Vec<Note> {
+pub fn check(journey: &Journey, everything: &[Journey], graph: &SpecGraph) -> Vec<Note> {
     let mut notes = Vec::new();
-    let mut known = Names::new(journey);
+    let mut known = Names::new(journey, everything);
 
     for member in &journey.cast {
         if let Some(note) = missing_type(member, graph) {
@@ -97,8 +97,30 @@ struct Names {
 }
 
 impl Names {
-    fn new(journey: &Journey) -> Self {
+    fn new(journey: &Journey, everything: &[Journey]) -> Self {
         let mut types = BTreeMap::new();
+        // The journeys this one continues from, oldest first, so a nearer one
+        // wins. A name cast in the journey before this one is a name this one
+        // has — the walk binds it, and a checker that said otherwise would
+        // report every inherited actor as nobody, one line before the steps.
+        for earlier in preceding(journey, everything) {
+            for member in &earlier.cast {
+                types.insert(member.name.clone(), member.type_expr.clone());
+            }
+            for given in &earlier.given {
+                if let crate::journey::Given::Instance { name, type_expr, .. } = given {
+                    types.insert(name.clone(), type_expr.clone());
+                }
+            }
+            // And what a step of it caught, which is a name like any other.
+            for step in &earlier.steps {
+                for clause in &step.clauses {
+                    if let Clause::Does { creating: Some(caught), .. } = clause {
+                        types.insert(caught.name.clone(), caught.type_expr.clone());
+                    }
+                }
+            }
+        }
         // The file's world first, so a journey's own line of the same name
         // wins — which is what an override is, and is the order the walk lays
         // them out in. Read here at all because a name the *file* cast is a
@@ -241,6 +263,30 @@ fn check_field(
             message: format!("`{bare}` has no field called `{field}`"),
         });
     }
+}
+
+/// The journeys `journey` stands on, oldest first.
+///
+/// Bounded by what it has already seen rather than by a depth: a chain that
+/// comes back to where it started is a mistake the walk reports, and looping
+/// here while deciding whether a name exists would hang before it could.
+fn preceding<'a>(journey: &Journey, everything: &'a [Journey]) -> Vec<&'a Journey> {
+    let mut chain: Vec<&Journey> = Vec::new();
+    let mut seen = vec![journey.name.clone()];
+    let mut next = journey.after.clone();
+    while let Some(named) = next {
+        if seen.contains(&named) {
+            break;
+        }
+        seen.push(named.clone());
+        let Some(earlier) = everything.iter().find(|candidate| candidate.name == named) else {
+            break;
+        };
+        chain.push(earlier);
+        next = earlier.after.clone();
+    }
+    chain.reverse();
+    chain
 }
 
 /// Is the collection an `in` reads from one the spec declares?

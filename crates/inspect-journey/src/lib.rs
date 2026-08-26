@@ -16,6 +16,7 @@
 
 mod assert;
 pub mod check;
+mod clauses;
 mod drive;
 pub mod evidence;
 pub mod journey;
@@ -23,6 +24,7 @@ pub mod outcome;
 pub mod parse;
 pub mod report;
 pub mod run;
+mod shapes;
 mod terms;
 pub mod title;
 mod world;
