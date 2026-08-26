@@ -221,6 +221,56 @@ mod tests {
         }
     }
 
+    fn ground(verdict: Verdict, held: usize, of: usize) -> crate::run::Ground {
+        crate::run::Ground {
+            journey: "SheBorrowsACopy".to_owned(),
+            title: "She Borrows A Copy".to_owned(),
+            verdict,
+            held,
+            of,
+        }
+    }
+
+    /// A list of lines cannot be given for the end state of another journey.
+    /// What is given is whether the ground held — and when it did not, the
+    /// line says so, because that is the one thing here a reader must not
+    /// skim past.
+    #[test]
+    fn ground_that_held_is_reported_without_alarm() {
+        let mut result = walk("J", vec![step(1, "she acts", vec![])], Vec::new());
+        result.after = Some(ground(Verdict::Specified, 3, 3));
+        let out = render(&[result]);
+        assert!(out.contains("after  SheBorrowsACopy  —  3 of 3 steps held"), "{out}");
+        assert!(!out.contains("does not fully support"), "{out}");
+    }
+
+    #[test]
+    fn ground_that_did_not_hold_says_what_that_means_for_this_journey() {
+        let mut result = walk("J", vec![step(1, "she acts", vec![])], Vec::new());
+        result.after = Some(ground(Verdict::Undecided, 1, 3));
+        let out = render(&[result]);
+        assert!(out.contains("after  SheBorrowsACopy  —  1 of 3 steps held"), "{out}");
+        assert!(out.contains("does not fully support"), "{out}");
+    }
+
+    /// A chain carries its stipulations forward, and whose they were is the
+    /// half that keeps the rule about invisible passing true for two journeys
+    /// as well as for one.
+    #[test]
+    fn a_stipulation_from_an_earlier_journey_says_whose_it_was() {
+        let mut result = walk("J", vec![step(1, "she acts", vec![])], Vec::new());
+        result.stipulated = vec![
+            crate::run::Stipulation {
+                said: "ada.is_at_limit = false".to_owned(),
+                through: Some("SheIsWithinHerLimit".to_owned()),
+            },
+            crate::run::Stipulation { said: "copy.status = lost".to_owned(), through: None },
+        ];
+        let out = render(&[result]);
+        assert!(out.contains("stipulated  through SheIsWithinHerLimit  ada.is_at_limit"), "{out}");
+        assert!(out.contains("stipulated  copy.status = lost"), "{out}");
+    }
+
     fn step(number: u32, title: &str, outcomes: Vec<Outcome>) -> Walked {
         Walked {
             number,
