@@ -139,3 +139,82 @@ fn states_against(ast: &RuleAst, parameter: &str, parameters: &[String]) -> BTre
     }
     states
 }
+
+#[cfg(test)]
+mod tests {
+    use allium_parser::ast::{BlockItemKind, Decl};
+
+    use super::*;
+
+    /// The one rule in `source`, as the program keeps it.
+    fn rule(source: &str) -> RuleAst {
+        let parsed = allium_parser::parse(source);
+        let Some(Decl::Block(block)) = parsed.module.declarations.first() else {
+            panic!("expected one rule: {:?}", parsed.diagnostics);
+        };
+        let mut ast = RuleAst::default();
+        for item in &block.items {
+            match &item.kind {
+                BlockItemKind::Clause { keyword, value } => match keyword.as_str() {
+                    "when" => ast.when = Some(value.clone()),
+                    "requires" => ast.requires.push(value.clone()),
+                    "ensures" => ast.ensures.push(value.clone()),
+                    _ => {}
+                },
+                BlockItemKind::Let { name, value } => {
+                    ast.lets.push((name.name.clone(), value.clone()));
+                }
+                _ => {}
+            }
+        }
+        ast
+    }
+
+    /// The states `rule` compares `parameter` with.
+    fn against(source: &str, parameter: &str) -> Vec<String> {
+        let ast = rule(source);
+        let parameters: Vec<String> = ast.parameters().into_iter().map(|(name, _)| name).collect();
+        states_against(&ast, parameter, &parameters).into_iter().collect()
+    }
+
+    const PROPOSE: &str = "
+rule Propose {
+    when: MemberProposes(group, decision, subject, other)
+    let usual = group.default_decision
+    requires: decision = set_admin
+    requires: decision != usual
+    requires: decision = subject
+    requires: subject in {ignored, too}
+    ensures: if decision in {remove_user, dissolve}: group.status = closing
+}
+";
+
+    #[test]
+    fn a_parameter_compared_with_bare_names_is_compared_with_states() {
+        assert_eq!(against(PROPOSE, "decision"), ["dissolve", "remove_user", "set_admin"]);
+    }
+
+    /// Another parameter, or the rule's own `let`, is a binding and not a
+    /// state — whichever side of the comparison it is written on.
+    #[test]
+    fn a_parameter_or_a_let_on_the_other_side_is_not_a_state() {
+        let states = against(PROPOSE, "decision");
+        for bound in ["usual", "subject", "group", "other"] {
+            assert!(!states.contains(&bound.to_owned()), "`{bound}` is bound: {states:?}");
+        }
+    }
+
+    /// `subject in {ignored, too}` is about `subject`, not `decision`.
+    #[test]
+    fn membership_of_something_else_says_nothing_about_this_parameter() {
+        let states = against(PROPOSE, "decision");
+        assert!(!states.contains(&"ignored".to_owned()), "{states:?}");
+        assert_eq!(against(PROPOSE, "subject"), ["ignored", "too"]);
+    }
+
+    /// A parameter nothing compares is compared with no states.
+    #[test]
+    fn a_parameter_only_stored_is_compared_with_nothing() {
+        assert!(against(PROPOSE, "other").is_empty());
+    }
+}

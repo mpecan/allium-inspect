@@ -547,6 +547,36 @@ surface MyLoans {
         program_of(source).rule("lending::rule::BorrowCopy").cloned().expect("the rule")
     }
 
+    fn parameters_of(source: &str, rule: &str) -> Vec<(String, bool)> {
+        program_of(source)
+            .rule(NodeId::new("lending", NodeKind::Rule, rule).as_str())
+            .expect("the rule")
+            .parameters()
+    }
+
+    /// The trigger's parameters as the rule's `when` names them, in order,
+    /// with which are optional.
+    #[test]
+    fn a_rule_s_parameters_are_its_when_clause_s_names_in_order() {
+        let parameters = parameters_of(
+            "rule ReportCopyLost {\n    when: MemberReportsLoss(loan, note?)\n    ensures: \
+             loan.status = returned\n}\n",
+            "ReportCopyLost",
+        );
+        assert_eq!(parameters, [("loan".to_owned(), false), ("note".to_owned(), true)]);
+    }
+
+    /// A state rule's `when` is a condition, not a call, and names none.
+    #[test]
+    fn a_state_rule_has_no_parameters() {
+        let parameters = parameters_of(
+            "rule Overdue {\n    when: loan: Loan.window.due_at <= now\n    ensures: \
+             loan.status = overdue\n}\n",
+            "Overdue",
+        );
+        assert!(parameters.is_empty(), "{parameters:?}");
+    }
+
     const BORROW: &str = "
 rule BorrowCopy {
     when: MemberBorrows(member, copy)

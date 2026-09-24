@@ -1590,3 +1590,14 @@ fn a_function_named_bare_inside_its_entity_says_it_takes_an_argument() {
         vec!["`is_used_by` takes an argument, and was read without one"]
     );
 }
+
+/// A set plus something nothing settled is not a set with an unknown in it:
+/// which element it gained is exactly what is not known.
+#[test]
+fn a_set_plus_something_undecided_is_undecided() {
+    let world = library();
+    let env = env(&world, "lending").bind("some", Value::Set(Vec::new()));
+    let sum = arithmetic(ident("some"), "Add", ident("nobody"));
+    assert_eq!(value_of(&sum, &env), Value::Unknown);
+    assert_eq!(reasons(&sum, &env), vec!["nothing is bound to `nobody`"]);
+}

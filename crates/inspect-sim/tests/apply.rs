@@ -730,3 +730,16 @@ fn a_second_creation_can_point_at_what_the_let_bound() {
         "the `let` binding did not reach the second creation: {member:?}"
     );
 }
+
+/// `ensures: exists copy` asserts rather than does, and is noted as an
+/// assertion about what exists — not reported as a form nobody modelled.
+#[test]
+fn an_existence_assertion_is_noted_as_one() {
+    let source = "ensures: exists copy\n";
+    let clause =
+        Expr::Exists { span: Span { start: 9, end: 20 }, operand: Box::new(ident("copy")) };
+    assert_eq!(
+        apply_over(&clause, source),
+        vec![Effect::Noted { description: "exists copy".to_owned() }]
+    );
+}
