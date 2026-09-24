@@ -830,3 +830,17 @@ fn a_state_event_carrying_two_instances_names_neither() {
     let outcome = outcome_for("ReportLostCopy", &step(&graph, &program, &sources, &world, &event));
     assert_eq!(outcome.disposition, Disposition::Undecided, "{outcome:?}");
 }
+
+/// Only an instance of the rule's own entity counts. A firing about a copy that
+/// also carries the member who lost it is still about one copy.
+#[test]
+fn a_state_event_carrying_other_entities_still_names_its_one_instance() {
+    let (graph, program, sources) = library_spec();
+    let (mut world, copy, member) = library_world();
+    world.set_field(&copy, "status", Value::Enum("lost".to_owned()));
+    let event = Event::new("Copy", "catalogue")
+        .with("item", Value::Ref(copy))
+        .with("who", Value::Ref(member));
+    let outcome = outcome_for("ReportLostCopy", &step(&graph, &program, &sources, &world, &event));
+    assert_eq!(outcome.disposition, Disposition::Fired, "{outcome:?}");
+}
