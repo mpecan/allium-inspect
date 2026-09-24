@@ -121,7 +121,7 @@ fn walked(walking: bool, journeys: &[Journey], against: &Against<'_>) -> Vec<Wal
                 // world. The checker's notes become the outcomes, so the
                 // document has the same shape either way and a caller reads one
                 // parser.
-                statically(journey, everything, graph)
+                statically(journey, everything, graph, program)
             }
         })
         .collect()
@@ -141,8 +141,9 @@ fn statically(
     journey: &inspect_journey::Journey,
     everything: &[Journey],
     graph: &SpecGraph,
+    program: &Program,
 ) -> Walk {
-    let notes = inspect_journey::check(journey, everything, graph);
+    let notes = inspect_journey::check(journey, everything, graph, program);
     let steps = journey
         .steps
         .iter()

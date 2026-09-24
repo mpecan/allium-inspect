@@ -44,6 +44,7 @@ mod writes;
 use std::path::{Path, PathBuf};
 
 pub use link::is_unresolved;
+pub use writes::children as subexpressions;
 
 use crate::{
     graph::SpecGraph,

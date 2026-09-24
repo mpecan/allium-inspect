@@ -121,7 +121,12 @@ fn direct_identifier(object: &Expr) -> Option<String> {
 /// expression form the language gains stops compiling here instead of being
 /// walked past. The old version recursed over any JSON object it met, which
 /// never failed to compile and never failed to miss something either.
-fn children(expr: &Expr) -> Vec<&Expr> {
+///
+/// Public because the journey checker asks the same kind of question of a
+/// rule — which states is this parameter compared against — and a second walker
+/// over the same ~35 variants would be a second list to keep up to date.
+#[must_use]
+pub fn children(expr: &Expr) -> Vec<&Expr> {
     match expr {
         // Leaves.
         Expr::Ident(_)

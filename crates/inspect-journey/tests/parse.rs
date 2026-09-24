@@ -321,23 +321,47 @@ fn seeing_can_say_which_one_it_is_looking_at() {
          proposal.decision on GroupMembers in room\n}\n",
     )
     .expect("parses");
-    let Clause::Sees { subject, surface, context, .. } = &journeys[0].steps[0].clauses[0] else {
+    let Clause::Sees { subject, surface, contexts, .. } = &journeys[0].steps[0].clauses[0] else {
         panic!("expected an observation");
     };
     assert_eq!(
-        (subject.as_written().as_str(), surface.as_str(), context.as_deref()),
-        ("proposal.decision", "GroupMembers", Some("room"))
+        (subject.as_written().as_str(), surface.as_str(), contexts.as_slice()),
+        ("proposal.decision", "GroupMembers", ["room".to_owned()].as_slice())
     );
+}
+
+/// A surface with two contexts is at two things, and `in` names both.
+#[test]
+fn seeing_can_name_several_contexts() {
+    let journeys = parse(
+        "journey J {\n    1. she looks at a link\n        ada sees link.label on \
+         DeviceManagement in ada, link\n}\n",
+    )
+    .expect("parses");
+    let Clause::Sees { surface, contexts, .. } = &journeys[0].steps[0].clauses[0] else {
+        panic!("expected an observation");
+    };
+    assert_eq!(surface, "DeviceManagement");
+    assert_eq!(contexts, &["ada".to_owned(), "link".to_owned()]);
+}
+
+#[test]
+fn naming_several_and_leaving_one_empty_is_refused() {
+    let error = parse(
+        "journey J {\n    1. she looks\n        ada sees l.label on DeviceManagement in ada, \n}\n",
+    )
+    .expect_err("one names nothing");
+    assert!(error.message.contains("names nothing"), "{error:?}");
 }
 
 /// And a line that does not say which reads exactly as it did before: the
 /// whole tail is the surface.
 #[test]
 fn seeing_without_one_names_no_context() {
-    let Clause::Sees { surface, context, .. } = &first().steps[0].clauses[4] else {
+    let Clause::Sees { surface, contexts, .. } = &first().steps[0].clauses[4] else {
         panic!("expected an observation");
     };
-    assert_eq!((surface.as_str(), context.as_deref()), ("MemberShelf", None));
+    assert_eq!((surface.as_str(), contexts.is_empty()), ("MemberShelf", true));
 }
 
 #[test]

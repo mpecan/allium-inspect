@@ -17,7 +17,7 @@
 
 use std::collections::BTreeMap;
 
-use allium_parser::ast::Expr;
+use allium_parser::ast::{CallArg, Expr};
 
 /// The parsed clauses of one rule.
 ///
@@ -72,6 +72,27 @@ pub struct RuleAst {
 }
 
 impl RuleAst {
+    /// The trigger's parameters as this rule's `when` names them, in order,
+    /// each with whether it is declared `name?`.
+    ///
+    /// Positional, so a parameter this cannot read as a name is an empty one
+    /// rather than a gap that shifts the rest. Empty for a state rule, whose
+    /// `when` is a condition rather than a call.
+    #[must_use]
+    pub fn parameters(&self) -> Vec<(String, bool)> {
+        let Some(Expr::Call { args, .. }) = &self.when else { return Vec::new() };
+        args.iter()
+            .map(|argument| match argument {
+                CallArg::Positional(Expr::Ident(ident)) => (ident.name.clone(), false),
+                CallArg::Positional(Expr::TypeOptional { inner, .. }) => match inner.as_ref() {
+                    Expr::Ident(ident) => (ident.name.clone(), true),
+                    _ => (String::new(), true),
+                },
+                _ => (String::new(), false),
+            })
+            .collect()
+    }
+
     /// Whether there is anything here to evaluate.
     ///
     /// A rule whose clauses all failed to parse is reported as unsimulatable
@@ -92,14 +113,36 @@ pub struct Program {
     invariants: BTreeMap<String, Expr>,
     /// Each surface's boundary, by node id.
     boundaries: BTreeMap<String, Boundary>,
-    /// What a spec computes rather than stores, by [`derived_key`].
-    ///
+    /// What a spec computes rather than stores.
+    derived: Derivations,
+}
+
+/// What a spec computes rather than stores, by [`derived_key`].
+#[derive(Debug, Clone, Default)]
+pub struct Derivations {
     /// Derived values and relationships together, because the simulator does
     /// the same thing with both: a field nobody wrote is answered by evaluating
     /// its definition. `devices: Device with identity = this` and
     /// `active_devices: devices where status = active` differ in what they say
     /// and not in how they are reached.
-    derived: BTreeMap<String, Expr>,
+    pub fields: BTreeMap<String, Expr>,
+    /// `is_used_by(who): who in filed_on_by` — a function of the instance
+    /// rather than a field of it, and only ever computed, since nothing can
+    /// store a value per argument.
+    ///
+    /// Apart from the fields, and typed, so every reader has to say what it
+    /// does with one. Filed among the fields it was a lambda some readers knew
+    /// to call and others evaluated, and "a lambda is not simulated" is a
+    /// sentence about this tool rather than about the spec.
+    pub functions: BTreeMap<String, Function>,
+}
+
+/// A derived value with parameters.
+#[derive(Debug, Clone)]
+pub struct Function {
+    /// The parameter names, in order.
+    pub params: Vec<String>,
+    pub body: Expr,
 }
 
 /// What a surface shows, as expressions rather than as text.
@@ -110,13 +153,30 @@ pub struct Program {
 /// neither can be answered from a string.
 #[derive(Debug, Clone, Default)]
 pub struct Boundary {
-    /// `context identity: Identity` — the binding name and the type it names.
+    /// Every `context` clause, in the order the surface declares them.
     ///
-    /// Both halves matter. The name is what the `exposes` clause refers to, and
-    /// the type is what decides whether a given actor can be that context.
-    pub context: Option<(String, String)>,
+    /// Several, because a surface may be at more than one thing at once —
+    /// `DeviceManagement` is at an identity *and* at one of its links. This was
+    /// one, and a second declaration replaced the first, so only the last
+    /// context could ever be bound and the rest read as nothing bound at all.
+    pub contexts: Vec<Context>,
+    /// `let named = Hubs where serves_group = group`, in declaration order,
+    /// because a later one may read an earlier one.
+    pub lets: Vec<(String, Expr)>,
     /// The `exposes:` block, whose items are paths and `for` iterations.
     pub exposes: Option<Expr>,
+}
+
+/// `context request: ContactRequest where status = pending`.
+#[derive(Debug, Clone)]
+pub struct Context {
+    /// The binding name, which is what the `exposes` clause refers to.
+    pub name: String,
+    /// The entity it names, unqualified, which decides whether a given
+    /// instance can stand in it.
+    pub entity: String,
+    /// The `where`, when it narrows: which instances have this surface at all.
+    pub filter: Option<Expr>,
 }
 
 /// Where a computed field is filed.
@@ -154,12 +214,17 @@ impl Program {
 
     /// Record `expr` as how `field` on `entity` is computed.
     pub fn add_derived(&mut self, module: &str, entity: &str, field: &str, expr: Expr) {
-        self.derived.insert(derived_key(module, entity, field), expr);
+        self.derived.fields.insert(derived_key(module, entity, field), expr);
     }
 
-    /// Every computed field, for the evaluator.
+    /// Record `function` as the derived value `name` on `entity`.
+    pub fn add_function(&mut self, module: &str, entity: &str, name: &str, function: Function) {
+        self.derived.functions.insert(derived_key(module, entity, name), function);
+    }
+
+    /// Everything computed, for the evaluator.
     #[must_use]
-    pub fn derivations(&self) -> &BTreeMap<String, Expr> {
+    pub fn derivations(&self) -> &Derivations {
         &self.derived
     }
 

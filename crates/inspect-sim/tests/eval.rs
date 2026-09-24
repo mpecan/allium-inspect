@@ -120,6 +120,18 @@ fn text(value: &str) -> Expr {
     })
 }
 
+fn call(function: Expr, args: Vec<Expr>) -> Expr {
+    Expr::Call {
+        span: NOWHERE,
+        function: Box::new(function),
+        args: args.into_iter().map(allium_parser::ast::CallArg::Positional).collect(),
+    }
+}
+
+fn set_of(elements: Vec<Expr>) -> Expr {
+    Expr::SetLiteral { span: NOWHERE, elements }
+}
+
 fn filtered(source: Expr, condition: Expr) -> Expr {
     Expr::Where { span: NOWHERE, source: Box::new(source), condition: Box::new(condition) }
 }
@@ -703,6 +715,20 @@ fn every_undecided_result_carries_at_least_one_reason() {
             "a set holding an unbound name",
             Expr::SetLiteral { span: NOWHERE, elements: vec![number("1"), ident("nobody")] },
         ),
+        (
+            "a call on an unbound name",
+            call(field(ident("nobody"), "is_used_by"), vec![number("1")]),
+        ),
+        ("a call on a scalar", call(field(number("1"), "is_used_by"), vec![number("1")])),
+        ("a call nothing defines", call(ident("nobody_defined_this"), vec![number("1")])),
+        (
+            "a set plus an unbound name",
+            arithmetic(
+                Expr::SetLiteral { span: NOWHERE, elements: Vec::new() },
+                "Add",
+                ident("nobody"),
+            ),
+        ),
         ("a count of a scalar", field(number("1"), "count")),
         ("a field of a scalar", field(number("1"), "status")),
         ("not, over an unbound name", not(ident("nobody"))),
@@ -799,6 +825,27 @@ fn a_collection_is_named_in_the_plural() {
     assert_eq!(truth_of(&over_members, &env), Truth::True);
 
     let never_true = quantify("m", ident("Members"), compare(ident("name"), "Eq", null()), None);
+    assert_eq!(
+        truth_of(&never_true, &env),
+        Truth::False,
+        "if it ranged over nothing this would be vacuously true"
+    );
+}
+
+/// And the same plural named from another module: `for m in
+/// lending/Members`. Only the bare one was reduced, so the qualified one
+/// ranged over an entity called `Members` and every claim about it was
+/// vacuous.
+#[test]
+fn a_collection_in_another_module_is_named_in_the_plural_too() {
+    let world = library();
+    let env = env(&world, "catalogue");
+    let members = Expr::QualifiedName(QualifiedName {
+        span: NOWHERE,
+        qualifier: Some("lending".to_owned()),
+        name: "Members".to_owned(),
+    });
+    let never_true = quantify("m", members, compare(ident("name"), "Eq", null()), None);
     assert_eq!(
         truth_of(&never_true, &env),
         Truth::False,
@@ -1400,5 +1447,146 @@ fn a_capitalised_left_hand_name_is_not_a_module() {
         truth_of(&capitalised, &env),
         Truth::Unknown,
         "an upper-case left side was read as a module qualifier"
+    );
+}
+
+// --- sets, with one more or one fewer --------------------------------------
+
+/// `hub.filed_on_by + member` — a set with one more in it. Undefined, it wrote
+/// an unknown over the list, so the next rule reading it was undecided too.
+#[test]
+fn a_set_plus_an_element_has_it_once_and_minus_it_has_it_not() {
+    let world = library();
+    let (ada, bea) =
+        (Value::Ref(EntityId::new("Member", 1)), Value::Ref(EntityId::new("Member", 2)));
+    let env = env(&world, "lending")
+        .bind("some", Value::Set(vec![ada.clone()]))
+        .bind("ada", ada.clone())
+        .bind("bea", bea.clone());
+
+    let more = arithmetic(ident("some"), "Add", ident("bea"));
+    assert_eq!(value_of(&more, &env), Value::Set(vec![ada.clone(), bea.clone()]));
+    let again = arithmetic(ident("some"), "Add", ident("ada"));
+    assert_eq!(value_of(&again, &env), Value::Set(vec![ada.clone()]), "never twice");
+    let fewer = arithmetic(ident("some"), "Sub", ident("ada"));
+    assert_eq!(value_of(&fewer, &env), Value::Set(Vec::new()));
+    let union = arithmetic(ident("some"), "Add", set_of(vec![ident("bea"), ident("ada")]));
+    assert_eq!(value_of(&union, &env), Value::Set(vec![ada, bea]));
+}
+
+// --- states written out as a set ----------------------------------------------
+
+/// `status in {pending, granted}` — beside a state, the names are states.
+#[test]
+fn a_set_of_bare_names_beside_a_state_is_a_set_of_states() {
+    let world = library();
+    let env = env(&world, "lending").bind("status", Value::Enum("granted".to_owned()));
+    let admitted = within(ident("status"), set_of(vec![ident("pending"), ident("granted")]));
+    assert_eq!(truth_of(&admitted, &env), Truth::True);
+    assert!(reasons(&admitted, &env).is_empty());
+
+    let refused = within(ident("status"), set_of(vec![ident("pending"), ident("lapsed")]));
+    assert_eq!(truth_of(&refused, &env), Truth::False);
+}
+
+/// And only beside a state. A number is not a state, so an unbound name next
+/// to one is still a name nothing bound.
+#[test]
+fn a_bare_name_in_a_set_beside_anything_else_is_still_unbound() {
+    let world = library();
+    let env = env(&world, "lending");
+    let node = within(number("1"), set_of(vec![ident("pending")]));
+    assert_eq!(truth_of(&node, &env), Truth::Unknown);
+    assert_eq!(reasons(&node, &env), vec!["nothing is bound to `pending`"]);
+}
+
+/// A binding in the set is the binding's value, state beside it or not.
+#[test]
+fn a_bound_name_in_a_set_of_states_is_what_it_is_bound_to() {
+    let world = library();
+    let env = env(&world, "lending")
+        .bind("status", Value::Enum("granted".to_owned()))
+        .bind("pending", Value::Enum("granted".to_owned()));
+    let node = within(ident("status"), set_of(vec![ident("pending")]));
+    assert_eq!(truth_of(&node, &env), Truth::True, "`pending` is bound, to `granted`");
+}
+
+// --- a derived value that takes an argument --------------------------------------
+
+/// `is_used_by(who): who in filed_on_by`.
+fn is_used_by() -> inspect_model::Derivations {
+    let mut derived = inspect_model::Derivations::default();
+    derived.functions.insert(
+        inspect_model::derived_key("lending", "Member", "is_used_by"),
+        inspect_model::Function {
+            params: vec!["who".to_owned()],
+            body: within(ident("who"), ident("filed_on_by")),
+        },
+    );
+    derived
+}
+
+#[test]
+fn a_derived_value_with_a_parameter_is_computed_for_the_argument_it_is_given() {
+    let mut world = library();
+    let hub = EntityId::new("Member", 1);
+    let (ada, bea) = (Value::Ref(EntityId::new("Copy", 1)), Value::Ref(EntityId::new("Copy", 2)));
+    world.set_field(&hub, "filed_on_by", Value::Set(vec![ada.clone()]));
+    let derived = is_used_by();
+    let env = env(&world, "lending")
+        .deriving(&derived)
+        .bind("hub", Value::Ref(hub.clone()))
+        .bind("ada", ada)
+        .bind("bea", bea);
+
+    let asked = |who: &str| call(field(ident("hub"), "is_used_by"), vec![ident(who)]);
+    assert_eq!(truth_of(&asked("ada"), &env), Truth::True);
+    assert_eq!(truth_of(&asked("bea"), &env), Truth::False);
+
+    // Bare, inside the entity: `this` is the instance it is asked of.
+    let inside = env.bind("this", Value::Ref(hub));
+    assert_eq!(truth_of(&call(ident("is_used_by"), vec![ident("bea")]), &inside), Truth::False);
+}
+
+/// Given the wrong number of arguments, or read without any, it says which.
+#[test]
+fn a_derived_value_with_a_parameter_asked_wrongly_says_how() {
+    let world = library();
+    let derived = is_used_by();
+    let env = env(&world, "lending")
+        .deriving(&derived)
+        .bind("hub", Value::Ref(EntityId::new("Member", 1)));
+
+    let too_many = call(field(ident("hub"), "is_used_by"), vec![number("1"), number("2")]);
+    assert_eq!(truth_of(&too_many, &env), Truth::Unknown);
+    assert!(
+        reasons(&too_many, &env)[0].contains("takes 1 argument, and was given 2"),
+        "{:?}",
+        reasons(&too_many, &env)
+    );
+
+    let too_few = call(field(ident("hub"), "is_used_by"), Vec::new());
+    assert!(
+        reasons(&too_few, &env)[0].contains("takes 1 argument, and was given 0"),
+        "{:?}",
+        reasons(&too_few, &env)
+    );
+
+    let bare = field(ident("hub"), "is_used_by");
+    assert_eq!(reasons(&bare, &env)[0], "`is_used_by` takes an argument, and was read without one");
+}
+
+/// Named bare inside its own entity, a function is still a function: it asks
+/// for an argument, rather than the evaluator saying a lambda is not simulated.
+#[test]
+fn a_function_named_bare_inside_its_entity_says_it_takes_an_argument() {
+    let world = library();
+    let derived = is_used_by();
+    let env = env(&world, "lending")
+        .deriving(&derived)
+        .bind("this", Value::Ref(EntityId::new("Member", 1)));
+    assert_eq!(
+        reasons(&ident("is_used_by"), &env),
+        vec!["`is_used_by` takes an argument, and was read without one"]
     );
 }

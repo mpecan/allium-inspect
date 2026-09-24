@@ -21,7 +21,7 @@
 
 use std::collections::BTreeMap;
 
-use allium_parser::ast::{CallArg, Expr};
+use allium_parser::ast::Expr;
 
 use inspect_model::{NodeKind, Program, SpecGraph, graph::TriggerSource};
 use serde::{Deserialize, Serialize};
@@ -249,7 +249,9 @@ fn run_rule(
     // Read off the rule's own `when` clause rather than looked up in the graph:
     // that clause *is* the declaration, and one answer is better than two that
     // can disagree.
-    for name in ast.when.as_ref().map(optional_parameters).unwrap_or_default() {
+    for (name, _) in
+        ast.parameters().into_iter().filter(|(name, optional)| *optional && !name.is_empty())
+    {
         bindings.entry(name).or_insert(Value::Null);
     }
 
@@ -276,6 +278,48 @@ fn run_rule(
 
     let mut requires = Vec::new();
     let mut unresolved = Vec::new();
+
+    // A state rule's own condition, first, as a precondition. Nobody names a
+    // state rule's trigger: it is the entity, so whatever made *one* rule on
+    // `Hold` true fires `Hold`, and every rule waiting on it arrives here. Its
+    // `when` is the only thing that says whether *this* one was woken — and
+    // skipping it let `HoldExpires` run beside `HoldIsGranted` on a hold whose
+    // expiry was a week away, and write `lapsed` over a hold nothing lapsed.
+    if let Some((binding, condition)) = state_condition(detail, ast) {
+        let evaluated = match bindings.get(binding) {
+            Some(Value::Ref(id)) => eval(
+                condition,
+                &about(
+                    Env::new(world, module, source).deriving(program.derivations()),
+                    &detail.trigger,
+                    binding,
+                    id,
+                ),
+            ),
+            // Fired with nothing under the name the condition reads, which is
+            // the condition read about nothing — undecided, and it says so.
+            _ => crate::eval::Evaluation {
+                value: Value::Unknown,
+                unresolved: vec![Unresolved {
+                    reason: format!(
+                        "nothing is bound to `{binding}`, which this rule's condition is about"
+                    ),
+                    expression: None,
+                    span: None,
+                }],
+            },
+        };
+        unresolved.extend(evaluated.unresolved.clone());
+        requires.push(ClauseVerdict {
+            text: detail
+                .clauses_of("when")
+                .next()
+                .map(|clause| clause.text.clone())
+                .unwrap_or_default(),
+            truth: evaluated.truth(),
+            unresolved: evaluated.unresolved,
+        });
+    }
 
     for (index, clause) in ast.requires.iter().enumerate() {
         let text = detail
@@ -379,32 +423,20 @@ pub fn enabled(
             continue;
         }
         let Some(ast) = program.rule(node.id.as_str()) else { continue };
-        // `when: copy: Copy.status = lost` — a binding, not a call. A state
-        // rule that is written any other way has no instance to range over.
-        let Some(allium_parser::ast::Expr::Binding { name, value: condition, .. }) = &ast.when
-        else {
-            continue;
-        };
+        let Some((binding, condition)) = state_condition(detail, ast) else { continue };
 
         let source = sources.get(&node.module).map(String::as_str).unwrap_or_default();
         let entity = detail.trigger.as_str();
-        let binding = name.name.as_str();
         let mut over = Vec::new();
         let mut undecided = Vec::new();
 
         for instance in world.instances_of(entity) {
-            let mut scope = Env::new(world, &node.module, source).deriving(program.derivations());
-            scope.bindings.insert(binding.to_owned(), Value::Ref(instance.id.clone()));
-            scope.bindings.insert("this".to_owned(), Value::Ref(instance.id.clone()));
-            // The entity's own name too. `when: copy: Copy.status = lost` reads
-            // as "for each Copy, where *this* copy's status is lost" — inside
-            // the condition the type name means the instance, not the
-            // collection. Without this the condition asks whether *every* copy
-            // is lost, which is a different question and answers `unknown`.
-            scope.bindings.insert(entity.to_owned(), Value::Ref(instance.id.clone()));
-            for (field, value) in &instance.fields {
-                scope.bindings.insert(field.clone(), value.clone());
-            }
+            let scope = about(
+                Env::new(world, &node.module, source).deriving(program.derivations()),
+                entity,
+                binding,
+                &instance.id,
+            );
             let evaluated = eval(condition, &scope);
             match evaluated.truth() {
                 Truth::True => over.push(Value::Ref(instance.id.clone())),
@@ -434,16 +466,46 @@ pub fn enabled(
     found
 }
 
-/// The parameters a `when` clause declares with `?`.
-fn optional_parameters(when: &Expr) -> Vec<String> {
-    let Expr::Call { args, .. } = when else { return Vec::new() };
-    args.iter()
-        .filter_map(|argument| match argument {
-            CallArg::Positional(Expr::TypeOptional { inner, .. }) => match inner.as_ref() {
-                Expr::Ident(ident) => Some(ident.name.clone()),
-                _ => None,
-            },
-            _ => None,
-        })
-        .collect()
+/// A state rule's binding and condition: `when: copy: Copy.status = lost`.
+///
+/// A binding, not a call. A rule written any other way — or one somebody
+/// outside fires — has no instance for a condition to be about.
+fn state_condition<'a>(
+    detail: &inspect_model::graph::RuleDetail,
+    ast: &'a inspect_model::RuleAst,
+) -> Option<(&'a str, &'a Expr)> {
+    if detail.source == TriggerSource::External {
+        return None;
+    }
+    match &ast.when {
+        Some(Expr::Binding { name, value, .. }) => Some((name.name.as_str(), value.as_ref())),
+        _ => None,
+    }
+}
+
+/// The scope a state rule's condition is read in, about one instance.
+///
+/// One function for the two places that read it — whether the rule is enabled,
+/// and whether a firing woke *this* rule — because two scopes built by hand are
+/// two answers waiting to disagree about the same condition.
+fn about<'a>(
+    mut scope: Env<'a>,
+    entity: &str,
+    binding: &str,
+    instance: &crate::value::EntityId,
+) -> Env<'a> {
+    scope.bindings.insert(binding.to_owned(), Value::Ref(instance.clone()));
+    scope.bindings.insert("this".to_owned(), Value::Ref(instance.clone()));
+    // The entity's own name too. `when: copy: Copy.status = lost` reads as
+    // "for each Copy, where *this* copy's status is lost" — inside the
+    // condition the type name means the instance, not the collection. Without
+    // this the condition asks whether *every* copy is lost, which is a
+    // different question and answers `unknown`.
+    scope.bindings.insert(entity.to_owned(), Value::Ref(instance.clone()));
+    if let Some(found) = scope.world.instance(instance) {
+        for (field, value) in &found.fields {
+            scope.bindings.insert(field.clone(), value.clone());
+        }
+    }
+    scope
 }

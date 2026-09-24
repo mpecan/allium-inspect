@@ -6,49 +6,10 @@
 
 #![allow(clippy::panic, clippy::expect_used, clippy::unwrap_used)]
 
-use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-};
+mod common;
 
+use common::LENDING;
 use inspect_journey::{Verdict, Walk, parse, walk};
-use inspect_model::{
-    Command, Ingestion, MemoryReader, Program, SpecGraph, ingest, runner::MapRunner,
-};
-use inspect_sim::step::Sources;
-
-fn fixtures() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../inspect-model/tests/fixtures")
-}
-
-fn read(path: &Path) -> String {
-    std::fs::read_to_string(path)
-        .unwrap_or_else(|error| panic!("fixture {} is readable: {error}", path.display()))
-}
-
-fn library() -> (SpecGraph, Program, Sources) {
-    let root = fixtures();
-    let mut runner = MapRunner::new(read(&root.join("cli/VERSION")).trim());
-    let mut reader = MemoryReader::default();
-    let mut sources: Sources = BTreeMap::new();
-    let mut paths = Vec::new();
-
-    for module in ["catalogue", "lending"] {
-        let path = root.join(format!("specs/{module}.allium"));
-        for command in Command::ALL {
-            let document = read(&root.join(format!("cli/{module}.{command}.json")));
-            runner = runner.with(command, &path, serde_json::from_str(&document).expect("JSON"));
-        }
-        let text = read(&path);
-        sources.insert(module.to_owned(), text.clone());
-        reader = reader.with(&path, text);
-        paths.push(path);
-    }
-
-    let Ingestion { graph, program } =
-        ingest(&runner, &reader, &paths).expect("the fixtures ingest");
-    (graph, program, sources)
-}
 
 /// Walk the one journey in `source`.
 fn walked(source: &str) -> Walk {
@@ -58,7 +19,7 @@ fn walked(source: &str) -> Walk {
 /// The nth journey in a file, for the cases about what a *file* says.
 fn walked_nth(source: &str, at: usize) -> Walk {
     let journeys = parse(source).expect("the journey parses");
-    let (graph, program, sources) = library();
+    let (graph, program, sources) = common::library(LENDING);
     walk(&journeys[at], &journeys, &graph, &program, &sources)
 }
 
@@ -90,7 +51,7 @@ fn a_copy_goes_out_and_comes_back() {
     // that moves, a fortnight passing without waking anything, and the copy
     // back on the shelf.
     let journeys = parse(BORROWING).expect("parses");
-    let (graph, program, sources) = library();
+    let (graph, program, sources) = common::library(LENDING);
     let result = walk(&journeys[0], &journeys, &graph, &program, &sources);
 
     let bad: Vec<_> = outcomes(&result)
@@ -104,7 +65,7 @@ fn a_copy_goes_out_and_comes_back() {
 #[test]
 fn borrowing_makes_the_rule_fire_and_moves_the_copy() {
     let journeys = parse(BORROWING).expect("parses");
-    let (graph, program, sources) = library();
+    let (graph, program, sources) = common::library(LENDING);
     let result = walk(&journeys[0], &journeys, &graph, &program, &sources);
     let first = &result.steps[0];
 
@@ -120,7 +81,7 @@ fn a_step_catches_what_the_rule_created_and_later_steps_use_it() {
     // The binding, which is the whole reason a journey does not have to predict
     // that the loan it is about to talk about will be called `Loan#1`.
     let journeys = parse(BORROWING).expect("parses");
-    let (graph, program, sources) = library();
+    let (graph, program, sources) = common::library(LENDING);
     let result = walk(&journeys[0], &journeys, &graph, &program, &sources);
 
     let returned = &result.steps[2];
@@ -143,7 +104,7 @@ fn the_second_journey_asks_for_something_this_spec_does_not_deliver() {
     // due on its own, and the fixture spec has not met it: whoever owns that
     // spec has a rule to fix, and the line number to fix it against.
     let journeys = parse(BORROWING).expect("parses");
-    let (graph, program, sources) = library();
+    let (graph, program, sources) = common::library(LENDING);
     let result = walk(&journeys[1], &journeys, &graph, &program, &sources);
 
     let overdue = &result.steps[1];
@@ -162,7 +123,7 @@ fn a_rule_the_world_never_makes_true_is_undecided_rather_than_denied() {
     // are identical from here — and calling the second a flat no is the failure
     // this design exists to refuse.
     let journeys = parse(BORROWING).expect("parses");
-    let (graph, program, sources) = library();
+    let (graph, program, sources) = common::library(LENDING);
     let result = walk(&journeys[1], &journeys, &graph, &program, &sources);
     let fires = &result.steps[1].outcomes[1];
     assert_ne!(fires.verdict, Verdict::Refused, "a rule nobody can decide is not a refusal");
@@ -177,7 +138,7 @@ fn does_not_fire_errs_toward_not_knowing_too() {
     // of a negative claim about one either, and the direction of the error —
     // toward "I do not know" — is the one this tool errs in everywhere else.
     let journeys = parse(BORROWING).expect("parses");
-    let (graph, program, sources) = library();
+    let (graph, program, sources) = common::library(LENDING);
     let result = walk(&journeys[0], &journeys, &graph, &program, &sources);
 
     let waiting = &result.steps[1];
@@ -1363,7 +1324,7 @@ fn a_false_that_follows_something_undecided_is_not_a_refusal() {
     // checked something it did not — which is the one thing this design refuses
     // everywhere else, and the reason `undecided` exists at all.
     let journeys = parse(BORROWING).expect("parses");
-    let (graph, program, sources) = library();
+    let (graph, program, sources) = common::library(LENDING);
     let result = walk(&journeys[1], &journeys, &graph, &program, &sources);
 
     let overdue = &result.steps[1];

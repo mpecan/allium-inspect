@@ -64,8 +64,17 @@ pub enum Verdict {
 }
 
 /// Check `journey` against `graph`, in the order it was written.
+///
+/// `program` is read for one question only: which states a rule compares a
+/// parameter against, so a word an act passes that no enumeration declares is
+/// reported where a rule would have to match it — and nowhere else.
 #[must_use]
-pub fn check(journey: &Journey, everything: &[Journey], graph: &SpecGraph) -> Vec<Note> {
+pub fn check(
+    journey: &Journey,
+    everything: &[Journey],
+    graph: &SpecGraph,
+    program: &inspect_model::Program,
+) -> Vec<Note> {
     let mut notes = Vec::new();
     let mut known = Names::new(journey, everything);
 
@@ -86,7 +95,7 @@ pub fn check(journey: &Journey, everything: &[Journey], graph: &SpecGraph) -> Ve
         }
     }
     for step in &journey.steps {
-        check_step(step, graph, &mut known, &mut notes);
+        check_step(step, graph, program, &mut known, &mut notes);
     }
     notes
 }
@@ -150,13 +159,26 @@ impl Names {
     }
 }
 
-fn check_step(step: &Step, graph: &SpecGraph, known: &mut Names, notes: &mut Vec<Note>) {
+fn check_step(
+    step: &Step,
+    graph: &SpecGraph,
+    program: &inspect_model::Program,
+    known: &mut Names,
+    notes: &mut Vec<Note>,
+) {
     for clause in &step.clauses {
         match clause {
             Clause::Does { actor, trigger, arguments, surface, creating, line, .. } => {
                 check_actor(actor, *line, known, notes);
                 check_act(trigger, surface, *line, graph, notes);
                 check_arity(trigger, arguments.len(), *line, graph, notes);
+                crate::states::check(
+                    &crate::states::Act { trigger, arguments, line: *line },
+                    |name| known.knows(name),
+                    graph,
+                    program,
+                    notes,
+                );
                 if let Some(caught) = creating {
                     if let Some(note) = missing_type(caught, graph) {
                         notes.push(note);
@@ -164,14 +186,12 @@ fn check_step(step: &Step, graph: &SpecGraph, known: &mut Names, notes: &mut Vec
                     known.bind(caught);
                 }
             }
-            Clause::Sees { actor, subject, surface, context, negated, line } => {
+            Clause::Sees { actor, subject, surface, contexts, negated, line } => {
                 check_actor(actor, *line, known, notes);
                 // Not `check_actor`: a context is a room rather than a
                 // person, and "add them to the cast" is the wrong advice for
                 // one — a group is usually something `given` made.
-                if let Some(context) = context
-                    && !known.knows(context)
-                {
+                for context in contexts.iter().filter(|context| !known.knows(context)) {
                     notes.push(Note {
                         line: *line,
                         verdict: Verdict::Unspecified,
@@ -185,7 +205,7 @@ fn check_step(step: &Step, graph: &SpecGraph, known: &mut Names, notes: &mut Vec
                     &Sight {
                         seen: &subject.as_written(),
                         surface,
-                        context: context.as_deref(),
+                        named: !contexts.is_empty(),
                         negated: *negated,
                         line: *line,
                     },
@@ -441,8 +461,8 @@ fn check_act(trigger: &str, surface: &str, line: usize, graph: &SpecGraph, notes
 struct Sight<'a> {
     seen: &'a str,
     surface: &'a str,
-    /// Which instance of the surface's context, when the journey says.
-    context: Option<&'a str>,
+    /// Whether the journey said which instance of the surface's context.
+    named: bool,
     negated: bool,
     line: usize,
 }
@@ -461,7 +481,7 @@ fn check_sight(sight: &Sight<'_>, graph: &SpecGraph, notes: &mut Vec<Note>) {
     // that has no context has nothing for it to name. Reported here rather
     // than ignored: silently dropping it would leave a journey saying which
     // room it means and a tool answering about a different question.
-    if sight.context.is_some() && detail.context.is_none() {
+    if sight.named && detail.context.is_none() {
         notes.push(Note {
             line,
             verdict: Verdict::Unspecified,

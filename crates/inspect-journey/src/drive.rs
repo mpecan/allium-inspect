@@ -97,38 +97,63 @@ impl Walker<'_> {
     /// silently truncated.
     pub(crate) fn settle(&mut self) -> Settled {
         const ROUNDS: usize = 32;
+        // By *rule* and instance. A state rule's trigger is its entity, so two
+        // rules on `Hold` share one; remembering the trigger took the second
+        // rule on a hold for the first one running again, and it never ran.
         let mut ran: Vec<(String, Value)> = Vec::new();
         for _ in 0..ROUNDS {
             // Everything the world makes true, not everything this step made
             // newly true: a rule enabled before the clock moved and never run
             // is still waiting, and a journey that skipped it would report a
             // world the spec does not describe.
-            let waiting: Vec<(String, String, String, Value)> =
-                enabled(self.spec, self.program, self.sources, &self.world)
-                    .into_iter()
-                    .flat_map(|rule| {
-                        let (trigger, module, binding) = (rule.trigger, rule.module, rule.binding);
-                        rule.over.into_iter().map(move |over| {
-                            (trigger.clone(), module.clone(), binding.clone(), over)
-                        })
-                    })
+            // The event to fire, the instance it is about, and the rules it
+            // was fired for.
+            let mut waiting: Vec<(Event, Value, Vec<String>)> = Vec::new();
+            for rule in enabled(self.spec, self.program, self.sources, &self.world) {
+                for over in rule.over {
                     // A rule already run for that same instance is where the
                     // fixpoint comes from. Without it a rule whose effect keeps
                     // its own condition true — `status = lost` stays lost —
                     // runs thirty-two times and then reports never settling.
-                    .filter(|(trigger, _, _, over)| !already_ran(&ran, trigger, over))
-                    .collect();
+                    if already_ran(&ran, &rule.rule, &over) {
+                        continue;
+                    }
+                    // One firing per entity and instance: the event reaches
+                    // every rule waiting on it, and each reads its own `when`.
+                    // Firing it once per rule would run the first rule again
+                    // for every other rule that was true beside it.
+                    match waiting.iter_mut().find(|(event, instance, _)| {
+                        event.trigger == rule.trigger && *instance == over
+                    }) {
+                        Some((.., rules)) => rules.push(rule.rule.clone()),
+                        None => {
+                            let mut event = Event::new(&rule.trigger, &rule.module);
+                            // Under the name the `when` clause gave it. A state
+                            // rule's clauses are written about `copy`, and
+                            // firing without that binding evaluates every one
+                            // of them against nothing.
+                            event.arguments.insert(rule.binding.clone(), over.clone());
+                            waiting.push((event, over, vec![rule.rule.clone()]));
+                        }
+                    }
+                }
+            }
             if waiting.is_empty() {
                 return Settled::Yes;
             }
-            for (trigger, module, binding, over) in waiting {
-                let mut event = Event::new(&trigger, &module);
-                // Under the name the `when` clause gave it. A state rule's
-                // clauses are written about `copy`, and firing without that
-                // binding evaluates every one of them against nothing.
-                event.arguments.insert(binding, over.clone());
-                self.fire(&event);
-                ran.push((trigger, over));
+            for (event, over, woken) in waiting {
+                let outcome = self.fire(&event);
+                // What woke it, and whatever else the same firing ran: a rule
+                // that became true between the listing and the firing has run
+                // now, and must not run again next round.
+                let also = outcome
+                    .rules
+                    .iter()
+                    .filter(|rule| rule.disposition == inspect_sim::Disposition::Fired)
+                    .map(|rule| rule.rule.clone());
+                for rule in woken.into_iter().chain(also) {
+                    ran.push((rule, over.clone()));
+                }
             }
         }
         Settled::No { rounds: ROUNDS }
@@ -188,7 +213,7 @@ impl Walker<'_> {
         // reader can tell what this journey was told from what it walked in on.
         let was = self.standing_on.replace(named.to_owned());
         self.lay_out(earlier);
-        let checked = check::check(earlier, everything, self.spec);
+        let checked = check::check(earlier, everything, self.spec, self.program);
         let steps: Vec<Walked> =
             earlier.steps.iter().map(|step| self.walk_step(step, &checked)).collect();
         self.standing_on = was;

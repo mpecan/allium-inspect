@@ -15,7 +15,7 @@ use allium_parser::ast::{BlockItemKind, BlockKind, Decl, Expr, Module as Ast};
 use crate::{
     NodeKind, SpecGraph,
     graph::NodeId,
-    program::{Boundary, Program, RuleAst},
+    program::{Boundary, Context, Function, Program, RuleAst},
 };
 
 #[cfg(test)]
@@ -83,23 +83,37 @@ pub fn ingest(ast: &Ast, module: &str, graph: &SpecGraph, program: &mut Program)
 
 /// What one surface shows, as expressions.
 ///
-/// Two clauses out of the block and nothing else: `context`, because the
-/// `exposes` items refer to it by name, and `exposes` itself. `provides` and
-/// `@guarantee` are the graph's business — a panel draws them and nothing
-/// evaluates them.
+/// Three things out of the block and nothing else: every `context` and every
+/// `let`, because the `exposes` items refer to them by name, and `exposes`
+/// itself. `provides` and `@guarantee` are the graph's business — a panel draws
+/// them and nothing evaluates them.
 fn boundary(block: &allium_parser::ast::BlockDecl) -> Boundary {
     let mut boundary = Boundary::default();
 
     for item in &block.items {
+        if let BlockItemKind::Let { name, value } = &item.kind {
+            boundary.lets.push((name.name.clone(), value.clone()));
+            continue;
+        }
         let BlockItemKind::Clause { keyword, value } = &item.kind else { continue };
         match keyword.as_str() {
             // `context identity: Identity` is a binding: the name the exposes
             // clause uses, and the type an actor has to be to stand in it.
+            //
+            // And `context request: ContactRequest where status = pending` is
+            // the same binding with a filter on it. Reading only the bare shape
+            // dropped every context that narrows, so nothing was ever bound to
+            // `request` and every field the surface shows was undecided.
             "context" => {
-                if let Expr::Binding { name, value, .. } = value
-                    && let Some(entity) = entity_named(value)
-                {
-                    boundary.context = Some((name.name.clone(), entity));
+                let Expr::Binding { name, value, .. } = value else { continue };
+                let (named, filter) = match value.as_ref() {
+                    Expr::Where { source, condition, .. } => {
+                        (source.as_ref(), Some(condition.as_ref().clone()))
+                    }
+                    bare => (bare, None),
+                };
+                if let Some(entity) = entity_named(named) {
+                    boundary.contexts.push(Context { name: name.name.clone(), entity, filter });
                 }
             }
             "exposes" => boundary.exposes = Some(value.clone()),
@@ -158,12 +172,22 @@ fn derived(
     };
 
     for item in &block.items {
-        // `ParamAssignment` — `safety_number_of(this)` — is deliberately not
-        // here. It takes arguments, so it is a function rather than a field,
-        // and nothing reads it by name.
-        let BlockItemKind::Assignment { name, value } = &item.kind else { continue };
-        if detail.field(&name.name).is_some_and(|field| field.derived || field.relationship) {
-            program.add_derived(module, entity, &name.name, value.clone());
+        match &item.kind {
+            BlockItemKind::Assignment { name, value } => {
+                if detail.field(&name.name).is_some_and(|field| field.derived || field.relationship)
+                {
+                    program.add_derived(module, entity, &name.name, value.clone());
+                }
+            }
+            // `is_used_by(who): who in filed_on_by` takes an argument, so it is
+            // a function of the instance rather than a field of it. Leaving
+            // it out made every rule guarded by one undecided.
+            BlockItemKind::ParamAssignment { name, params, value } => {
+                let params = params.iter().map(|param| param.name.clone()).collect();
+                let function = Function { params, body: value.clone() };
+                program.add_function(module, entity, &name.name, function);
+            }
+            _ => {}
         }
     }
 }
@@ -314,16 +338,36 @@ entity Member {
     fn a_computed_field_is_kept_with_the_expression_that_computes_it() {
         let program = against(MEMBER, &member_graph());
         assert!(
-            program.derivations().contains_key(&derived_key("lending", "Member", "open_loans")),
+            program.derivations().fields.contains_key(&derived_key(
+                "lending",
+                "Member",
+                "open_loans"
+            )),
             "{:?}",
-            program.derivations().keys().collect::<Vec<_>>()
+            program.derivations().fields.keys().collect::<Vec<_>>()
         );
+    }
+
+    /// A derived value with a parameter is kept, as a function of it.
+    #[test]
+    fn a_derived_value_with_a_parameter_is_kept_as_a_function() {
+        let program = against(
+            "\nentity Member {\n    name: String\n    shares_with(other, kind): other.name = name\n}\n",
+            &member_graph(),
+        );
+        let key = derived_key("lending", "Member", "shares_with");
+        let function = program.derivations().functions.get(&key).expect("the function");
+        assert_eq!(function.params, ["other", "kind"]);
+        assert!(matches!(function.body, Expr::Comparison { .. }));
+        assert!(!program.derivations().fields.contains_key(&key), "a function is not a field");
     }
 
     #[test]
     fn a_relationship_is_kept_too() {
         let program = against(MEMBER, &member_graph());
-        assert!(program.derivations().contains_key(&derived_key("lending", "Member", "loans")));
+        assert!(
+            program.derivations().fields.contains_key(&derived_key("lending", "Member", "loans"))
+        );
     }
 
     /// The one that matters. `name: String` is an assignment in the tree, the
@@ -332,23 +376,25 @@ entity Member {
     #[test]
     fn a_stored_field_is_not_kept() {
         let program = against(MEMBER, &member_graph());
-        assert!(!program.derivations().contains_key(&derived_key("lending", "Member", "name")));
-        assert_eq!(program.derivations().len(), 2);
+        assert!(
+            !program.derivations().fields.contains_key(&derived_key("lending", "Member", "name"))
+        );
+        assert_eq!(program.derivations().fields.len(), 2);
     }
 
     /// The graph is what knows. Without it nothing is computed, which is the
     /// honest answer rather than a guess from the expression's shape.
     #[test]
     fn nothing_is_kept_for_an_entity_the_graph_does_not_have() {
-        assert!(against(MEMBER, &SpecGraph::new("test")).derivations().is_empty());
+        assert!(against(MEMBER, &SpecGraph::new("test")).derivations().fields.is_empty());
     }
 
     #[test]
     fn a_computed_field_is_filed_under_its_own_module_and_entity() {
         let program = against(MEMBER, &member_graph());
         assert_eq!(derived_key("lending", "Member", "loans"), "lending::Member.loans");
-        assert!(!program.derivations().contains_key("catalogue::Member.loans"));
-        assert!(!program.derivations().contains_key("lending::Copy.loans"));
+        assert!(!program.derivations().fields.contains_key("catalogue::Member.loans"));
+        assert!(!program.derivations().fields.contains_key("lending::Copy.loans"));
     }
 
     /// A rule's assignments are not an entity's, and a rule block reaching this
@@ -379,7 +425,55 @@ surface MyLoans {
     fn a_surface_keeps_the_binding_its_exposes_clause_refers_to() {
         // Both halves. The name is what `borrower.open_loans` means, and the
         // type is what decides whether a given actor can stand in it.
-        assert_eq!(boundary_of(SHELF).context, Some(("borrower".to_owned(), "Member".to_owned())));
+        assert_eq!(contexts_of(&boundary_of(SHELF)), [("borrower", "Member", false)]);
+    }
+
+    /// Each context as a name, its entity, and whether it narrows.
+    fn contexts_of(boundary: &crate::Boundary) -> Vec<(&str, &str, bool)> {
+        boundary
+            .contexts
+            .iter()
+            .map(|context| {
+                (context.name.as_str(), context.entity.as_str(), context.filter.is_some())
+            })
+            .collect()
+    }
+
+    /// `context request: ContactRequest where status = pending` is a context
+    /// with a filter, not something that is not a context.
+    #[test]
+    fn a_context_that_narrows_keeps_its_entity_and_its_filter() {
+        let boundary = boundary_of(
+            "\nsurface MyLoans {\n    facing reader: Reader\n    context loan: Loan where \
+             status = open\n\n    exposes:\n        loan.status\n}\n",
+        );
+        assert_eq!(contexts_of(&boundary), [("loan", "Loan", true)]);
+    }
+
+    /// Two contexts are two, in the order written. The second used to replace
+    /// the first.
+    #[test]
+    fn a_surface_keeps_every_context_it_declares() {
+        let boundary = boundary_of(
+            "\nsurface MyLoans {\n    facing reader: Reader\n    context borrower: Member\n    \
+             context loan: Loan\n\n    exposes:\n        loan.status\n}\n",
+        );
+        assert_eq!(
+            contexts_of(&boundary),
+            [("borrower", "Member", false), ("loan", "Loan", false)]
+        );
+    }
+
+    /// A surface `let` is kept, in order, for the exposures that read it.
+    #[test]
+    fn a_surface_keeps_its_lets_in_order() {
+        let boundary = boundary_of(
+            "\nsurface MyLoans {\n    facing reader: Reader\n    context borrower: Member\n    \
+             let mine = borrower.loans\n    let open = mine where status = open\n\n    \
+             exposes:\n        for loan in open:\n            loan.status\n}\n",
+        );
+        let names: Vec<&str> = boundary.lets.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(names, ["mine", "open"]);
     }
 
     #[test]
@@ -396,7 +490,7 @@ surface MyLoans {
     /// them and nothing evaluates them — so they must not arrive here as
     /// exposures that would then be matched against.
     #[test]
-    fn nothing_but_context_and_exposes_is_kept() {
+    fn nothing_but_contexts_lets_and_exposes_is_kept() {
         let boundary = boundary_of(SHELF);
         let printed = format!("{:?}", boundary.exposes);
         assert!(!printed.contains("MemberReturns"), "{printed}");
@@ -416,7 +510,7 @@ surface MyLoans {
         );
         // Bare, because what this is compared against is an instance's entity
         // and those carry the tail of `people/Member`.
-        assert_eq!(boundary.context, Some(("borrower".to_owned(), "Member".to_owned())));
+        assert_eq!(contexts_of(&boundary), [("borrower", "Member", false)]);
     }
 
     #[test]
@@ -428,7 +522,7 @@ surface MyLoans {
         .cloned()
         .expect("the surface");
 
-        assert_eq!(boundary.context, None);
+        assert!(boundary.contexts.is_empty());
         assert!(boundary.exposes.is_some());
     }
 
@@ -446,7 +540,7 @@ surface MyLoans {
     #[test]
     fn only_entity_and_value_blocks_contribute() {
         let program = against(BORROW, &member_graph());
-        assert!(program.derivations().is_empty());
+        assert!(program.derivations().fields.is_empty());
     }
 
     fn rule_of(source: &str) -> RuleAst {

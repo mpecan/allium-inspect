@@ -29,6 +29,7 @@
 //! meant. See the `ops` module for how.
 
 mod ast;
+mod calls;
 mod collections;
 mod literals;
 mod ops;
@@ -38,12 +39,12 @@ use std::{
     sync::LazyLock,
 };
 
-use allium_parser::ast::{CallArg, CondBranch, Expr, Ident, QualifiedName};
+use allium_parser::ast::{CondBranch, Expr, Ident, QualifiedName};
 // Re-exported for `apply`, which walks the same tree to decide what a
 // postcondition changes.
 pub use ast::{bare_name, span_of};
 use ast::{is_ident_named, literal_text, truth_value};
-use inspect_model::Span;
+use inspect_model::{Derivations, Function, Span};
 use serde::{Deserialize, Serialize};
 use std::ops::Not;
 
@@ -125,7 +126,7 @@ pub struct Env<'a> {
     /// Empty by default, which is the honest default: an environment nobody
     /// gave the definitions to answers "nothing set it" rather than inventing
     /// a value, the same as before any of this existed.
-    pub derived: &'a BTreeMap<String, Expr>,
+    pub derived: &'a Derivations,
     /// The computed fields being computed right now.
     ///
     /// `is_stranded: active_devices.count = 0` reaches `active_devices`, which
@@ -136,7 +137,7 @@ pub struct Env<'a> {
 }
 
 /// The empty set of definitions, for an environment given none.
-static NOTHING_DERIVED: LazyLock<BTreeMap<String, Expr>> = LazyLock::new(BTreeMap::new);
+static NOTHING_DERIVED: LazyLock<Derivations> = LazyLock::new(Derivations::default);
 
 impl<'a> Env<'a> {
     /// An environment over `world` with nothing bound.
@@ -154,7 +155,7 @@ impl<'a> Env<'a> {
 
     /// The same environment, able to compute what the spec computes.
     #[must_use]
-    pub fn deriving(mut self, derived: &'a BTreeMap<String, Expr>) -> Self {
+    pub fn deriving(mut self, derived: &'a Derivations) -> Self {
         self.derived = derived;
         self
     }
@@ -166,7 +167,16 @@ impl<'a> Env<'a> {
         if self.resolving.contains(&key) {
             return None;
         }
-        self.derived.get(key.as_str()).map(|expr| (expr, key))
+        self.derived.fields.get(key.as_str()).map(|expr| (expr, key))
+    }
+
+    /// The function `name` defined on `instance`, under the same guard.
+    fn function(&self, instance: &Instance, name: &str) -> Option<(&'a Function, String)> {
+        let key = inspect_model::derived_key(&instance.module, &instance.entity, name);
+        if self.resolving.contains(&key) {
+            return None;
+        }
+        self.derived.functions.get(key.as_str()).map(|function| (function, key))
     }
 
     /// The same environment with `name` bound.
@@ -277,7 +287,7 @@ pub fn eval(expr: &Expr, env: &Env<'_>) -> Evaluation {
         // evaluated" is something a reader can act on and "unsupported" is not.
         Expr::Pipe { .. } => unsupported("a `|` alternation", expr, env),
         Expr::Lambda { .. } => unsupported("a lambda", expr, env),
-        Expr::Call { function, args, .. } => answered(expr, function, args, env),
+        Expr::Call { function, args, .. } => calls::answered(expr, function, args, env),
         Expr::JoinLookup { entity, fields, .. } => {
             collections::join_lookup(expr, entity, fields, env)
         }
@@ -291,40 +301,6 @@ pub fn eval(expr: &Expr, env: &Env<'_>) -> Evaluation {
         Expr::Becomes { .. } => unsupported("a `becomes` assertion", expr, env),
         Expr::WhenGuard { .. } => unsupported("a `when` guard", expr, env),
         Expr::Within { .. } => unsupported("a `within` deadline", expr, env),
-    }
-}
-
-/// A call, answered only if somebody said what it comes back as.
-///
-/// The specification names functions it never defines — `may_invite(group,
-/// issuer)`, whose policy is still being decided — and no simulator can work
-/// one out. So a journey may say, with `stipulate may_invite(chat, she) =
-/// true`, and that saying is printed in the ledger above the walk.
-///
-/// Matched on argument *values*: the rule writes `may_invite(group, issuer)`
-/// and the journey writes `may_invite(chat, she)`, which are the same call
-/// about the same two things. An argument nothing settled matches nothing,
-/// because a stipulation about a value nobody knows is not about anything.
-fn answered(whole: &Expr, function: &Expr, args: &[CallArg], env: &Env<'_>) -> Evaluation {
-    let Expr::Ident(called) = function else {
-        return unsupported("a function call", whole, env);
-    };
-    let name = called.name.as_str();
-
-    let mut given = Vec::with_capacity(args.len());
-    let mut unresolved = Vec::new();
-    for argument in args {
-        let CallArg::Positional(value) = argument else {
-            return unsupported("a function call with named arguments", whole, env);
-        };
-        let evaluated = eval(value, env);
-        unresolved.extend(evaluated.unresolved);
-        given.push(evaluated.value);
-    }
-
-    match env.world.answer(name, &given) {
-        Some(answer) => Evaluation { value: answer.clone(), unresolved },
-        None => unsupported("a function call", whole, env).carrying(unresolved),
     }
 }
 
@@ -357,7 +333,10 @@ pub fn field_of(instance: &Instance, field: &str, env: &Env<'_>) -> Evaluation {
     }
     match env.derivation(instance, field) {
         Some((definition, key)) => eval(definition, &env.computing(instance, key)),
-        None => Evaluation::known(instance.field(field)),
+        None => match env.function(instance, field) {
+            Some((function, _)) => calls::read_bare(field, function, env),
+            None => Evaluation::known(instance.field(field)),
+        },
     }
 }
 
@@ -367,26 +346,21 @@ fn ident(ident: &Ident, env: &Env<'_>) -> Evaluation {
     if let Some(bound) = env.bindings.get(name) {
         return Evaluation::known(bound.clone());
     }
-    if env.world.count_of(name) > 0 {
-        return Evaluation::known(collection_of(name, env));
-    }
-    // `for m in Members` names the collection, which is the entity pluralised.
-    // Every invariant a real spec writes is quantified this way, so without
-    // this they all range over nothing and hold vacuously — a checker that
-    // always passes, which is worse than one that admits it cannot check.
-    if let Some(entity) = singular(name)
-        && env.world.count_of(&entity) > 0
-    {
-        return Evaluation::known(collection_of(&entity, env));
+    if let Some(collection) = collection_named(name, env) {
+        return Evaluation::known(collection);
     }
     // A computed field of whatever `this` is, named bare. `is_stranded:
     // active_devices.count = 0` reads `active_devices` with nothing between,
     // and the definition it needs is one level further down the same chain.
     if let Some(Value::Ref(id)) = env.bindings.get("this")
         && let Some(instance) = env.world.instance(id)
-        && let Some((definition, key)) = env.derivation(instance, name)
     {
-        return eval(definition, &env.computing(instance, key));
+        if let Some((definition, key)) = env.derivation(instance, name) {
+            return eval(definition, &env.computing(instance, key));
+        }
+        if let Some((function, _)) = env.function(instance, name) {
+            return calls::read_bare(name, function, env);
+        }
     }
 
     // Capitalised: a type that exists in the spec but has no instances. An
@@ -406,8 +380,30 @@ fn ident(ident: &Ident, env: &Env<'_>) -> Evaluation {
 }
 
 /// `membership/Membership`: a type in another module.
+///
+/// And `membership/Memberships`, its collection, read the way the bare plural
+/// is. Only the bare one was: `for m in membership/Memberships` ranged over
+/// instances of an entity called `Memberships`, of which there are none, so a
+/// surface reached across a module boundary showed nobody anything.
 fn qualified(name: &QualifiedName, env: &Env<'_>) -> Evaluation {
-    Evaluation::known(collection_of(&name.name, env))
+    Evaluation::known(collection_named(&name.name, env).unwrap_or(Value::Set(Vec::new())))
+}
+
+/// The instances a type name means, when the world holds any: `Loan`, or
+/// `Loans`, its collection.
+///
+/// `for m in Members` names the collection, which is the entity pluralised.
+/// Every invariant a real spec writes is quantified this way, so without this
+/// they all range over nothing and hold vacuously — a checker that always
+/// passes, which is worse than one that admits it cannot check. One reading for
+/// a bare name and a qualified one, so the two cannot disagree about a plural.
+fn collection_named(name: &str, env: &Env<'_>) -> Option<Value> {
+    if env.world.count_of(name) > 0 {
+        return Some(collection_of(name, env));
+    }
+    singular(name)
+        .filter(|entity| env.world.count_of(entity) > 0)
+        .map(|entity| collection_of(&entity, env))
 }
 
 /// The entity a plural collection name refers to.
