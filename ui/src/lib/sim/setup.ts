@@ -41,6 +41,8 @@ export interface Setup {
   world: World;
   entities: EntityChoice[];
   triggers: Fireable[];
+  /** Every state the spec declares, for reading a typed trigger argument. */
+  states: string[];
 }
 
 /**
@@ -52,7 +54,10 @@ export interface Setup {
  * rule in a hidden module still fires when its trigger does; what changes is
  * whether this thirty-surface list offers it to you.
  */
-export function offered(triggers: Fireable[], hidden: ReadonlySet<string>): Fireable[] {
+export function offered(
+  triggers: Fireable[],
+  hidden: ReadonlySet<string>,
+): Fireable[] {
   return triggers.filter((trigger) => !hidden.has(trigger.module));
 }
 
@@ -64,7 +69,9 @@ export function offered(triggers: Fireable[], hidden: ReadonlySet<string>): Fire
  * under a heading that says as much — you can fire them, and doing so means
  * starting in the middle of something.
  */
-export function grouped(triggers: Fireable[]): { label: string; triggers: Fireable[] }[] {
+export function grouped(
+  triggers: Fireable[],
+): { label: string; triggers: Fireable[] }[] {
   const groups = new Map<string, Fireable[]>();
 
   for (const trigger of triggers) {

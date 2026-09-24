@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import { grouped, offered, type Fireable } from "./setup";
 
-function fireable(partial: Partial<Fireable> & Pick<Fireable, "trigger">): Fireable {
+function fireable(
+  partial: Partial<Fireable> & Pick<Fireable, "trigger">,
+): Fireable {
   return {
     module: "delivery",
     parameters: [],
@@ -13,9 +15,21 @@ function fireable(partial: Partial<Fireable> & Pick<Fireable, "trigger">): Firea
 }
 
 const triggers: Fireable[] = [
-  fireable({ trigger: "MemberAdoptsHub", surface: "HubVisibility", actor: "membership/Member" }),
-  fireable({ trigger: "MemberRemovesHub", surface: "HubVisibility", actor: "membership/Member" }),
-  fireable({ trigger: "PersonExportsHistory", module: "archive", surface: "ArchiveControls" }),
+  fireable({
+    trigger: "MemberAdoptsHub",
+    surface: "HubVisibility",
+    actor: "membership/Member",
+  }),
+  fireable({
+    trigger: "MemberRemovesHub",
+    surface: "HubVisibility",
+    actor: "membership/Member",
+  }),
+  fireable({
+    trigger: "PersonExportsHistory",
+    module: "archive",
+    surface: "ArchiveControls",
+  }),
   fireable({ trigger: "MessageSent", module: "messaging" }),
 ];
 
@@ -27,25 +41,23 @@ describe("offered", () => {
   it("stops offering a switched-off module's triggers", () => {
     // The checkboxes filtered the canvas and did nothing here, while sitting in
     // the same rail four inches above it.
-    expect(offered(triggers, new Set(["archive"])).map((t) => t.trigger)).toEqual([
-      "MemberAdoptsHub",
-      "MemberRemovesHub",
-      "MessageSent",
-    ]);
+    expect(
+      offered(triggers, new Set(["archive"])).map((t) => t.trigger),
+    ).toEqual(["MemberAdoptsHub", "MemberRemovesHub", "MessageSent"]);
   });
 
   it("offers nothing when every module is off", () => {
-    expect(offered(triggers, new Set(["delivery", "archive", "messaging"]))).toEqual([]);
+    expect(
+      offered(triggers, new Set(["delivery", "archive", "messaging"])),
+    ).toEqual([]);
   });
 
   it("keeps the order it was given", () => {
     // The server put the surfaces first and `grouped` relies on that order, so
     // filtering must not reshuffle what it hands on.
-    expect(offered(triggers, new Set(["messaging"])).map((t) => t.trigger)).toEqual([
-      "MemberAdoptsHub",
-      "MemberRemovesHub",
-      "PersonExportsHistory",
-    ]);
+    expect(
+      offered(triggers, new Set(["messaging"])).map((t) => t.trigger),
+    ).toEqual(["MemberAdoptsHub", "MemberRemovesHub", "PersonExportsHistory"]);
   });
 });
 
@@ -54,7 +66,9 @@ describe("grouped", () => {
     // A boundary without a party is meaningless, and the actor is the half a
     // reader recognises: they know what a member is before they know what
     // `HubVisibility` is.
-    expect(grouped(triggers)[0]?.label).toBe("HubVisibility · membership/Member");
+    expect(grouped(triggers)[0]?.label).toBe(
+      "HubVisibility · membership/Member",
+    );
   });
 
   it("puts every trigger a surface offers under that one heading", () => {
@@ -66,7 +80,9 @@ describe("grouped", () => {
   });
 
   it("names a surface with no actor by itself", () => {
-    expect(grouped(triggers).map((group) => group.label)).toContain("ArchiveControls");
+    expect(grouped(triggers).map((group) => group.label)).toContain(
+      "ArchiveControls",
+    );
   });
 
   it("collects the rest under one honest heading", () => {
@@ -91,3 +107,4 @@ describe("grouped", () => {
     expect(grouped([])).toEqual([]);
   });
 });
+

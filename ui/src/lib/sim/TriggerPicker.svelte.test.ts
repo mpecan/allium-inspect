@@ -6,7 +6,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Fireable } from "./setup";
 import TriggerPicker from "./TriggerPicker.svelte";
 
-function fireable(trigger: string, parameters: string[] = [], surface = "SetOfFiles"): Fireable {
+function fireable(
+  trigger: string,
+  parameters: string[] = [],
+  surface = "SetOfFiles",
+): Fireable {
   return { trigger, module: "reading", parameters, surface, actor: "Reader" };
 }
 
@@ -26,6 +30,38 @@ describe("TriggerPicker", () => {
     vi.restoreAllMocks();
   });
 
+  it("sends a word the spec declares as a state as that state, and any other as text", async () => {
+    // `MemberWithdrawsHold(hold, changed_mind)` against `reason in
+    // {changed_mind, found_elsewhere}`. Sent as the string "changed_mind" it
+    // matched nothing, so the rule was undecided in the browser while the
+    // same act in a journey fired.
+    watchScrolling();
+    const onfire = vi.fn();
+    render(TriggerPicker, {
+      props: {
+        triggers: [fireable("MemberWithdrawsHold", ["reason", "note"])],
+        instances: [],
+        pending: [],
+        states: ["changed_mind", "found_elsewhere"],
+        onfire,
+      },
+    });
+
+    await fireEvent.click(
+      screen.getByRole("button", { name: "MemberWithdrawsHold" }),
+    );
+    const boxes = screen.getAllByRole("combobox");
+    expect(boxes).toHaveLength(2);
+    await fireEvent.input(boxes[0]!, { target: { value: "changed_mind" } });
+    await fireEvent.input(boxes[1]!, { target: { value: "moved" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Fire" }));
+
+    expect(onfire).toHaveBeenCalledWith("MemberWithdrawsHold", "reading", {
+      reason: { kind: "enum", value: "changed_mind" },
+      note: { kind: "str", value: "moved" },
+    });
+  });
+
   it("brings the argument form into view when a trigger is chosen", async () => {
     const scrolled = watchScrolling();
     render(TriggerPicker, {
@@ -39,7 +75,9 @@ describe("TriggerPicker", () => {
 
     expect(scrolled).not.toHaveBeenCalled();
 
-    await fireEvent.click(screen.getByRole("button", { name: "SomebodyPointsAtASpecSet" }));
+    await fireEvent.click(
+      screen.getByRole("button", { name: "SomebodyPointsAtASpecSet" }),
+    );
 
     // The form exists to be filled in, so it has to be the thing scrolled to —
     // scrolling to the button that was just clicked would be a no-op that
@@ -83,7 +121,9 @@ describe("TriggerPicker", () => {
     });
 
     await fireEvent.click(screen.getByRole("button", { name: "ReadTheSet" }));
-    await fireEvent.click(screen.getByRole("button", { name: "SetBecameReadable" }));
+    await fireEvent.click(
+      screen.getByRole("button", { name: "SetBecameReadable" }),
+    );
 
     expect(scrolled).toHaveBeenCalledTimes(2);
   });

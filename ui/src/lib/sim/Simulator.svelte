@@ -112,6 +112,7 @@
       triggers={offered(setup.triggers, hidden)}
       {instances}
       {pending}
+      states={setup.states}
       onfire={(trigger, module, args) => void fire(trigger, module, args)}
     />
 
