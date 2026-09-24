@@ -1,0 +1,167 @@
+-- allium: 3
+-- desk.allium
+--
+-- The fixture third that owns *the desk*: holds a member asks for and somebody
+-- else reviews.
+--
+-- Each construct below is here because a real spec set wrote it and this tool
+-- read it wrongly or not at all: a surface with two contexts, a context that
+-- narrows with `where`, a surface `let`, a collection named across a module
+-- boundary, a derived value that takes an argument, a set of states on the far
+-- side of `in`, and two state rules waiting on the same entity.
+
+use "./lending.allium" as lending
+
+config {
+    review_window: Duration = 1.hour
+    hold_lifetime: Duration = 7.days
+}
+
+enum WithdrawalReason { changed_mind | found_elsewhere | moved_away }
+
+entity Hold {
+    member: lending/Member
+    placed_at: Timestamp
+    expires_at: Timestamp
+    reviewers: Set<lending/Member>
+    announced_at: Timestamp?
+    withdrawn_because: WithdrawalReason?
+
+    status: pending | granted | lapsed | withdrawn
+
+    transitions status {
+        pending -> granted
+        pending -> lapsed
+        pending -> withdrawn
+        terminal: granted, lapsed, withdrawn
+    }
+
+    -- A derived value that takes an argument: a question about the hold *and*
+    -- somebody, which no field can stand for.
+    is_reviewed_by(who): who in reviewers
+
+    -- Volatile, because it reads `now`.
+    is_ready: placed_at + config.review_window <= now and reviewers.count >= 1
+}
+
+-- Two state rules on one entity, and only one of them is about to be true. A
+-- state rule is fired by its entity rather than by a trigger anybody names, so
+-- the pair is what tells "this rule's condition became true" from "some rule
+-- on this entity's condition became true".
+rule HoldIsGranted {
+    when: hold: Hold.is_ready
+
+    requires: hold.status = pending
+    requires: hold.expires_at > now
+
+    ensures: hold.status = granted
+}
+
+-- Made true by the rule above, in the same instant, on the same hold. A
+-- settling that remembered *which entity* had run rather than *which rule*
+-- would take this for the rule above running twice.
+rule HoldIsAnnounced {
+    when: hold: Hold.status = granted
+
+    requires: hold.announced_at = null
+
+    ensures: hold.announced_at = now
+}
+
+-- Named so it sorts *before* `HoldIsGranted`: rules run in id order, and
+-- the one that would wrongly run has to run first for anything to notice.
+rule HoldExpires {
+    when: hold: Hold.expires_at <= now
+
+    requires: hold.status = pending
+
+    ensures: hold.status = lapsed
+}
+
+rule PlaceHold {
+    when: MemberPlacesHold(member)
+
+    ensures: Hold.created(
+        member: member,
+        placed_at: now,
+        expires_at: now + config.hold_lifetime,
+        reviewers: {},
+        announced_at: null,
+        status: pending
+    )
+}
+
+rule ReviewHold {
+    when: MemberReviewsHold(hold, reviewer)
+
+    requires: hold.status in {pending, granted}
+    requires: not hold.is_reviewed_by(reviewer)
+
+    ensures: hold.reviewers = hold.reviewers + reviewer
+}
+
+rule WithdrawHold {
+    when: MemberWithdrawsHold(hold, reason)
+
+    -- Two of the three: a member who moved away is not withdrawing, they are
+    -- leaving, and that is somebody else's rule.
+    requires: reason in {changed_mind, found_elsewhere}
+    requires: hold.status = pending
+
+    ensures:
+        hold.status = withdrawn
+        hold.withdrawn_because = reason
+}
+
+-- Removal, which is what `not exists` means as an outcome: the hold is gone
+-- afterwards, not merely said to be.
+rule DiscardHold {
+    when: MemberDiscardsHold(hold)
+
+    requires: hold.status in {lapsed, withdrawn}
+
+    ensures: not exists hold
+}
+
+------------------------------------------------------------
+-- Surfaces
+------------------------------------------------------------
+
+-- A context that narrows. Only a pending hold has this screen.
+surface PendingHold {
+    facing reader: lending/Reader
+    context hold: Hold where status = pending
+
+    exposes:
+        hold.placed_at
+}
+
+-- Two contexts, each bound on its own: the member from whoever is looking, and
+-- the hold from the journey saying which.
+surface HoldDesk {
+    facing reader: lending/Reader
+    context borrower: lending/Member
+    context hold: Hold
+
+    -- Bound once and read by the clause below it.
+    let others = hold.reviewers
+
+    exposes:
+        borrower.name
+        hold.status
+        for someone in others:
+            someone.name
+        -- A collection named in another module, and filtered.
+        for loan in lending/Loans where member = borrower:
+            loan.status
+}
+
+surface HoldReview {
+    facing reader: lending/Reader
+
+    provides:
+        MemberPlacesHold(reader)
+        MemberReviewsHold(hold, reader)
+        MemberWithdrawsHold(hold, reason)
+        MemberDiscardsHold(hold)
+}
