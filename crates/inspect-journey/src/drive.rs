@@ -118,24 +118,30 @@ impl Walker<'_> {
                     if already_ran(&ran, &rule.rule, &over) {
                         continue;
                     }
-                    // One firing per entity and instance: the event reaches
-                    // every rule waiting on it, and each reads its own `when`.
+                    // One firing per instance: the event reaches every rule
+                    // waiting on its entity, and each reads its own `when`.
                     // Firing it once per rule would run the first rule again
-                    // for every other rule that was true beside it.
-                    match waiting.iter_mut().find(|(event, instance, _)| {
-                        event.trigger == rule.trigger && *instance == over
-                    }) {
-                        Some((.., rules)) => rules.push(rule.rule.clone()),
+                    // for every other rule that was true beside it. The
+                    // instance alone is the key, because its id already says
+                    // which entity it is.
+                    let at = match waiting.iter().position(|(_, instance, _)| *instance == over) {
+                        Some(at) => at,
                         None => {
-                            let mut event = Event::new(&rule.trigger, &rule.module);
-                            // Under the name the `when` clause gave it. A state
-                            // rule's clauses are written about `copy`, and
-                            // firing without that binding evaluates every one
-                            // of them against nothing.
-                            event.arguments.insert(rule.binding.clone(), over.clone());
-                            waiting.push((event, over, vec![rule.rule.clone()]));
+                            waiting.push((
+                                Event::new(&rule.trigger, &rule.module),
+                                over.clone(),
+                                Vec::new(),
+                            ));
+                            waiting.len() - 1
                         }
-                    }
+                    };
+                    let (event, _, rules) = &mut waiting[at];
+                    // Under the name each `when` clause gave it. A state rule's
+                    // clauses are written about `copy`, and firing without that
+                    // binding evaluates every one of them against nothing — and
+                    // two rules on one entity need not use the same name.
+                    event.arguments.insert(rule.binding.clone(), over.clone());
+                    rules.push(rule.rule.clone());
                 }
             }
             if waiting.is_empty() {

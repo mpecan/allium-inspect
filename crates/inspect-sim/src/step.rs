@@ -276,6 +276,19 @@ fn run_rule(
         bindings.insert(name.clone(), evaluated.value);
     }
 
+    // A state event is about one instance, whatever each rule calls it.
+    // `HoldIsGranted` says `hold` and `HoldIsAnnounced` says `news`, and the
+    // firing that reaches both carries one name — so a rule that finds its own
+    // missing takes the one instance of its entity the event does carry, under
+    // its own name. Left unbound, the second rule read its condition about
+    // nothing and came back undecided on every firing of the first.
+    if let Some((binding, _)) = state_condition(detail, ast)
+        && !bindings.contains_key(binding)
+        && let Some(id) = carried(&event.arguments, world, &detail.trigger)
+    {
+        bindings.insert(binding.to_owned(), Value::Ref(id));
+    }
+
     let mut requires = Vec::new();
     let mut unresolved = Vec::new();
 
@@ -481,6 +494,26 @@ fn state_condition<'a>(
         Some(Expr::Binding { name, value, .. }) => Some((name.name.as_str(), value.as_ref())),
         _ => None,
     }
+}
+
+/// The one instance of `entity` among an event's arguments, when there is
+/// exactly one.
+///
+/// Two distinct ones is not a question this can answer, so it answers none,
+/// and the rule's condition says what it could not read.
+fn carried(
+    arguments: &BTreeMap<String, Value>,
+    world: &World,
+    entity: &str,
+) -> Option<crate::value::EntityId> {
+    let mut found = arguments.values().filter_map(|value| match value {
+        Value::Ref(id) if world.instance(id).is_some_and(|instance| instance.entity == entity) => {
+            Some(id)
+        }
+        _ => None,
+    });
+    let first = found.next()?;
+    found.all(|other| other == first).then(|| first.clone())
 }
 
 /// The scope a state rule's condition is read in, about one instance.

@@ -59,13 +59,15 @@ rule HoldIsGranted {
 
 -- Made true by the rule above, in the same instant, on the same hold. A
 -- settling that remembered *which entity* had run rather than *which rule*
--- would take this for the rule above running twice.
+-- would take this for the rule above running twice. And it names the hold
+-- differently, which is a spec's to choose: one firing reaches both rules, and
+-- has to carry the hold under both names.
 rule HoldIsAnnounced {
-    when: hold: Hold.status = granted
+    when: news: Hold.status = granted
 
-    requires: hold.announced_at = null
+    requires: news.announced_at = null
 
-    ensures: hold.announced_at = now
+    ensures: news.announced_at = now
 }
 
 -- Named so it sorts *before* `HoldIsGranted`: rules run in id order, and

@@ -99,6 +99,36 @@ fn a_second_state_rule_on_the_same_instance_is_not_taken_for_the_first() {
     ));
     let (verdict, detail) = line(&result, "then HoldIsAnnounced fires");
     assert_eq!(verdict, Verdict::Specified, "{detail:?}");
+    // And the firing that granted it reached `HoldIsAnnounced` too, which
+    // calls the hold `news`. Read about nothing, it came back undecided, and
+    // the minute passing was reported as something that could not be decided.
+    let (verdict, detail) = line(&result, "after 1.minute");
+    assert_eq!(verdict, Verdict::Specified, "{detail:?}");
+}
+
+/// Two holds ready in the same minute are two firings. One firing per
+/// instance is the rule, and taking two instances for one would grant the
+/// first and leave the second where it was.
+#[test]
+fn two_instances_ready_at_once_each_get_their_own_firing() {
+    let result = walked(
+        "journey J {
+    cast:
+        ada: lending/Member
+        bea: lending/Member
+    1. both place a hold
+        ada does MemberPlacesHold(ada) on HoldReview creating first: Hold
+        bea does MemberPlacesHold(bea) on HoldReview creating second: Hold
+    2. both are ready
+        stipulate first.is_ready = true
+        stipulate second.is_ready = true
+    3. a minute later
+        after 1.minute
+        then first.status = granted
+        then second.status = granted
+}",
+    );
+    assert!(unheld(&result).is_empty(), "{:#?}", unheld(&result));
 }
 
 /// A negative claim about a rule that *did* run says that it ran.
@@ -331,6 +361,41 @@ fn a_word_a_rule_only_stores_is_not_reported() {
         bea does MemberReviewsHold(hold, bea) on HoldReview
     3. and somebody nobody cast places another
         ada does MemberPlacesHold(somebody) on HoldReview",
+    );
+    let journeys = parse(&source).expect("parses");
+    let (graph, program, _) = common::library(DESK);
+    let notes = check(&journeys[0], &journeys, &graph, &program);
+    assert!(
+        !notes.iter().any(|note| note.message.contains("no state the spec declares")),
+        "{notes:#?}"
+    );
+}
+
+/// Somebody the journey cast, passed where a rule compares states, is who
+/// they are — a question for the walk, not a word the checker reads as a state.
+#[test]
+fn a_cast_name_where_a_rule_compares_states_is_not_reported() {
+    let source = journey(
+        "    2. she withdraws it, oddly
+        ada does MemberWithdrawsHold(hold, bea) on HoldReview",
+    );
+    let journeys = parse(&source).expect("parses");
+    let (graph, program, _) = common::library(DESK);
+    let notes = check(&journeys[0], &journeys, &graph, &program);
+    assert!(
+        !notes.iter().any(|note| note.message.contains("no state the spec declares")),
+        "{notes:#?}"
+    );
+}
+
+/// Only the rules on *this* act's trigger count. `WithdrawHold` compares its
+/// second parameter against states, and `ReviewHold`'s second is a reviewer —
+/// so an undeclared word there is somebody nobody cast, not a misspelt state.
+#[test]
+fn a_rule_on_another_trigger_does_not_make_a_word_a_state() {
+    let source = journey(
+        "    2. somebody nobody cast reviews it
+        ada does MemberReviewsHold(hold, stranger) on HoldReview",
     );
     let journeys = parse(&source).expect("parses");
     let (graph, program, _) = common::library(DESK);
