@@ -267,14 +267,14 @@ install: ui-guard ui-build
 
 # Point it at a spec directory and it opens a browser.
 run *ARGS:
-    cargo run -p inspect -- {{ARGS}}
+    cargo run -p allium-inspect -- {{ARGS}}
 
 # The whole SpecGraph as JSON, no browser. The scriptable path, and what the
 # end-to-end test asserts against.
 
 # Print the whole SpecGraph as JSON and exit. No browser.
 graph *ARGS:
-    @cargo run -q -p inspect -- --print-graph {{ARGS}}
+    @cargo run -q -p allium-inspect -- --print-graph {{ARGS}}
 
 # === fixtures ===
 #

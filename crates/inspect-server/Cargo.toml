@@ -1,11 +1,22 @@
 [package]
-name = "inspect-server"
-description = "Embedded HTTP server exposing the SpecGraph and simulator to the browser UI"
+name = "allium-inspect-server"
+description = "Embedded HTTP server exposing the SpecGraph and simulator to the browser UI. Part of allium-inspect, published so the `allium-inspect` and `allium-journey` binaries can be installed from crates.io; not a stable API."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+# The built interface, which `rust-embed` bakes into the binary at compile time.
+# Listed because it is gitignored — built, not written — and a package made from
+# the gitignore alone arrives on crates.io with no interface in it, so
+# `cargo install allium-inspect` would build a server serving nothing. The
+# release workflow builds it before publishing.
+include = ["src/**", "assets/**"]
+
+# The Rust name the rest of the workspace imports it by. The package is
+# prefixed because the unprefixed name is too general to claim on crates.io.
+[lib]
+name = "inspect_server"
 
 [dependencies]
 inspect-model = { workspace = true }

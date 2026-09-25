@@ -20,10 +20,13 @@ use std::io::Write;
 
 use crate::args::Topic;
 
-const ADOPTING: &str = include_str!("../../../docs/journeys/adopting.md");
-const REFERENCE: &str = include_str!("../../../docs/journeys/reference.md");
-const EVIDENCE: &str = include_str!("../../../docs/journeys/evidence.md");
-const DESIGN: &str = include_str!("../../../docs/journeys/README.md");
+// `apps/journey/docs` is a symlink to `docs/journeys`, so there is still one copy
+// of each page. It is inside the crate because a published crate can only embed
+// what it carries, and `cargo package` follows the link and carries the pages.
+const ADOPTING: &str = include_str!("../docs/adopting.md");
+const REFERENCE: &str = include_str!("../docs/reference.md");
+const EVIDENCE: &str = include_str!("../docs/evidence.md");
+const DESIGN: &str = include_str!("../docs/README.md");
 
 /// What an agent needs before it knows which topic it wants.
 ///
