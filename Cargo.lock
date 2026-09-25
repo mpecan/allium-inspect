@@ -19,7 +19,7 @@ dependencies = [
 
 [[package]]
 name = "allium-journey"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "inspect-journey",
@@ -581,7 +581,7 @@ dependencies = [
 
 [[package]]
 name = "inspect"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "inspect-journey",
@@ -599,7 +599,7 @@ dependencies = [
 
 [[package]]
 name = "inspect-journey"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "allium-parser",
  "inspect-model",
@@ -611,7 +611,7 @@ dependencies = [
 
 [[package]]
 name = "inspect-model"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "allium-parser",
  "insta",
@@ -623,7 +623,7 @@ dependencies = [
 
 [[package]]
 name = "inspect-server"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "http",
@@ -641,7 +641,7 @@ dependencies = [
 
 [[package]]
 name = "inspect-sim"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "allium-parser",
  "inspect-model",
