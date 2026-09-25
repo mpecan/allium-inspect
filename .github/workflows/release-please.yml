@@ -1,0 +1,39 @@
+# A release pull request, kept up to date from the Conventional Commits on main.
+#
+# The `simple` strategy rather than `rust`, on purpose. The workspace root is a
+# virtual manifest and every member inherits `version.workspace = true`; the
+# `rust` strategy writes `package.version` into each member's Cargo.toml, which
+# would replace the inheritance with a literal, and it refuses a root with no
+# `[package]` at all. So the one version there is — `[workspace.package]` — and
+# the six workspace entries in Cargo.lock are named in `extra-files` instead,
+# and the members follow the workspace the way they already do.
+#
+# A GitHub App token rather than GITHUB_TOKEN: a pull request opened with the
+# latter does not trigger workflows, so the release PR would never run `check`.
+
+name: release-please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.REPOSITORY_BUTLER_APP_ID }}
+          private-key: ${{ secrets.REPOSITORY_BUTLER_PEM }}
+
+      - uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          config-file: .release-please-config.json
+          manifest-file: .release-please-manifest.json
