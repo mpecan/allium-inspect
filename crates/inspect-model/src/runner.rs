@@ -398,17 +398,23 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    // A stub rather than `echo` and `true`. On macOS `echo --version` prints
+    // its argument and `true --version` prints nothing, which is what these
+    // assumed; GNU coreutils answers `--version` with its own banner, so on
+    // the Linux CI runner both tests failed — on every commit to main.
     #[test]
     fn version_reports_what_the_binary_printed() {
-        let runner = ProcessRunner::new("echo");
-        let version = runner.version().expect("echo succeeds");
-        assert_eq!(version, "--version");
+        let (runner, dir) = stub_cli("version", "allium 3.5.3\n", 0);
+        let version = runner.version().expect("the stub succeeds");
+        assert_eq!(version, "allium 3.5.3");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
     fn version_that_prints_nothing_is_a_failure_not_an_empty_string() {
-        let runner = ProcessRunner::new("true");
+        let (runner, dir) = stub_cli("silent-version", "", 0);
         assert!(matches!(runner.version().unwrap_err(), RunError::Failed { .. }));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
