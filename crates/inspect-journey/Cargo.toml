@@ -1,11 +1,16 @@
 [package]
-name = "inspect-journey"
+name = "allium-inspect-journey"
+description = "Journeys written against an Allium spec: parsed, checked and walked. Part of allium-inspect, published so the `allium-inspect` and `allium-journey` binaries can be installed from crates.io; not a stable API."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Journeys written against an Allium spec: parsed, checked and walked"
+
+# The Rust name the rest of the workspace imports it by. The package is
+# prefixed because the unprefixed name is too general to claim on crates.io.
+[lib]
+name = "inspect_journey"
 
 [dependencies]
 # allium-parser: a surface's `exposes` clause is walked to answer whether it

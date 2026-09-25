@@ -1,6 +1,9 @@
 [package]
-name = "inspect"
-description = "allium-inspect: explore an allium specification in a browser"
+name = "allium-inspect"
+description = "Explore an Allium specification in a browser: an explorable graph, a rule simulator and a journey runner"
+readme = "../../README.md"
+keywords = ["allium", "specification", "simulator", "visualization"]
+categories = ["command-line-utilities", "development-tools"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,6 +13,14 @@ rust-version.workspace = true
 [[bin]]
 name = "allium-inspect"
 path = "src/main.rs"
+
+# `cargo binstall` fetches the prebuilt archive the release workflow attaches to
+# the GitHub release instead of compiling. One archive per target holds both
+# binaries, so this and the other app crate point at the same file.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/allium-inspect-v{ version }/allium-inspect-v{ version }-{ target }.tar.gz"
+pkg-fmt = "tgz"
+bin-dir = "{ bin }{ binary-ext }"
 
 [dependencies]
 inspect-journey = { workspace = true }

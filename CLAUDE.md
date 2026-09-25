@@ -77,7 +77,7 @@ Any test touching spans must build them from byte offsets
 ### 5. Allium is a library where it can be, and a process where it must be
 
 `parse` and `analyse` are `allium_parser` calls — allium's own crate, MIT,
-pinned in `Cargo.toml` to the tag the recordings were made from. `model` and
+pinned exactly in `Cargo.toml` (`=3.5.3`) to the version the recordings were made from. `model` and
 `plan` are still process launches, and not by choice: allium builds those in
 `crates/allium`, which declares only a `[[bin]]` target, so they cannot be
 imported at any price.
