@@ -44,6 +44,8 @@ use crate::{
 pub enum Effect {
     /// An instance came into existence.
     Created { id: EntityId, entity: String },
+    /// An instance stopped existing: `ensures: not exists presence`.
+    Removed { id: EntityId, entity: String },
     /// A field was set.
     Assigned { id: EntityId, field: String, from: Value, to: Value },
     /// A trigger was emitted, for another rule to consume.
@@ -62,9 +64,9 @@ pub enum Effect {
     Refused { id: EntityId, field: String, from: String, to: String, reason: String },
     /// Something the clause asserts that the simulator did not act on.
     ///
-    /// Removal in Allium is an assertion about the end state rather than an
-    /// instruction, and a conditional whose condition is undecided is a branch
-    /// the simulator cannot take or skip. Both are shown rather than guessed.
+    /// A conditional whose condition is undecided is a branch the simulator
+    /// cannot take or skip, and `ensures: exists x` asserts rather than does.
+    /// Both are shown rather than guessed.
     Noted { description: String },
 }
 
@@ -108,7 +110,7 @@ pub struct Against<'a> {
     pub source: &'a str,
     /// What the spec computes, so a postcondition reading a derived value gets
     /// the same answer a precondition would.
-    pub derived: &'a BTreeMap<String, Expr>,
+    pub derived: &'a inspect_model::Derivations,
 }
 
 pub struct Application<'a> {
@@ -151,13 +153,45 @@ impl<'a> Application<'a> {
             // it this way — it is the only way to write it — so without this a
             // `CreateGroup` fires, reports success, and leaves an empty world.
             Expr::LetExpr { name, value, .. } => self.binding(&name.name, value),
-            Expr::NotExists { .. } | Expr::Exists { .. } => Applied::effect(Effect::Noted {
-                description: self
-                    .describe(clause)
-                    .unwrap_or_else(|| "an assertion about what exists".to_owned()),
-            }),
+            Expr::NotExists { operand, .. } => self.removal(clause, operand),
+            Expr::Exists { .. } => self.asserted(clause),
             _ => self.unmodelled(clause, "this postcondition is not a form the simulator applies"),
         }
+    }
+
+    /// `ensures: not exists presence` — afterwards, it is gone.
+    ///
+    /// What the language says `not exists` means as an outcome: the entity is
+    /// removed. Only noting it left the instance standing after a rule that
+    /// said it was gone, so `then presence does not exist` was refused over a
+    /// removal that went through.
+    ///
+    /// One instance is removed, and `null` — a lookup that matched nothing —
+    /// already holds. A collection is noted, as before: `not exists Copy`
+    /// names a type where an instance was meant, and removing every copy in
+    /// the world on the strength of it would be a guess with side effects.
+    fn removal(&mut self, whole: &Expr, operand: &Expr) -> Applied {
+        let found = self.evaluate(operand);
+        match found.value {
+            Value::Ref(id) => match self.world.remove(&id) {
+                Some(instance) => Applied::effect(Effect::Removed { id, entity: instance.entity }),
+                // Already gone is the end state the clause asks for.
+                None => Applied::default(),
+            },
+            Value::Null => Applied::default(),
+            Value::Unknown => self.skipped(whole, found.unresolved),
+            _ => self.asserted(whole),
+        }
+    }
+
+    /// A clause about what exists that the simulator notes and does not act
+    /// on, quoted as the author wrote it.
+    fn asserted(&self, clause: &Expr) -> Applied {
+        Applied::effect(Effect::Noted {
+            description: self
+                .describe(clause)
+                .unwrap_or_else(|| "an assertion about what exists".to_owned()),
+        })
     }
 
     /// The bindings after everything applied, including anything a creation
@@ -479,28 +513,8 @@ impl<'a> Application<'a> {
             .iter()
             .find(|node| node.kind == NodeKind::Entity && node.name == entity)?;
         let declared = node.detail.as_entity()?.field(field)?;
-        let known = declared.enum_values.iter().any(|state| state == name)
-            || self
-                .enumeration(&declared.type_expr)
-                .is_some_and(|values| values.iter().any(|state| state == name));
+        let known = self.against.spec.states_of(declared).iter().any(|state| state == name);
         known.then(|| Value::Enum(name.to_owned()))
-    }
-
-    /// The values of the enumeration a field is typed by, when it is one.
-    ///
-    /// The qualifier is dropped: `catalogue/Medium` and `Medium` are one
-    /// declaration written from two distances, and the graph files it under
-    /// its bare name in the module that declares it.
-    fn enumeration(&self, type_expr: &str) -> Option<&'a [String]> {
-        let named = type_expr.trim().trim_end_matches('?');
-        let named = named.rsplit('/').next()?;
-        self.against
-            .spec
-            .nodes
-            .iter()
-            .find(|node| node.kind == NodeKind::Enum && node.name == named)
-            .and_then(|node| node.detail.as_enum())
-            .map(|detail| detail.values.as_slice())
     }
 
     /// The transition graph governing `field`, if the spec declares one.

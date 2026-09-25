@@ -374,7 +374,20 @@ pub(super) fn membership(
     negated: bool,
 ) -> Evaluation {
     let needle = eval(element, env);
-    let haystack = eval(collection, env);
+    let haystack = match collection {
+        // `message.status in {visible, amended}` — beside a state, a bare name
+        // in a set written out is a state too. It is the judgement `compare`
+        // makes for `status = visible`, one element at a time, and made for
+        // the same reason: the other side says which was meant. Without it
+        // the set asked for the value of a binding called `visible`, and every
+        // rule guarded this way was undecided.
+        Expr::SetLiteral { elements, .. } | Expr::ListLiteral { elements, .. }
+            if matches!(needle.value, Value::Enum(_)) =>
+        {
+            states_beside(elements, env)
+        }
+        _ => eval(collection, env),
+    };
     let mut unresolved = needle.unresolved;
     unresolved.extend(haystack.unresolved);
 
@@ -399,4 +412,24 @@ pub(super) fn membership(
     };
     let truth = if negated { inside.not() } else { inside };
     Evaluation { value: truth_value(truth), unresolved }
+}
+
+/// A literal set whose unbound bare names are read as the states they spell.
+///
+/// Only the names nothing bound: `{pending, current}` where `current` is a
+/// binding is that binding's value, the same as anywhere else.
+fn states_beside(elements: &[Expr], env: &Env<'_>) -> Evaluation {
+    let mut items = Vec::with_capacity(elements.len());
+    let mut unresolved = Vec::new();
+    for element in elements {
+        let evaluated = eval(element, env);
+        match (evaluated.value, bare_name(element)) {
+            (Value::Unknown, Some(state)) => items.push(Value::Enum(state.to_owned())),
+            (value, _) => {
+                unresolved.extend(evaluated.unresolved);
+                items.push(value);
+            }
+        }
+    }
+    Evaluation { value: Value::Set(items), unresolved }
 }

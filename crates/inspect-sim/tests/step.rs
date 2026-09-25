@@ -742,3 +742,105 @@ fn a_rule_the_parser_did_read_is_judged_on_its_preconditions() {
     );
     assert_eq!(only_rule(&graph, &program), Disposition::Refused);
 }
+
+// --- a state rule reads its own condition ----------------------------------
+
+/// A state rule's trigger is its entity, so firing `Copy` reaches every rule
+/// waiting on a copy. Each has to read its own `when`, first, about the copy
+/// the event carries — or a rule whose condition is false runs because some
+/// other rule's became true.
+fn fire_copy(status: &str, bound: bool) -> inspect_sim::RuleOutcome {
+    let (graph, program, sources) = library_spec();
+    let (mut world, copy, _) = library_world();
+    world.set_field(&copy, "status", Value::Enum(status.to_owned()));
+    let mut event = Event::new("Copy", "catalogue");
+    if bound {
+        event = event.with("copy", Value::Ref(copy));
+    }
+    outcome_for("ReportLostCopy", &step(&graph, &program, &sources, &world, &event))
+}
+
+#[test]
+fn a_state_rule_whose_condition_holds_for_the_instance_fires() {
+    let outcome = fire_copy("lost", true);
+    assert_eq!(outcome.disposition, Disposition::Fired, "{outcome:?}");
+    assert_eq!(outcome.requires[0].text, "copy: Copy.status = lost");
+    assert_eq!(outcome.requires[0].truth, Truth::True);
+}
+
+#[test]
+fn a_state_rule_whose_condition_is_false_for_the_instance_is_refused() {
+    let outcome = fire_copy("available", true);
+    assert_eq!(outcome.disposition, Disposition::Refused, "{outcome:?}");
+    assert_eq!(outcome.requires[0].truth, Truth::False);
+    assert!(outcome.effects.is_empty(), "nothing was emitted: {:?}", outcome.effects);
+}
+
+#[test]
+fn a_state_rule_fired_about_nothing_is_undecided_and_says_so() {
+    let outcome = fire_copy("lost", false);
+    assert_eq!(outcome.disposition, Disposition::Undecided, "{outcome:?}");
+    assert!(
+        outcome.unresolved.iter().any(|note| note.reason.contains("nothing is bound to `copy`")),
+        "{:?}",
+        outcome.unresolved
+    );
+}
+
+/// Only an *optional* parameter nobody passed is `null`. A required one left
+/// out is unbound, and says so, rather than quietly becoming nothing.
+#[test]
+fn a_required_argument_left_out_is_unbound_rather_than_null() {
+    let (graph, program, sources) = library_spec();
+    let (world, _, member) = library_world();
+    let event = Event::new("MemberBorrows", "lending").with("member", Value::Ref(member));
+    let outcome = outcome_for("BorrowCopy", &step(&graph, &program, &sources, &world, &event));
+    assert_eq!(outcome.disposition, Disposition::Undecided, "{outcome:?}");
+    assert!(
+        outcome.unresolved.iter().any(|note| note.reason == "nothing is bound to `copy`"),
+        "{:?}",
+        outcome.unresolved
+    );
+}
+
+/// A firing that names the copy differently still reaches `ReportLostCopy`,
+/// whose `when` calls it `copy`: the event is about one copy, whatever each
+/// rule calls it.
+#[test]
+fn a_state_rule_finds_its_instance_under_whatever_name_the_event_carries_it() {
+    let (graph, program, sources) = library_spec();
+    let (mut world, copy, _) = library_world();
+    world.set_field(&copy, "status", Value::Enum("lost".to_owned()));
+    let event = Event::new("Copy", "catalogue").with("item", Value::Ref(copy));
+    let outcome = outcome_for("ReportLostCopy", &step(&graph, &program, &sources, &world, &event));
+    assert_eq!(outcome.disposition, Disposition::Fired, "{outcome:?}");
+}
+
+/// Two different copies is two answers, so neither is taken.
+#[test]
+fn a_state_event_carrying_two_instances_names_neither() {
+    let (graph, program, sources) = library_spec();
+    let (mut world, copy, _) = library_world();
+    world.set_field(&copy, "status", Value::Enum("lost".to_owned()));
+    let other = world.create("Copy", "catalogue");
+    world.set_field(&other, "status", Value::Enum("lost".to_owned()));
+    let event = Event::new("Copy", "catalogue")
+        .with("item", Value::Ref(copy))
+        .with("another", Value::Ref(other));
+    let outcome = outcome_for("ReportLostCopy", &step(&graph, &program, &sources, &world, &event));
+    assert_eq!(outcome.disposition, Disposition::Undecided, "{outcome:?}");
+}
+
+/// Only an instance of the rule's own entity counts. A firing about a copy that
+/// also carries the member who lost it is still about one copy.
+#[test]
+fn a_state_event_carrying_other_entities_still_names_its_one_instance() {
+    let (graph, program, sources) = library_spec();
+    let (mut world, copy, member) = library_world();
+    world.set_field(&copy, "status", Value::Enum("lost".to_owned()));
+    let event = Event::new("Copy", "catalogue")
+        .with("item", Value::Ref(copy))
+        .with("who", Value::Ref(member));
+    let outcome = outcome_for("ReportLostCopy", &step(&graph, &program, &sources, &world, &event));
+    assert_eq!(outcome.disposition, Disposition::Fired, "{outcome:?}");
+}

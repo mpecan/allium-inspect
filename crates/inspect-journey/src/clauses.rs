@@ -128,11 +128,17 @@ fn sees(actor: &str, rest: &str, negated: bool, line: usize) -> Result<Clause, P
     if context.is_some_and(str::is_empty) {
         return fail(line, "`in` says which one they are looking at, and this one names nothing");
     }
+    // `in ada, hold` — one name per context the surface declares.
+    let contexts: Vec<String> = context
+        .map_or_else(Vec::new, |named| named.split(',').map(|it| it.trim().to_owned()).collect());
+    if contexts.iter().any(String::is_empty) {
+        return fail(line, "`in` names what they are looking at, and one of these names nothing");
+    }
     Ok(Clause::Sees {
         actor: actor.to_owned(),
         subject: subject(seen.trim(), line)?,
         surface: surface.to_owned(),
-        context: context.map(ToOwned::to_owned),
+        contexts,
         negated,
         line,
     })

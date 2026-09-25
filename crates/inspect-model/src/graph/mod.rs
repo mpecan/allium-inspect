@@ -418,6 +418,50 @@ impl SpecGraph {
         self.nodes.iter().filter(move |node| node.kind == kind)
     }
 
+    /// The states `field` may take: its own, or those of the enumeration it
+    /// names.
+    ///
+    /// Written in one of two places and both count. `status: open | returned`
+    /// carries its own; `withdrawn_because: WithdrawalReason?` carries none and
+    /// names an enumeration that does. The qualifier is dropped: `catalogue/
+    /// Medium` and `Medium` are one declaration written from two distances.
+    ///
+    /// One home for the rule, because the simulator's `apply`, the browser's
+    /// editor and the journey checker all ask it — and three copies of how to
+    /// strip a qualifier are three answers waiting to disagree.
+    #[must_use]
+    pub fn states_of<'a>(&'a self, field: &'a detail::EntityField) -> &'a [String] {
+        if !field.enum_values.is_empty() {
+            return &field.enum_values;
+        }
+        let named = field.type_expr.trim().trim_end_matches('?');
+        let named = named.rsplit('/').next().unwrap_or(named);
+        self.nodes_of(NodeKind::Enum)
+            .find(|node| node.name == named)
+            .and_then(|node| node.detail.as_enum())
+            .map_or(&[], |detail| detail.values.as_slice())
+    }
+
+    /// Every state any enumeration or inline status in the spec declares, once
+    /// each and in order.
+    ///
+    /// A value type's inline states too: `value AttestationMethod { kind:
+    /// in_person | … }` declares `in_person` like any other.
+    #[must_use]
+    pub fn declared_states(&self) -> std::collections::BTreeSet<&str> {
+        let named = self
+            .nodes_of(NodeKind::Enum)
+            .filter_map(|node| node.detail.as_enum())
+            .flat_map(|detail| detail.values.iter());
+        let inline = self
+            .nodes
+            .iter()
+            .filter_map(|node| node.detail.as_entity())
+            .flat_map(|detail| detail.fields.iter())
+            .flat_map(|field| field.enum_values.iter());
+        named.chain(inline).map(String::as_str).collect()
+    }
+
     /// Every edge leaving `id`.
     pub fn edges_from<'a>(&'a self, id: &'a NodeId) -> impl Iterator<Item = &'a Edge> {
         self.edges.iter().filter(move |edge| &edge.from == id)
@@ -473,6 +517,52 @@ impl SpecGraph {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A graph with a named enumeration, an entity whose fields use one inline
+    /// status and one named, and a value type with an inline status of its own.
+    fn states_graph() -> SpecGraph {
+        let mut graph = SpecGraph::new("test");
+        graph.nodes.push(
+            Node::new("desk", NodeKind::Enum, "Reason")
+                .with(NodeDetail::Enum(EnumDetail { values: vec!["moved".to_owned()] })),
+        );
+        let mut status = EntityField::new("status", "pending | granted");
+        status.enum_values = vec!["pending".to_owned(), "granted".to_owned()];
+        let entity = |fields| {
+            NodeDetail::Entity(EntityDetail {
+                kind: EntityKind::Internal,
+                fields,
+                transitions: Vec::new(),
+                parent: None,
+            })
+        };
+        graph.nodes.push(Node::new("desk", NodeKind::Entity, "Hold").with(entity(vec![
+            status,
+            EntityField::new("because", "desk/Reason?"),
+            EntityField::new("member", "Member"),
+        ])));
+        let mut kind = EntityField::new("kind", "in_person | video");
+        kind.enum_values = vec!["in_person".to_owned(), "video".to_owned()];
+        graph.nodes.push(Node::new("desk", NodeKind::Value, "Method").with(entity(vec![kind])));
+        graph
+    }
+
+    #[test]
+    fn a_field_s_states_are_its_own_or_those_of_the_enumeration_it_names() {
+        let graph = states_graph();
+        let hold = graph.nodes[1].detail.as_entity().expect("an entity");
+        let states = |name: &str| graph.states_of(hold.field(name).expect("the field")).to_vec();
+        assert_eq!(states("status"), ["pending", "granted"]);
+        assert_eq!(states("because"), ["moved"], "qualified and optional, and still found");
+        assert!(states("member").is_empty());
+    }
+
+    #[test]
+    fn declared_states_are_every_enumeration_and_every_inline_status_once() {
+        let graph = states_graph();
+        let declared: Vec<&str> = graph.declared_states().into_iter().collect();
+        assert_eq!(declared, ["granted", "in_person", "moved", "pending", "video"]);
+    }
 
     #[test]
     fn prose_is_empty_only_when_both_halves_are() {

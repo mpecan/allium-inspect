@@ -51,6 +51,12 @@ pub struct Setup {
     pub entities: Vec<EntityChoice>,
     /// Triggers the user can fire.
     pub triggers: Vec<Fireable>,
+    /// Every state the spec declares, for reading a word typed as a trigger
+    /// argument: a parameter carries no type, so the only thing that says
+    /// `changed_mind` is a state is that the spec declares one. The same set
+    /// the journey checker reads, so the browser and a journey cannot disagree
+    /// about which words are states.
+    pub states: Vec<String>,
 }
 
 /// An entity the world editor can make instances of.
@@ -93,7 +99,15 @@ pub async fn setup(State(state): State<AppState>) -> Json<Setup> {
     let inspection = state.get();
     let graph = &inspection.graph;
 
-    let entities = graph
+    let entities = entities(graph);
+
+    let states = graph.declared_states().into_iter().map(ToOwned::to_owned).collect();
+    Json(Setup { world: seed(graph), entities, triggers: fireable(graph), states })
+}
+
+/// Every entity, with the fields the editor offers and the states each takes.
+fn entities(graph: &inspect_model::SpecGraph) -> Vec<EntityChoice> {
+    graph
         .nodes_of(NodeKind::Entity)
         .filter_map(|node| {
             let detail = node.detail.as_entity()?;
@@ -106,15 +120,13 @@ pub async fn setup(State(state): State<AppState>) -> Json<Setup> {
                     .map(|field| FieldChoice {
                         name: field.name.clone(),
                         type_expr: field.type_expr.clone(),
-                        states: field.enum_values.clone(),
+                        states: graph.states_of(field).to_vec(),
                         derived: field.derived,
                     })
                     .collect(),
             })
         })
-        .collect();
-
-    Json(Setup { world: seed(graph), entities, triggers: fireable(graph) })
+        .collect()
 }
 
 /// The names a rule binds this trigger's arguments under.
@@ -263,6 +275,36 @@ mod tests {
 
         graph.normalise();
         graph
+    }
+
+    /// A field typed by an enumeration declared on its own offers that
+    /// enumeration's states, and an inline one keeps its own.
+    #[test]
+    fn a_field_typed_by_a_named_enum_offers_its_states() {
+        let mut graph = spec();
+        graph.nodes.push(Node::new("lending", NodeKind::Enum, "Reason").with(NodeDetail::Enum(
+            inspect_model::graph::EnumDetail {
+                values: vec!["changed_mind".to_owned(), "moved_away".to_owned()],
+            },
+        )));
+        let Some(NodeDetail::Entity(loan)) =
+            graph.nodes.iter_mut().find(|node| node.name == "Loan").map(|node| &mut node.detail)
+        else {
+            panic!("the fixture has a loan");
+        };
+        loan.fields.push(EntityField::new("because", "lending/Reason?"));
+
+        let offered = entities(&graph);
+        let fields = &offered.iter().find(|entity| entity.entity == "Loan").expect("loan").fields;
+        let states = |name: &str| {
+            fields.iter().find(|field| field.name == name).map(|field| field.states.clone())
+        };
+        assert_eq!(
+            states("because"),
+            Some(vec!["changed_mind".to_owned(), "moved_away".to_owned()])
+        );
+        assert_eq!(states("status"), Some(vec!["open".to_owned(), "returned".to_owned()]));
+        assert_eq!(states("member"), Some(Vec::new()));
     }
 
     #[test]

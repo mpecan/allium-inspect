@@ -7,46 +7,16 @@
 
 #![allow(clippy::panic, clippy::expect_used, clippy::unwrap_used)]
 
-use std::path::{Path, PathBuf};
+mod common;
 
+use common::LENDING;
 use inspect_journey::{Verdict, check, parse};
-use inspect_model::{Command, Ingestion, MemoryReader, SpecGraph, ingest, runner::MapRunner};
-
-fn fixtures() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../inspect-model/tests/fixtures")
-}
-
-fn read(path: &Path) -> String {
-    std::fs::read_to_string(path)
-        .unwrap_or_else(|error| panic!("fixture {} is readable: {error}", path.display()))
-}
-
-/// The library spec set, ingested exactly as the server ingests it.
-fn library() -> SpecGraph {
-    let root = fixtures();
-    let mut runner = MapRunner::new(read(&root.join("cli/VERSION")).trim());
-    let mut reader = MemoryReader::default();
-    let mut paths = Vec::new();
-
-    for module in ["catalogue", "lending"] {
-        let path = root.join(format!("specs/{module}.allium"));
-        for command in Command::ALL {
-            let document = read(&root.join(format!("cli/{module}.{command}.json")));
-            runner = runner.with(command, &path, serde_json::from_str(&document).expect("JSON"));
-        }
-        reader = reader.with(&path, read(&path));
-        paths.push(path);
-    }
-
-    let Ingestion { graph, .. } = ingest(&runner, &reader, &paths).expect("the fixtures ingest");
-    graph
-}
 
 /// Check the one journey in `source` against the library spec.
 fn notes(source: &str) -> Vec<(Verdict, String)> {
     let journeys = parse(source).expect("the journey parses");
-    let graph = library();
-    check(&journeys[0], &journeys, &graph)
+    let (graph, program, _) = common::library(LENDING);
+    check(&journeys[0], &journeys, &graph, &program)
         .into_iter()
         .map(|note| (note.verdict, note.message))
         .collect()
@@ -59,9 +29,9 @@ fn a_journey_the_spec_supports_has_nothing_to_report() {
     // The fixture journeys name only constructs `lending.allium` declares, and
     // silence is the right answer to that.
     let journeys = parse(BORROWING).expect("parses");
-    let graph = library();
+    let (graph, program, _) = common::library(LENDING);
     for journey in &journeys {
-        let found = check(journey, &journeys, &graph);
+        let found = check(journey, &journeys, &graph, &program);
         assert!(found.is_empty(), "{}: {found:?}", journey.name);
     }
 }

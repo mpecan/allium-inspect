@@ -172,6 +172,13 @@ pub fn arithmetic(
         (Value::Duration(left), BinaryOp::Sub, Value::Duration(right)) => {
             left.checked_sub(*right).map(Value::Duration).ok_or(Fault::Overflow)
         }
+        // `hub.filed_on_by + member`: a set with one more in it, or one fewer.
+        // A set on the right is every one of its elements, which is union and
+        // difference. In the order they were added, and never twice, so the
+        // same steps give the same set whatever else is in the world.
+        (Value::Set(items), BinaryOp::Add | BinaryOp::Sub, other) if !other.is_unknown() => {
+            Ok(Value::Set(combined(items, operator, other)))
+        }
         (Value::Int(_), BinaryOp::Div, Value::Int(0)) => Err(Fault::DividedByZero),
         (Value::Int(left), _, Value::Int(right)) => {
             let checked = match operator {
@@ -218,6 +225,25 @@ pub fn arithmetic(
         }
     };
     Evaluation { value, unresolved }
+}
+
+/// `items + other` or `items - other`, for a set on the left.
+fn combined(items: &[Value], operator: BinaryOp, other: &Value) -> Vec<Value> {
+    let others: &[Value] = match other {
+        Value::Set(more) => more,
+        one => std::slice::from_ref(one),
+    };
+    if operator == BinaryOp::Add {
+        let mut out = items.to_vec();
+        for value in others {
+            if !out.contains(value) {
+                out.push(value.clone());
+            }
+        }
+        out
+    } else {
+        items.iter().filter(|item| !others.contains(item)).cloned().collect()
+    }
 }
 
 /// Why an arithmetic operator produced nothing.

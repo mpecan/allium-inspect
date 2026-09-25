@@ -61,7 +61,7 @@ pub fn walk(
     program: &Program,
     sources: &Sources,
 ) -> Walk {
-    let checked = check::check(journey, everything, spec);
+    let checked = check::check(journey, everything, spec, program);
     let mut walker = Walker {
         spec,
         program,
@@ -198,15 +198,8 @@ impl Walker<'_> {
             ),
             Clause::After { duration, line, .. } => self.advance(duration, *line, about),
             Clause::Then { assertion, line } => self.assert(assertion, *line, about),
-            Clause::Sees { actor, subject, surface, context, negated, line } => self.observe(
-                &Sight {
-                    actor,
-                    subject,
-                    surface,
-                    context: context.as_deref(),
-                    negated: *negated,
-                    line: *line,
-                },
+            Clause::Sees { actor, subject, surface, contexts, negated, line } => self.observe(
+                &Sight { actor, subject, surface, contexts, negated: *negated, line: *line },
                 about,
             ),
             Clause::Stipulate { subject, value, line } => {
@@ -431,8 +424,8 @@ struct Act<'a> {
 /// would drop all but one, silently, in a walk that otherwise reads as passing.
 /// And two rules watching the same instance are two separate things to do, so
 /// the instance alone would drop one of those.
-pub(crate) fn already_ran(ran: &[(String, Value)], trigger: &str, over: &Value) -> bool {
-    ran.iter().any(|(before, instance)| before == trigger && instance == over)
+pub(crate) fn already_ran(ran: &[(String, Value)], rule: &str, over: &Value) -> bool {
+    ran.iter().any(|(before, instance)| before == rule && instance == over)
 }
 
 /// Where `trigger` is declared, for the event's label.
@@ -457,9 +450,13 @@ fn about(clause: &Clause) -> String {
         }
         Clause::After { text, .. } => format!("after {text}"),
         Clause::Then { assertion, .. } => format!("then {}", written(assertion)),
-        Clause::Sees { actor, subject, surface, context, negated, .. } => {
+        Clause::Sees { actor, subject, surface, contexts, negated, .. } => {
             let verb = if *negated { "cannot see" } else { "sees" };
-            let at = context.as_ref().map_or_else(String::new, |it| format!(" in {it}"));
+            let at = if contexts.is_empty() {
+                String::new()
+            } else {
+                format!(" in {}", contexts.join(", "))
+            };
             format!("{actor} {verb} {} on {surface}{at}", subject.as_written())
         }
         Clause::Stipulate { subject, value, .. } => {

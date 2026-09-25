@@ -183,8 +183,9 @@ pub enum Clause {
         actor: String,
         subject: Subject,
         surface: String,
-        /// Which instance of the surface's `context` they are looking at:
-        /// `bruno sees proposal.decision on GroupMembers in room`.
+        /// Which instances of the surface's contexts they are looking at:
+        /// `bruno sees proposal.decision on GroupMembers in room`, or
+        /// `in ada, hold` for a surface with two.
         ///
         /// A surface scoped to a `Group` shows one group's business, and a
         /// person is usually in several. Without this the only instance the
@@ -194,7 +195,13 @@ pub enum Clause {
         /// one came back undecided too. The remedy has to be something the
         /// *journey* says, because which room somebody has open is a fact
         /// about them and not about the specification.
-        context: Option<String>,
+        ///
+        /// Several, because a surface may declare several contexts, and
+        /// naming one used to be all a line could do — so a surface scoped to
+        /// an identity *and* a link could never have both bound. Each name
+        /// goes to the context whose type it is; a context none of them fits
+        /// is bound from the actor when the actor is one.
+        contexts: Vec<String>,
         negated: bool,
         line: usize,
     },

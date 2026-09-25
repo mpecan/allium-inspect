@@ -12,8 +12,8 @@
 ///
 /// Every one of these is about applying a postcondition, and a postcondition
 /// that read a computed field would be a different test.
-static NOTHING: std::sync::LazyLock<std::collections::BTreeMap<String, allium_parser::ast::Expr>> =
-    std::sync::LazyLock::new(std::collections::BTreeMap::new);
+static NOTHING: std::sync::LazyLock<inspect_model::Derivations> =
+    std::sync::LazyLock::new(inspect_model::Derivations::default);
 
 use std::collections::BTreeMap;
 
@@ -463,10 +463,40 @@ fn iterating_over_something_that_is_not_a_collection_applies_nothing() {
     assert!(!reasons.is_empty());
 }
 
+/// `not exists presence` names one instance, and afterwards it is gone —
+/// which is what the language says `not exists` means as an outcome.
 #[test]
-fn a_removal_assertion_is_noted_rather_than_performed() {
-    // Removal in Allium asserts something about the end state; guessing which
-    // instance was meant would invent one.
+fn a_removal_of_one_instance_removes_it() {
+    let copy = EntityId::new("Copy", 1);
+    let (effects, reasons, world) =
+        apply(&not_exists(ident("copy")), &[("copy", Value::Ref(copy.clone()))]);
+    assert_eq!(effects, vec![Effect::Removed { id: copy.clone(), entity: "Copy".to_owned() }]);
+    assert!(reasons.is_empty());
+    assert!(world.instance(&copy).is_none());
+}
+
+/// One nothing settled is skipped with its reason, not removed and not kept
+/// quietly: which instance it was is exactly what is not known.
+#[test]
+fn a_removal_of_something_undecided_is_skipped_and_says_why() {
+    let (effects, reasons, world) = apply(&not_exists(ident("nobody")), &[]);
+    assert_eq!(world.count_of("Copy"), 1, "nothing was removed");
+    assert!(effects.iter().any(|effect| matches!(effect, Effect::Noted { .. })), "{effects:?}");
+    assert!(reasons.iter().any(|reason| reason.contains("nobody")), "{reasons:?}");
+}
+
+/// Already gone, or never there, is the end state the clause asks for.
+#[test]
+fn a_removal_of_nothing_changes_nothing() {
+    let (effects, _, world) = apply(&not_exists(ident("gone")), &[("gone", Value::Null)]);
+    assert!(effects.is_empty(), "{effects:?}");
+    assert_eq!(world.count_of("Copy"), 1);
+}
+
+#[test]
+fn a_removal_assertion_about_a_collection_is_noted_rather_than_performed() {
+    // `not exists Copy` names a type where an instance was meant; removing
+    // every copy on the strength of it would invent which ones were meant.
     let clause = not_exists(ident("Copy"));
     let (effects, _, world) = apply(&clause, &[]);
     assert!(matches!(effects[0], Effect::Noted { .. }));
@@ -698,5 +728,18 @@ fn a_second_creation_can_point_at_what_the_let_bound() {
     assert!(
         matches!(member, Value::Ref(id) if id.entity() == "Loan"),
         "the `let` binding did not reach the second creation: {member:?}"
+    );
+}
+
+/// `ensures: exists copy` asserts rather than does, and is noted as an
+/// assertion about what exists — not reported as a form nobody modelled.
+#[test]
+fn an_existence_assertion_is_noted_as_one() {
+    let source = "ensures: exists copy\n";
+    let clause =
+        Expr::Exists { span: Span { start: 9, end: 20 }, operand: Box::new(ident("copy")) };
+    assert_eq!(
+        apply_over(&clause, source),
+        vec![Effect::Noted { description: "exists copy".to_owned() }]
     );
 }

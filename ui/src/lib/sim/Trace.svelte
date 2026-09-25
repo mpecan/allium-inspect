@@ -94,6 +94,9 @@
                 {#if effect.kind === "created"}
                   <span class="verb">created</span>
                   <code>{effect.id}</code>
+                {:else if effect.kind === "removed"}
+                  <span class="verb">removed</span>
+                  <code>{effect.id}</code>
                 {:else if effect.kind === "assigned"}
                   <span class="verb">set</span>
                   <code>{effect.id}.{effect.field}</code>

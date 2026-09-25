@@ -20,8 +20,9 @@
 
 use std::path::{Path, PathBuf};
 
+mod common;
+
 use inspect_journey::{Verdict, check, parse};
-use inspect_model::{Command, Ingestion, MemoryReader, SpecGraph, ingest, runner::MapRunner};
 
 fn repository() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -30,27 +31,6 @@ fn repository() -> PathBuf {
 fn read(path: &Path) -> String {
     std::fs::read_to_string(path)
         .unwrap_or_else(|error| panic!("{} is readable: {error}", path.display()))
-}
-
-/// The library spec set the documentation tells a reader to run against.
-fn library() -> SpecGraph {
-    let root = repository().join("crates/inspect-model/tests/fixtures");
-    let mut runner = MapRunner::new(read(&root.join("cli/VERSION")).trim());
-    let mut reader = MemoryReader::default();
-    let mut paths = Vec::new();
-
-    for module in ["catalogue", "lending"] {
-        let path = root.join(format!("specs/{module}.allium"));
-        for command in Command::ALL {
-            let document = read(&root.join(format!("cli/{module}.{command}.json")));
-            runner = runner.with(command, &path, serde_json::from_str(&document).expect("JSON"));
-        }
-        reader = reader.with(&path, read(&path));
-        paths.push(path);
-    }
-
-    let Ingestion { graph, .. } = ingest(&runner, &reader, &paths).expect("the fixtures ingest");
-    graph
 }
 
 /// One fenced block, with where it came from.
@@ -220,7 +200,7 @@ const DOCUMENTED: [&str; 4] = ["reference.md", "evidence.md", "adopting.md", "RE
 fn every_journey_example_names_only_what_the_fixture_spec_declares() {
     // The claim the reference opens with: copy any of them and run it. A name
     // the fixture set does not have makes that false for the reader who tried.
-    let graph = library();
+    let (graph, program, _) = common::library(common::LENDING);
 
     for doc in RUNNABLE {
         for block in blocks(doc).into_iter().filter(is_journey) {
@@ -228,7 +208,7 @@ fn every_journey_example_names_only_what_the_fixture_spec_declares() {
             let journeys = parse(&source).expect("it parsed in the test above");
 
             for journey in &journeys {
-                let missing: Vec<String> = check(journey, &journeys, &graph)
+                let missing: Vec<String> = check(journey, &journeys, &graph, &program)
                     .into_iter()
                     .filter(|note| note.verdict == Verdict::Unspecified)
                     .map(|note| note.message)

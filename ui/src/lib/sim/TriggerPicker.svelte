@@ -20,10 +20,17 @@
     instances: string[];
     /** Triggers emitted but not yet fired, which are the loose ends. */
     pending: string[];
+    /**
+     * Every state the spec declares. A word typed as an argument that is one
+     * of these is sent as that state: `changed_mind` sent as text matched
+     * nothing in `reason in {changed_mind, found_elsewhere}`, so the rule was
+     * undecided here while the same act in a journey fired.
+     */
+    states?: string[];
     onfire: (trigger: string, module: string, args: Record<string, Value>) => void;
   }
 
-  const { triggers, instances, pending, onfire }: Props = $props();
+  const { triggers, instances, pending, states = [], onfire }: Props = $props();
 
   let chosen = $state<Fireable | null>(null);
   let bindings = $state<Record<string, string>>({});
@@ -50,7 +57,7 @@
     }
     const args: Record<string, Value> = {};
     for (const [name, text] of Object.entries(bindings)) {
-      args[name] = parse(text);
+      args[name] = parse(text, states);
     }
     onfire(chosen.trigger, chosen.module, args);
   }
