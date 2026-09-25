@@ -1,11 +1,16 @@
 [package]
-name = "inspect-sim"
-description = "Deterministic three-valued simulator for allium rules"
+name = "allium-inspect-sim"
+description = "Deterministic three-valued simulator for allium rules. Part of allium-inspect, published so the `allium-inspect` and `allium-journey` binaries can be installed from crates.io; not a stable API."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+
+# The Rust name the rest of the workspace imports it by. The package is
+# prefixed because the unprefixed name is too general to claim on crates.io.
+[lib]
+name = "inspect_sim"
 
 [dependencies]
 # allium-parser: the evaluator walks allium's own expression tree, so a form the

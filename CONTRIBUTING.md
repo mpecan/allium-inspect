@@ -134,7 +134,7 @@ made them.
 
 `just refresh-fixtures` re-records them. **Read the diff** — a shape change
 upstream is exactly what those recordings exist to surface. If you refresh them,
-move the `allium-parser` tag in `Cargo.toml` to match, or the library and the
+move the `allium-parser` pin (`=3.5.3`) in `Cargo.toml` to match, or the library and the
 recordings drift apart and `tests/agreement.rs` will say so.
 
 ## Commits

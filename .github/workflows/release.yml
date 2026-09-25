@@ -1,0 +1,252 @@
+# What a release ships, once release-please has tagged it: the six crates on
+# crates.io, a prebuilt archive per target for `cargo binstall` and Homebrew,
+# and the formula in mpecan/homebrew-tools pointing at them.
+#
+# Every job builds the browser interface first. `allium-inspect` embeds it with
+# `rust-embed` at compile time and the built bundle is gitignored, so a build
+# that skipped it would serve nothing — and the crates.io package of
+# `allium-inspect-server` is made from whatever that directory holds.
+#
+# Re-runnable: publishing skips a crate whose version is already on crates.io,
+# and the archives are uploaded with `--clobber`. `workflow_dispatch` takes a
+# tag, for finishing a release that stopped half way.
+
+name: release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to (re)publish, e.g. allium-inspect-v0.1.1"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
+
+jobs:
+  publish:
+    name: Publish to crates.io
+    if: startsWith(inputs.tag || github.event.release.tag_name, 'allium-inspect-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      # rust-toolchain.toml pins the version; this installs what it asks for.
+      - name: Install Rust
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Build the browser interface
+        run: cd ui && npm ci && npm run build
+
+      # In dependency order, one at a time: cargo waits for each to reach the
+      # index before the next, which needs it, is verified against it.
+      - name: Publish the crates
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          VERSION="${RELEASE_TAG#allium-inspect-v}"
+          for CRATE in allium-inspect-model allium-inspect-sim allium-inspect-journey \
+                       allium-inspect-server allium-inspect allium-journey; do
+            STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
+              -A "allium-inspect release (github.com/mpecan/allium-inspect)" \
+              "https://crates.io/api/v1/crates/${CRATE}/${VERSION}")
+            if [ "$STATUS" = "200" ]; then
+              echo "::notice::${CRATE}@${VERSION} is already published, skipping"
+            else
+              cargo publish --locked -p "$CRATE"
+            fi
+          done
+
+  build-binaries:
+    name: Build ${{ matrix.target }}
+    if: startsWith(inputs.tag || github.event.release.tag_name, 'allium-inspect-v')
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-14
+          - target: x86_64-apple-darwin
+            runner: macos-14
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+          # Native rather than cross-compiled: the repository is public, so the
+          # arm runner costs nothing and needs no foreign linker.
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Install Rust
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Build the browser interface
+        run: cd ui && npm ci && npm run build
+
+      - name: Build both binaries
+        run: cargo build --release --locked --target ${{ matrix.target }} -p allium-inspect -p allium-journey
+
+      # One archive holding both binaries: they are one product, and the two
+      # app crates' binstall metadata point at the same file.
+      - name: Package
+        shell: bash
+        run: |
+          VERSION="${RELEASE_TAG#allium-inspect-v}"
+          ARCHIVE="allium-inspect-v${VERSION}-${{ matrix.target }}.tar.gz"
+          cp "target/${{ matrix.target }}/release/allium-inspect" .
+          cp "target/${{ matrix.target }}/release/allium-journey" .
+          tar -czf "${ARCHIVE}" allium-inspect allium-journey LICENSE NOTICE
+          openssl dgst -sha256 "${ARCHIVE}" | awk '{print $2}' > "${ARCHIVE}.sha256"
+          echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
+
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${RELEASE_TAG}" "${ARCHIVE}" "${ARCHIVE}.sha256" --clobber
+
+  update-homebrew:
+    name: Update the Homebrew tap
+    needs: build-binaries
+    if: startsWith(inputs.tag || github.event.release.tag_name, 'allium-inspect-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Compute the version
+        id: version
+        run: echo "version=${RELEASE_TAG#allium-inspect-v}" >> "$GITHUB_OUTPUT"
+
+      - name: Download the checksums
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          for TARGET in aarch64-apple-darwin x86_64-apple-darwin \
+                        x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
+            gh release download "${RELEASE_TAG}" \
+              --repo "${{ github.repository }}" \
+              --pattern "allium-inspect-v${VERSION}-${TARGET}.tar.gz.sha256" \
+              --output "${TARGET}.sha256"
+          done
+
+      - name: Generate a GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.REPOSITORY_BUTLER_APP_ID }}
+          private-key: ${{ secrets.REPOSITORY_BUTLER_PEM }}
+          repositories: homebrew-tools
+
+      - name: Check out the tap
+        uses: actions/checkout@v4
+        with:
+          repository: mpecan/homebrew-tools
+          token: ${{ steps.app-token.outputs.token }}
+          path: homebrew-tools
+
+      - name: Write the formula
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          python3 - <<'PYEOF'
+          import os, pathlib, textwrap
+          v = os.environ["VERSION"]
+          sha = {t: pathlib.Path(f"{t}.sha256").read_text().strip() for t in [
+              "aarch64-apple-darwin", "x86_64-apple-darwin",
+              "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]}
+          base = f"https://github.com/mpecan/allium-inspect/releases/download/allium-inspect-v{v}"
+          def url(target):
+              return f"{base}/allium-inspect-v{v}-{target}.tar.gz"
+          formula = textwrap.dedent(f"""\
+            class AlliumInspect < Formula
+              desc "Explore an Allium specification in a browser, and walk journeys against it"
+              homepage "https://github.com/mpecan/allium-inspect"
+              version "{v}"
+              license "MIT"
+
+              on_macos do
+                on_arm do
+                  url "{url('aarch64-apple-darwin')}"
+                  sha256 "{sha['aarch64-apple-darwin']}"
+                end
+                on_intel do
+                  url "{url('x86_64-apple-darwin')}"
+                  sha256 "{sha['x86_64-apple-darwin']}"
+                end
+              end
+
+              on_linux do
+                on_arm do
+                  url "{url('aarch64-unknown-linux-gnu')}"
+                  sha256 "{sha['aarch64-unknown-linux-gnu']}"
+                end
+                on_intel do
+                  url "{url('x86_64-unknown-linux-gnu')}"
+                  sha256 "{sha['x86_64-unknown-linux-gnu']}"
+                end
+              end
+
+              def install
+                bin.install "allium-inspect", "allium-journey"
+              end
+
+              def caveats
+                <<~EOS
+                  allium-inspect reads a spec set through the allium CLI, which it
+                  expects on PATH:
+                    brew install juxt/allium/allium
+                EOS
+              end
+
+              test do
+                assert_match version.to_s, shell_output("#{{bin}}/allium-journey --version")
+                assert_match version.to_s, shell_output("#{{bin}}/allium-inspect --version")
+              end
+            end
+          """)
+          path = pathlib.Path("homebrew-tools/Formula/allium-inspect.rb")
+          path.parent.mkdir(parents=True, exist_ok=True)
+          path.write_text(formula)
+          PYEOF
+
+      - name: Commit and push
+        working-directory: homebrew-tools
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/allium-inspect.rb
+          git diff --cached --quiet || git commit -m "allium-inspect ${{ steps.version.outputs.version }}"
+          git push

@@ -18,14 +18,18 @@ rust-version = "1.96"
 
 [workspace.dependencies]
 # --- workspace crates ---
-inspect-model = { path = "crates/inspect-model" }
-inspect-sim = { path = "crates/inspect-sim" }
-inspect-journey = { path = "crates/inspect-journey" }
-# allium-parser: allium's own parser and analyser, as a library. Pinned to the
-# tag whose CLI the fixtures were recorded from — the two have to agree, and a
-# git dependency is the only option because it is not published to crates.io.
-allium-parser = { git = "https://github.com/juxt/allium-tools", tag = "v3.5.3" }
-inspect-server = { path = "crates/inspect-server" }
+# Published under `allium-inspect-*` and imported under their own names. The
+# versions are release-please's to move: `extra-files` names every workspace
+# dependency with a `path`.
+inspect-model = { path = "crates/inspect-model", version = "0.1.0", package = "allium-inspect-model" }
+inspect-sim = { path = "crates/inspect-sim", version = "0.1.0", package = "allium-inspect-sim" }
+inspect-journey = { path = "crates/inspect-journey", version = "0.1.0", package = "allium-inspect-journey" }
+inspect-server = { path = "crates/inspect-server", version = "0.1.0", package = "allium-inspect-server" }
+# allium-parser: allium's own parser and analyser, as a library. Pinned exactly
+# to the version whose CLI the fixtures were recorded from — the two have to
+# agree. From crates.io rather than the git tag it used to come from, because a
+# crate with a git dependency cannot be published.
+allium-parser = "=3.5.3"
 
 # --- serialisation ---
 # The whole tool is a pipeline of JSON documents: four `allium` subcommand

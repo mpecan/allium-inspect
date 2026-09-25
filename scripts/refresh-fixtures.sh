@@ -12,7 +12,7 @@ set -euo pipefail
 # them without anything saying so.
 #
 # `parse` and `analyse` are *compared against*. Those are `allium_parser`
-# function calls, pinned in Cargo.toml to the tag recorded here, so no test
+# function calls, pinned exactly in Cargo.toml to the version recorded here, so no test
 # replays them. They are kept because a reader who runs `allium check` and then
 # opens this tool has to be shown the same spec: tests/agreement.rs asserts the
 # library we call still says what the binary they run says.
@@ -20,7 +20,7 @@ set -euo pipefail
 # The pinning is the point either way, so the CLI version is stamped alongside
 # the recordings and a test asserts the installed CLI still matches. An upgrade
 # then surfaces as one loud, specific failure telling you to re-run this script
-# — and to move the tag in Cargo.toml with it — rather than as a misparse three
+# — and to move the `allium-parser` pin in Cargo.toml with it — rather than as a misparse three
 # layers down.
 #
 # The fixture specs are ours, not a sibling repo's: between catalogue.allium and

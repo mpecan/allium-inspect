@@ -29,9 +29,22 @@ allium-journey walk specs/ journeys/
 
 ## Install
 
-There are no binary releases yet — build it from source. You will need
-[Rust 1.96](https://rustup.rs) (the pinned toolchain installs itself),
-[Node 20+](https://nodejs.org) for the browser interface, and
+Both binaries — `allium-inspect` and `allium-journey` — come together, whichever
+way you install them.
+
+```sh
+brew install mpecan/tools/allium-inspect   # macOS and Linux
+cargo binstall allium-inspect allium-journey   # prebuilt, macOS and Linux
+cargo install allium-inspect allium-journey    # from crates.io, built locally
+```
+
+The crates.io packages carry the built browser interface, so a plain `cargo
+install` from there is complete.
+
+### From source
+
+You will need [Rust 1.96](https://rustup.rs) (the pinned toolchain installs
+itself), [Node 20+](https://nodejs.org) for the browser interface, and
 [`just`](https://github.com/casey/just):
 
 ```sh
@@ -40,17 +53,16 @@ cd allium-inspect
 just ui-install && just install
 ```
 
-That puts both binaries — `allium-inspect` and `allium-journey` — on your
-`PATH`. `just build-release` instead leaves them in `target/release/` to copy
-or run from there.
+That puts both binaries on your `PATH`. `just build-release` instead leaves them
+in `target/release/` to copy or run from there.
 
-**Use the recipe rather than `cargo install`.** The browser bundle is baked into
-the executable at compile time, so the interface has to be built first; a bare
-`cargo install` bakes in whatever was built last, which after a change to the
-interface is the previous bundle. The binary then serves stale JavaScript and
-nothing on screen says so — it looks exactly like the change not working.
-`just install` builds the frontend, installs both binaries, and prints what
-landed where.
+**In a checkout, use the recipe rather than `cargo install --path`.** The browser
+bundle is baked into the executable at compile time, so the interface has to be
+built first; a bare `cargo install` bakes in whatever was built last, which
+after a change to the interface is the previous bundle. The binary then serves
+stale JavaScript and nothing on screen says so — it looks exactly like the
+change not working. `just install` builds the frontend, installs both binaries,
+and prints what landed where.
 
 You also need the **`allium` CLI** on `PATH`:
 
