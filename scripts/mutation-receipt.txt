@@ -1,4 +1,4 @@
 # Mutation receipt — written by 'just mutants'. Do not hand-edit.
 # Read by scripts/check-mutation-debt.sh, which runs inside 'just check'.
 # Fields: <commit> <caught>/<total> <survivors> <measured-at>
-7d906b0f59537cf65e45285d64480a41844b73c5 26/26 0 2026-10-15T19:56:38Z
+145d20d4441ef1e6cc6c06af9cc55c5de56b5171 100/100 0 2026-10-15T20:54:46Z
