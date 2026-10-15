@@ -601,6 +601,7 @@ fn rule_outcome(name: &str, unresolved: Vec<Unresolved>) -> RuleOutcome {
         requires: Vec::<ClauseVerdict>::new(),
         effects: Vec::new(),
         unresolved,
+        unapplied: Vec::new(),
     }
 }
 
@@ -742,7 +743,7 @@ fn a_rule_the_parser_did_read_is_judged_on_its_preconditions() {
                 value: false,
             }],
             ensures: Vec::new(),
-            iterate: None,
+            per_member: std::collections::BTreeMap::new(),
         },
     );
     assert_eq!(only_rule(&graph, &program), Disposition::Refused);

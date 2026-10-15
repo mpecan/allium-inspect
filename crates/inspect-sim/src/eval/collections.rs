@@ -366,7 +366,7 @@ pub(super) fn quantified(
 ///
 /// Where there is no enclosing `this` — a filter inside an invariant, say —
 /// the element is the only thing it could mean, and it still means that.
-fn element_scope<'a>(env: &'a Env<'a>, item: &Value) -> Env<'a> {
+pub(crate) fn element_scope<'a>(env: &'a Env<'a>, item: &Value) -> Env<'a> {
     let mut scope = match env.bindings.get("this") {
         Some(enclosing) => env.scoped("this", enclosing.clone()),
         None => env.scoped("this", item.clone()),

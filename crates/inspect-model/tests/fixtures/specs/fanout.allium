@@ -1,0 +1,131 @@
+-- allium: 3
+-- fanout.allium
+--
+-- A rule that iterates an entity collection and emits once per member, and a
+-- rule chained from that emission (issue #6).
+--
+-- `Fan` fans `Raised` out over every active `Hook`, and `Queue` takes each
+-- `Matched` one. `Tick` raises it as the clock moves; `Poke` raises it from an
+-- act. With no hook in the world `Fan` matches nothing, so `Queue` never runs.
+-- `Sweep` writes to each member directly instead of emitting, and `Ring`
+-- iterates a collection the trigger carries rather than the type's own.
+-- `Note` takes every `Matched` with no precondition, so what `Fan`'s filter
+-- kept is visible whatever `Queue` requires. `Flag` is handed an argument
+-- named like a hook's own field, `Mark` decides everything it ensures while
+-- carrying notes about what it did not need, and `Check` has a precondition
+-- inside its loop named like its trigger's argument.
+
+entity Hook {
+    active: Boolean
+    fired: Boolean
+    swept: Boolean
+    matched: Boolean
+    flagged: Boolean
+}
+
+entity Clock {
+    is_due: Boolean
+    done: Boolean
+    spare: Boolean
+    marked: Boolean
+}
+
+entity Bell {
+    hooks: Set<Hook>
+    rung: Boolean
+}
+
+rule Tick {
+    when: c: Clock.is_due
+    requires: c.done = false
+    ensures: c.done = true
+    ensures: Raised(kind: "x")
+}
+
+-- The fan-out itself — once per hook the filter keeps, and never for one it
+-- cannot decide about. (A multi-byte dash above, so a quoted span that counted
+-- characters instead of bytes would land in the wrong place.)
+rule Fan {
+    when: Raised(kind)
+    for w in Hooks where active = true:
+        ensures: Matched(webhook: w)
+}
+
+rule Queue {
+    when: Matched(webhook)
+    requires: webhook.active = true
+    ensures: webhook.fired = true
+}
+
+rule Note {
+    when: Matched(webhook)
+    ensures: webhook.matched = true
+}
+
+rule Wave {
+    when: Wave(c)
+    ensures: Flagged(active: true)
+    ensures: c.done = true
+}
+
+rule Flag {
+    when: Flagged(active)
+    for w in Hooks where active = true:
+        ensures: w.flagged = true
+}
+
+rule Mark {
+    when: Mark(c)
+    ensures: c.marked = Hooks.any(h => h.active = true)
+    ensures:
+        if c.is_due = true or c.spare = true:
+            c.done = true
+}
+
+rule Check {
+    when: Check(w)
+    for w in Hooks:
+        requires: w.active = true
+        ensures: w.swept = true
+}
+
+rule Poke {
+    when: Poke(c)
+    ensures: Raised(kind: "x")
+    ensures: c.done = true
+}
+
+rule Sweep {
+    when: Sweep(c)
+    for h in Hooks where h.active = true:
+        ensures: h.swept = true
+    ensures: c.done = true
+}
+
+rule Ring {
+    when: Ring(b)
+    for h in b.hooks:
+        ensures: h.swept = true
+    ensures: b.rung = true
+}
+
+surface Console {
+    facing c: Clock
+    provides:
+        Poke(c)
+        Sweep(c)
+        Wave(c)
+        Mark(c)
+}
+
+surface Panel {
+    facing h: Hook
+    provides:
+        Check(h)
+}
+
+surface Belfry {
+    facing b: Bell
+    provides:
+        Ring(b)
+}

@@ -187,6 +187,36 @@ fn a_bound_name_evaluates_to_what_it_is_bound_to() {
     assert_eq!(value_of(&ident("copy"), &env), Value::Ref(copy));
 }
 
+/// A field read through a name bound to something already undecided — an
+/// argument an emission could not settle — says so, and quotes the name. Read
+/// bare, it was an unknown with no reason at all, and the chained rule
+/// reported "something could not be evaluated" (issue #6).
+#[test]
+fn a_field_read_through_something_undecided_in_silence_says_so() {
+    let source = "webhook.active";
+    let world = library();
+    let env = Env::new(&world, "lending", source).bind("webhook", Value::Unknown);
+    let node = Expr::MemberAccess {
+        span: AstSpan { start: 0, end: 14 },
+        object: Box::new(Expr::Ident(Ident {
+            span: AstSpan { start: 0, end: 7 },
+            name: "webhook".to_owned(),
+        })),
+        field: Ident { span: AstSpan { start: 8, end: 14 }, name: "active".to_owned() },
+    };
+    let evaluated = eval(&node, &env);
+    assert_eq!(evaluated.value, Value::Unknown);
+    let said: Vec<_> =
+        evaluated.unresolved.into_iter().map(|note| (note.reason, note.expression)).collect();
+    assert_eq!(
+        said,
+        [(
+            "`active` was read from something nothing settled".to_owned(),
+            Some("webhook".to_owned())
+        )]
+    );
+}
+
 #[test]
 fn an_unbound_name_is_undecided_and_says_which_one() {
     // A rule argument nobody supplied. Defaulting it either way would report a

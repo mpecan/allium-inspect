@@ -45,6 +45,7 @@ use allium_parser::ast::{CondBranch, Expr, Ident, QualifiedName};
 // postcondition changes.
 pub use ast::{bare_name, span_of};
 use ast::{is_ident_named, literal_text, truth_value};
+pub(crate) use collections::element_scope;
 use inspect_model::{Derivations, Function, Span};
 use serde::{Deserialize, Serialize};
 use std::ops::Not;
@@ -526,6 +527,15 @@ fn member(whole: &Expr, object: &Expr, field: &Ident, env: &Env<'_>) -> Evaluati
                 .collect();
             Evaluation { value: Value::Set(projected), unresolved }
         }
+        // Undecided already, and usually saying why. When it said nothing —
+        // a name bound to an argument an emission could not settle — the read
+        // says it, or a chained rule reports only "something could not be
+        // evaluated" (issue #6), which is indistinguishable from a bug.
+        Value::Unknown if unresolved.is_empty() => Evaluation::unknown(
+            format!("`{field}` was read from something nothing settled"),
+            object,
+            env.source,
+        ),
         Value::Unknown => Evaluation { value: Value::Unknown, unresolved },
         other => Evaluation::unknown(
             format!("`{field}` was read from {}, which has no fields", other.described()),
@@ -559,7 +569,7 @@ fn conditional(branches: &[CondBranch], otherwise: Option<&Expr>, env: &Env<'_>)
             //
             // A condition that came back undecided has already said why. One
             // that came back as a known non-boolean has not, and that is the
-            // gap: `apply.rs` reports exactly this case through `skipped()`,
+            // gap: `apply` reports exactly this case through `skipped()`,
             // and this arm used to return the unknown bare.
             Truth::Unknown => {
                 if unresolved.is_empty() {

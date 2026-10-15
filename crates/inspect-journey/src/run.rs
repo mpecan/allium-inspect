@@ -75,6 +75,7 @@ pub fn walk(
         cast: Vec::new(),
         fired: Vec::new(),
         undecided: Vec::new(),
+        unapplied: Vec::new(),
         refused: Vec::new(),
         created: Vec::new(),
         notes: Vec::new(),
@@ -134,6 +135,11 @@ pub(crate) struct Walker<'a> {
     pub(crate) fired: Vec<String>,
     /// Rules that could not be decided since it, for the same, and why.
     pub(crate) undecided: Vec<Undecided>,
+    /// Rules that fired since it and left part of what they ensure unapplied,
+    /// and the first thing they left. Apart from `undecided`: these did run,
+    /// and `then Fan fires` saying so beside "`Fan` could not be decided"
+    /// was two answers to one question.
+    pub(crate) unapplied: Vec<Undecided>,
     /// Rules that were woken and refused since it, and the clauses that did.
     pub(crate) refused: Vec<Undecided>,
     /// Every instance made since it, in the order it was made — the act's own
@@ -340,7 +346,7 @@ impl Walker<'_> {
         // Undecided here, the same as the clock moving into a rule nobody
         // could decide, and every refusal after it in this step with it.
         if verdict == Verdict::Specified
-            && let Some(why) = crate::drive::set_off(&self.undecided)
+            && let Some(why) = self.unsettled()
         {
             return Outcome { line, verdict: Verdict::Undecided, about, detail: Some(why) };
         }
@@ -405,18 +411,21 @@ impl Walker<'_> {
                 )),
             };
         }
-        if self.undecided.is_empty() {
+        // A rule that fired while the clock moved and left part of what it
+        // ensures unapplied leaves the world as unsettled as one that could
+        // not be decided at all, and is said in its own words beside them.
+        let mut said = Vec::new();
+        if !self.undecided.is_empty() {
+            said.push(format!(
+                "{} could not be decided while the clock moved",
+                self.undecided.iter().map(|it| it.rule.as_str()).collect::<Vec<_>>().join(", ")
+            ));
+        }
+        said.extend(crate::drive::partly(&self.unapplied));
+        if said.is_empty() {
             Outcome { line, verdict: Verdict::Specified, about, detail: None }
         } else {
-            Outcome {
-                line,
-                verdict: Verdict::Undecided,
-                about,
-                detail: Some(format!(
-                    "{} could not be decided while the clock moved",
-                    self.undecided.iter().map(|it| it.rule.as_str()).collect::<Vec<_>>().join(", ")
-                )),
-            }
+            Outcome { line, verdict: Verdict::Undecided, about, detail: Some(said.join("; ")) }
         }
     }
 }

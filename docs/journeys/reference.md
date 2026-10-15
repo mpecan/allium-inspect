@@ -318,6 +318,52 @@ what a rule two hops away made, and `then <Rule> fires` can ask about it. The
 Simulate view in the browser stops at the first rule and offers you the emission
 to follow, because there a person is picking. A journey has already picked.
 
+**A fan-out runs once per member.** A rule that wraps some of its clauses in
+`for w in Hooks where active = true:` applies them once for each member the
+filter keeps, with `w` bound to that member, and the clauses after the loop
+still run once. The filter reads the member's fields bare (`active`) or through
+the loop's name (`w.active`). A collection with no members — no `Hook` in the
+world — is iterated zero times: nothing is emitted, nothing chained from it
+runs, and that is decided. It is the same whether the clock or an act set the
+rule off. Members are the instances the journey cast or the walk created; a
+journey that wants none simply casts none.
+
+A member the filter cannot decide about — a hook whose `active` nobody stated
+— is not applied to and not quietly left out either. The filter reads the
+member's own `active` even when the rule's trigger has an argument of the same
+name: a hook that has none is undecided, not answered by the argument. The rule
+still fired, and `then Fan fires` holds; but the world may be missing what it
+would have done for that member, so the act or the `after` that set it off is
+undecided, saying what was not applied:
+
+```text
+c does Poke(c) on Console
+  `Fan` fired, but part of what it ensures was not applied: `for w in Hooks` could not tell whether its filter keeps Hook#1, so the clauses inside it were not applied to it — in `active = true`
+```
+
+The same goes for a collection nobody settled, `for h in b.hooks` with `b.hooks`
+never stated. A `requires` written inside the loop is undecided whatever it
+says, naming the loop: whether a member failing it should refuse the whole
+rule or only skip that member is not something this tool decides for the spec.
+
+**A rule that fired and left part of what it ensures unapplied leaves the step
+undecided**, `for` or not. Five things count, and only these: a member of a
+`for` the filter could not decide about, a `for` over something that is not a
+collection, an `if` whose condition could not be decided, an assignment to
+something that is not an instance, and a postcondition of a form the simulator
+does not model. A postcondition that was decided and applied is not one of
+them, even when deciding it left notes about what it did not need — an `any`
+settled by one member, an `or` settled by its left side. An assignment whose
+value could not be decided *was* applied: the field now holds an undecided
+value, and the `then` lines that read it say so.
+
+While the step is unsettled this way, `then <Rule> does not fire` about a rule
+that did not run is undecided too, because whatever was not applied is what
+might have woken it. A `then` about a field is answered against the world as
+it stands: a definite *no* after an undecided act is downgraded to undecided,
+as everywhere in a step, but a *yes* is reported as it reads — the step itself
+is undecided, and says why.
+
 **A creation is followed the same way.** A rule written `when: o: Order.created`
 runs once for each order the act's rules create, about that order, and whatever
 it changes is there for the `then` lines after it. It is not a condition over

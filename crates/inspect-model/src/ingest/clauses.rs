@@ -10,7 +10,7 @@
 //! Keyed by node id, which is how [`crate::Program`] is asked for them and how
 //! the graph pass refers to the same rule.
 
-use allium_parser::ast::{BlockItemKind, BlockKind, Decl, Expr, Module as Ast};
+use allium_parser::ast::{BlockItemKind, BlockKind, Decl, Expr, ForBinding, Module as Ast};
 
 use crate::{
     NodeKind, SpecGraph,
@@ -214,33 +214,59 @@ fn rule(block: &allium_parser::ast::BlockDecl) -> RuleAst {
             BlockItemKind::Let { name, value } => {
                 ast.lets.push((name.name.clone(), value.clone()));
             }
-            // `for x in collection:` wrapping the rule's body. The clauses
-            // inside it are the rule's own, so they are collected as if they
-            // had been written at the top, and the iteration is recorded
-            // beside them.
+            // `for x in collection [where filter]:` wrapping some of the
+            // rule's clauses. Kept as one postcondition, in the place the spec
+            // wrote it, so the simulator applies what is inside once per
+            // member the filter keeps — and not at all for a collection with
+            // no members (issue #6).
             //
-            // Nothing applies it yet. A hoisted clause mentions the loop's
-            // binding, which is unbound outside the loop, so the rule comes
-            // back undecided naming that binding — which is the honest answer
-            // and not a useful one. Recording the iteration is what a future
-            // implementation needs; see `RuleAst::iterate`.
+            // Hoisting the clauses out of it, which is what this used to do,
+            // ran them once with the loop's name bound to nothing: an emission
+            // inside carried an undecided argument, and every rule chained
+            // from it was undecided, even over a collection with nothing in it.
+            //
+            // A `requires` inside is still among the rule's preconditions, and
+            // marked as per-member so the simulator reads it as undecided
+            // whatever it says. Whether a per-member precondition refuses the
+            // rule or only skips the member is a reading the language does not
+            // settle, and taking either would be the simulator guessing.
             BlockItemKind::ForBlock { binding, collection, filter, items } => {
-                ast.iterate = Some(Expr::For {
+                let mut body = Vec::new();
+                for inner in items {
+                    match &inner.kind {
+                        BlockItemKind::Clause { keyword, value } => match keyword.as_str() {
+                            "requires" => {
+                                let named = match binding {
+                                    ForBinding::Single(name) => name.name.clone(),
+                                    ForBinding::Destructured(parts, _) => parts
+                                        .iter()
+                                        .map(|part| part.name.as_str())
+                                        .collect::<Vec<_>>()
+                                        .join(", "),
+                                };
+                                ast.per_member.insert(ast.requires.len(), named);
+                                ast.requires.push(value.clone());
+                            }
+                            "ensures" => body.push(value.clone()),
+                            _ => {}
+                        },
+                        // `let pending = user.tasks where …` inside the loop is
+                        // about the member, so it is bound per member too.
+                        BlockItemKind::Let { name, value } => body.push(Expr::LetExpr {
+                            span: inner.span,
+                            name: name.clone(),
+                            value: Box::new(value.clone()),
+                        }),
+                        _ => {}
+                    }
+                }
+                ast.ensures.push(Expr::For {
                     span: item.span,
                     binding: binding.clone(),
                     collection: Box::new(collection.clone()),
                     filter: filter.clone().map(Box::new),
-                    body: Box::new(Expr::Block { span: item.span, items: Vec::new() }),
+                    body: Box::new(Expr::Block { span: item.span, items: body }),
                 });
-                for inner in items {
-                    if let BlockItemKind::Clause { keyword, value } = &inner.kind {
-                        match keyword.as_str() {
-                            "requires" => ast.requires.push(value.clone()),
-                            "ensures" => ast.ensures.push(value.clone()),
-                            _ => {}
-                        }
-                    }
-                }
             }
             _ => {}
         }
@@ -741,11 +767,14 @@ invariant OpenLoansAreWithinTheLimit {
     fn a_rule_that_iterates_keeps_both_the_iteration_and_the_clauses_inside_it() {
         // `for d in member.devices:` wraps the body rather than replacing it.
         // Dropping the inner clauses leaves a rule that iterates over nothing
-        // and is reported as trivially succeeding.
+        // and is reported as trivially succeeding. A `requires` inside is
+        // still among the rule's preconditions, marked as per-member; see
+        // `rule` for why it is not read per member.
         let ast = rule_of(
             "
 rule BorrowCopy {
     when: MemberBorrows(member, copy)
+    requires: member.is_active = true
 
     for d in member.devices:
         requires: d.status = active
@@ -753,9 +782,48 @@ rule BorrowCopy {
 }
 ",
         );
-        assert!(ast.iterate.is_some(), "the iteration is recorded");
-        assert_eq!(ast.requires.len(), 1, "{:#?}", ast.requires);
+        assert_eq!(ast.requires.len(), 2, "{:#?}", ast.requires);
+        assert_eq!(
+            ast.per_member,
+            std::collections::BTreeMap::from([(1, "d".to_owned())]),
+            "only the one inside the loop, by its index, with the loop's name"
+        );
         assert_eq!(ast.ensures.len(), 1, "{:#?}", ast.ensures);
+        assert!(matches!(ast.ensures[0], Expr::For { .. }), "{:#?}", ast.ensures);
+    }
+
+    /// Issue #6: the clauses inside a rule-level `for` used to be hoisted out
+    /// of it, so they ran once, with the loop's name bound to nothing, and
+    /// every rule chained from them was undecided. They are kept inside the
+    /// iteration, with its filter, in the place the spec wrote it.
+    #[test]
+    fn a_rule_level_iteration_is_one_postcondition_holding_its_filter_and_its_clauses() {
+        let program = program_of(
+            "
+rule Fan {
+    when: Raised(kind)
+    ensures: Started(kind: kind)
+    for w in Hooks where active = true:
+        let label = w.name
+        ensures: Matched(webhook: w)
+        ensures: w.seen = true
+    ensures: Finished(kind: kind)
+}
+",
+        );
+        let ast = program.rule("lending::rule::Fan").expect("the rule");
+        assert_eq!(ast.ensures.len(), 3, "{:#?}", ast.ensures);
+        let Expr::For { binding, collection, filter, body, .. } = &ast.ensures[1] else {
+            panic!("the iteration sits between the clauses around it: {:#?}", ast.ensures);
+        };
+        assert!(matches!(binding, ForBinding::Single(name) if name.name == "w"));
+        assert!(matches!(collection.as_ref(), Expr::Ident(name) if name.name == "Hooks"));
+        assert!(filter.is_some(), "the `where` is kept");
+        let Expr::Block { items, .. } = body.as_ref() else { panic!("{body:#?}") };
+        assert_eq!(items.len(), 3, "the let and both ensures: {items:#?}");
+        assert!(matches!(&items[0], Expr::LetExpr { name, .. } if name.name == "label"));
+        assert!(matches!(items[1], Expr::Call { .. }));
+        assert!(matches!(items[2], Expr::Comparison { .. }));
     }
 
     #[test]

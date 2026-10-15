@@ -60,6 +60,10 @@ pub const SHOPS: &[&str] = &["shop", "warehouse"];
 /// emitted triggers, and how what they carry reaches a listener's names.
 pub const CHAINS: &[&str] = &["chains", "relay"];
 
+/// The fanout fixture, alone: a rule that iterates an entity collection and
+/// emits once per member, and the rule chained from that emission.
+pub const FANOUT: &[&str] = &["fanout"];
+
 /// `modules`, replayed from their recordings, with each module's source.
 pub fn library(modules: &[&str]) -> (SpecGraph, Program, Sources) {
     let root = fixtures();

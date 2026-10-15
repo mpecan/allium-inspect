@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 
 use allium_parser::{
     Span,
-    ast::{CallArg, ComparisonOp, Expr, Ident, NamedArg},
+    ast::{CallArg, ComparisonOp, Expr, Ident, LogicalOp, NamedArg},
 };
 use inspect_model::{
     Node, NodeDetail, NodeKind, SpecGraph,
@@ -29,7 +29,7 @@ use inspect_model::{
     },
 };
 use inspect_sim::{
-    Effect, Value,
+    Applied, Effect, Value,
     apply::{Against, Application},
     value::EntityId,
     world::World,
@@ -511,6 +511,328 @@ fn iterating_over_something_that_is_not_a_collection_applies_nothing() {
     let (effects, reasons, _) = apply(&clause, &[]);
     assert!(effects.is_empty());
     assert!(!reasons.is_empty());
+}
+
+/// Apply `clause` against `world`, with nothing bound beforehand.
+fn apply_in(world: &mut World, clause: &Expr) -> (Vec<Effect>, Vec<String>) {
+    let applied = applied_in(world, BTreeMap::new(), clause);
+    (applied.effects, applied.unresolved.into_iter().map(|note| note.reason).collect())
+}
+
+/// Apply `clause` against `world` with `bound` in scope, and keep everything.
+fn applied_in(world: &mut World, bound: BTreeMap<String, Value>, clause: &Expr) -> Applied {
+    let graph = spec();
+    let mut application = Application::new(
+        Against { spec: &graph, module: "lending", source: "", derived: &NOTHING },
+        world,
+        bound,
+    );
+    application.apply(clause)
+}
+
+/// What a clause left unapplied, by reason.
+fn unapplied(applied: &Applied) -> Vec<&str> {
+    applied.unapplied.iter().map(|note| note.reason.as_str()).collect()
+}
+
+/// A trigger argument named like a field the member has not set is not the
+/// member's field. `when: Raised(status)` beside `for c in Copies where status
+/// = available` asks about each copy's status; reading the argument instead
+/// decided the filter about the wrong thing and applied the body to a copy
+/// whose status nobody said.
+#[test]
+fn a_filter_does_not_read_a_rule_binding_in_place_of_a_field_the_member_has_not_set() {
+    let mut world = World::new();
+    let unset = world.create("Copy", "catalogue");
+    let bound = BTreeMap::from([("status".to_owned(), Value::Enum("available".to_owned()))]);
+    let clause = filtered_iteration(
+        "c",
+        ident("Copies"),
+        compare(ident("status"), ComparisonOp::Eq, ident("available")),
+        seen_for("c"),
+    );
+    let applied = applied_in(&mut world, bound, &clause);
+    assert!(emitted_for(&applied.effects).is_empty(), "{:?}", applied.effects);
+    let undone = unapplied(&applied);
+    assert!(
+        undone.iter().any(|reason| reason.contains(&unset.to_string())),
+        "the copy nobody gave a status is left unapplied, and named: {undone:?}"
+    );
+}
+
+/// A field the member *has* set is still read bare, whatever the rule bound
+/// under the same name.
+#[test]
+fn a_filter_reads_a_field_the_member_has_set_over_a_rule_binding_of_the_same_name() {
+    let (mut world, available, _, _) = shelf();
+    let bound = BTreeMap::from([("status".to_owned(), Value::Enum("lost".to_owned()))]);
+    let clause = filtered_iteration(
+        "c",
+        ident("Copies"),
+        compare(ident("status"), ComparisonOp::Eq, ident("available")),
+        seen_for("c"),
+    );
+    let applied = applied_in(&mut world, bound, &clause);
+    assert_eq!(emitted_for(&applied.effects), vec![Value::Ref(available)]);
+}
+
+/// `let flag = c.shelfmark = "QA76"` inside a `for` is a value bound per
+/// member, not an assignment: it writes nothing and leaves nothing unresolved.
+/// A field with no lifecycle, so a write would not be refused on its way in.
+#[test]
+fn a_let_inside_an_iteration_binds_a_value_and_writes_nothing() {
+    let mut world = World::new();
+    let copy = world.create("Copy", "catalogue");
+    world.set_field(&copy, "shelfmark", Value::Str("PR6".to_owned()));
+    let body = block(vec![
+        Expr::LetExpr {
+            span: NOWHERE,
+            name: name("flag"),
+            value: Box::new(compare(
+                field(ident("c"), "shelfmark"),
+                ComparisonOp::Eq,
+                text("QA76"),
+            )),
+        },
+        seen_for("c"),
+    ]);
+    let clause = iteration("c", ident("Copies"), body);
+    let applied = applied_in(&mut world, BTreeMap::new(), &clause);
+    assert_eq!(
+        world.instance(&copy).map(|it| it.field("shelfmark")),
+        Some(Value::Str("PR6".to_owned())),
+        "the let did not write"
+    );
+    assert!(
+        !applied.effects.iter().any(|effect| matches!(effect, Effect::Assigned { .. })),
+        "{:?}",
+        applied.effects
+    );
+    assert_eq!(emitted_for(&applied.effects), vec![Value::Ref(copy)]);
+    assert!(applied.unresolved.is_empty(), "{:?}", applied.unresolved);
+}
+
+/// What was applied in full is not marked unapplied, whatever notes it
+/// carries: an `if` whose `or` its left side settled was taken.
+#[test]
+fn a_decided_conditional_carrying_notes_is_not_marked_unapplied() {
+    let (mut world, available, _, _) = shelf();
+    let clause = conditional(
+        logical(
+            compare(field(ident("it"), "status"), ComparisonOp::Eq, ident("available")),
+            LogicalOp::Or,
+            compare(field(ident("it"), "shelfmark"), ComparisonOp::Eq, text("x")),
+        ),
+        assign(field(ident("it"), "shelfmark"), text("QA76")),
+    );
+    let bound = BTreeMap::from([("it".to_owned(), Value::Ref(available))]);
+    let applied = applied_in(&mut world, bound, &clause);
+    assert!(applied.unapplied.is_empty(), "{:?}", applied.unapplied);
+    assert!(
+        applied.effects.iter().any(|effect| matches!(effect, Effect::Assigned { .. })),
+        "{:?}",
+        applied.effects
+    );
+}
+
+/// Every path that leaves something undone says so in `unapplied`: a member
+/// the filter could not decide about, a `for` over something that is not a
+/// collection, a branch nobody could choose, an assignment to nothing, and a
+/// form the simulator does not model.
+#[test]
+fn every_path_that_leaves_something_undone_marks_it_unapplied() {
+    let (mut world, _, _, unset) = shelf();
+    let undecided_member = filtered_iteration(
+        "c",
+        ident("Copies"),
+        compare(ident("status"), ComparisonOp::Eq, ident("available")),
+        seen_for("c"),
+    );
+    let applied = applied_in(&mut world, BTreeMap::new(), &undecided_member);
+    assert!(
+        unapplied(&applied).iter().any(|it| it.contains(&unset.to_string())),
+        "{:?}",
+        applied.unapplied
+    );
+
+    let cases = [
+        ("not a collection", iteration("x", ident("nobody"), emission("Seen"))),
+        (
+            "a branch nobody could choose",
+            conditional(
+                compare(field(ident("nobody"), "status"), ComparisonOp::Eq, ident("lost")),
+                emission("Seen"),
+            ),
+        ),
+        ("an assignment to nothing", assign(field(ident("nobody"), "status"), ident("lost"))),
+        ("unmodelled", unmodelled()),
+    ];
+    for (what, clause) in cases {
+        let applied = applied_in(&mut world, BTreeMap::new(), &clause);
+        assert!(!applied.unapplied.is_empty(), "{what}: {applied:?}");
+        assert!(
+            applied.unapplied.iter().all(|note| applied.unresolved.contains(note)),
+            "{what}: what is unapplied is among the notes too: {applied:?}"
+        );
+    }
+}
+
+/// A world of three copies: one available, one lost, and one whose status
+/// nobody set.
+fn shelf() -> (World, EntityId, EntityId, EntityId) {
+    let mut world = World::new();
+    let available = world.create("Copy", "catalogue");
+    world.set_field(&available, "status", Value::Enum("available".to_owned()));
+    let lost = world.create("Copy", "catalogue");
+    world.set_field(&lost, "status", Value::Enum("lost".to_owned()));
+    let unset = world.create("Copy", "catalogue");
+    (world, available, lost, unset)
+}
+
+fn emitted_for(effects: &[Effect]) -> Vec<Value> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Emitted { arguments, .. } => arguments.get("copy").cloned(),
+            _ => None,
+        })
+        .collect()
+}
+
+/// `Seen(copy: c)`, so each emission says which element it was for.
+fn seen_for(binding: &str) -> Expr {
+    Expr::Call {
+        span: Span::new(0, 0),
+        function: Box::new(ident("Seen")),
+        args: vec![CallArg::Named(NamedArg {
+            span: Span::new(0, 0),
+            name: Ident { span: Span::new(0, 0), name: "copy".to_owned() },
+            value: ident(binding),
+        })],
+    }
+}
+
+/// Issue #6: a `where` on an iteration was dropped, so every member was
+/// iterated whatever the filter said.
+#[test]
+fn an_iteration_applies_its_body_only_to_the_members_its_filter_keeps() {
+    let mut world = World::new();
+    let available = world.create("Copy", "catalogue");
+    world.set_field(&available, "status", Value::Enum("available".to_owned()));
+    let lost = world.create("Copy", "catalogue");
+    world.set_field(&lost, "status", Value::Enum("lost".to_owned()));
+
+    // `for c in Copies where status = available` — the element's field bare.
+    let bare = filtered_iteration(
+        "c",
+        ident("Copies"),
+        compare(ident("status"), ComparisonOp::Eq, ident("available")),
+        seen_for("c"),
+    );
+    let (effects, reasons) = apply_in(&mut world, &bare);
+    assert_eq!(emitted_for(&effects), vec![Value::Ref(available.clone())], "{effects:?}");
+    assert!(reasons.is_empty(), "{reasons:?}");
+
+    // `for c in Copies where c.status = available` — through the loop's name.
+    let named = filtered_iteration(
+        "c",
+        ident("Copies"),
+        compare(field(ident("c"), "status"), ComparisonOp::Eq, ident("available")),
+        seen_for("c"),
+    );
+    let (effects, reasons) = apply_in(&mut world, &named);
+    assert_eq!(emitted_for(&effects), vec![Value::Ref(available)], "{effects:?}");
+    assert!(reasons.is_empty(), "{reasons:?}");
+}
+
+/// A member the filter cannot decide about is neither iterated nor quietly
+/// left out: it is skipped, and the reason names the iteration.
+#[test]
+fn a_member_the_filter_cannot_decide_about_is_skipped_and_said_so() {
+    let (mut world, available, _, _) = shelf();
+    let clause = filtered_iteration(
+        "c",
+        ident("Copies"),
+        compare(ident("status"), ComparisonOp::Eq, ident("available")),
+        seen_for("c"),
+    );
+    let (effects, reasons) = apply_in(&mut world, &clause);
+    assert_eq!(emitted_for(&effects), vec![Value::Ref(available)], "{effects:?}");
+    assert!(!reasons.is_empty(), "the unset copy is reported: {effects:?}");
+    assert!(
+        reasons.iter().any(|reason| reason.contains("Copy#3") && reason.contains("`for c in`")),
+        "names the member and the iteration: {reasons:?}"
+    );
+}
+
+/// A filter that decided — `or` settled by its left side — keeps or drops the
+/// member and leaves nothing unresolved behind it, even though the right side
+/// could not be read. A note there would read as a member left unapplied.
+#[test]
+fn a_filter_that_decided_leaves_nothing_unresolved_whatever_it_could_not_read() {
+    let mut world = World::new();
+    let available = world.create("Copy", "catalogue");
+    world.set_field(&available, "status", Value::Enum("available".to_owned()));
+    let lost = world.create("Copy", "catalogue");
+    world.set_field(&lost, "status", Value::Enum("lost".to_owned()));
+    world.set_field(&lost, "shelfmark", Value::Str("QA76".to_owned()));
+
+    // available: `status = available` is true, the `shelfmark` nobody set does
+    // not matter. lost: `status = available` false, `shelfmark = "x"` false.
+    let clause = filtered_iteration(
+        "c",
+        ident("Copies"),
+        logical(
+            compare(ident("status"), ComparisonOp::Eq, ident("available")),
+            LogicalOp::Or,
+            compare(field(ident("c"), "shelfmark"), ComparisonOp::Eq, text("x")),
+        ),
+        seen_for("c"),
+    );
+    let (effects, reasons) = apply_in(&mut world, &clause);
+    assert_eq!(emitted_for(&effects), vec![Value::Ref(available)], "{effects:?}");
+    assert!(reasons.is_empty(), "{reasons:?}");
+}
+
+/// Issue #6: a collection with no members is iterated zero times, and that is
+/// a decided answer — nothing left unresolved behind it.
+#[test]
+fn an_iteration_over_a_type_with_no_instances_applies_nothing_and_is_decided() {
+    let mut world = World::new();
+    let clause = filtered_iteration(
+        "w",
+        ident("Hooks"),
+        compare(ident("active"), ComparisonOp::Eq, boolean(true)),
+        seen_for("w"),
+    );
+    let (effects, reasons) = apply_in(&mut world, &clause);
+    assert!(effects.is_empty(), "{effects:?}");
+    assert!(reasons.is_empty(), "{reasons:?}");
+}
+
+/// The filter sees the loop's name, but the binding still does not leak past
+/// the loop.
+#[test]
+fn a_filtered_iteration_restores_the_binding_it_shadowed() {
+    let graph = spec();
+    let (mut world, _, _, _) = shelf();
+    let scope = BTreeMap::from([("c".to_owned(), Value::Str("outer".to_owned()))]);
+    let clause = filtered_iteration(
+        "c",
+        ident("Copies"),
+        compare(field(ident("c"), "status"), ComparisonOp::Eq, ident("available")),
+        seen_for("c"),
+    );
+    let bindings = {
+        let mut application = Application::new(
+            Against { spec: &graph, module: "lending", source: "", derived: &NOTHING },
+            &mut world,
+            scope,
+        );
+        application.apply(&clause);
+        application.into_bindings()
+    };
+    assert_eq!(bindings.get("c"), Some(&Value::Str("outer".to_owned())));
 }
 
 /// `not exists presence` names one instance, and afterwards it is gone —

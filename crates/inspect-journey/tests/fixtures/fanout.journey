@@ -1,0 +1,150 @@
+-- Issue #6, as it was filed, and around it: `Fan` iterates `Hooks` and emits
+-- `Matched` once per active member, and `Queue` takes each one. A fan-out over
+-- a collection with no members matched nothing; the walk used to report
+-- `Queue` undecided anyway, because the iteration was never applied. The
+-- ones about a hook nobody said was active, a bell nobody hung hooks on, an
+-- argument named like a hook's own field and a precondition inside a loop are
+-- what stays undecided, and say why.
+
+journey NoHooksExist {
+    cast:
+        c: Clock
+    given:
+        c.done = false
+    1. time passes with no hooks in the world
+        stipulate c.is_due = true
+        after 1.second
+        then c.done = true
+}
+
+journey SameFanOutFromAnAct {
+    cast:
+        c: Clock
+    given:
+        c.done = false
+    1. the same fan-out, started by an act
+        c does Poke(c) on Console
+        then c.done = true
+}
+
+journey OnlyTheActiveHookFires {
+    cast:
+        c: Clock
+        live: Hook
+        idle: Hook
+    given:
+        c.done = false
+        live.active = true
+        live.fired = false
+        live.matched = false
+        idle.active = false
+        idle.fired = false
+        idle.matched = false
+    1. time passes with one active hook and one idle one
+        stipulate c.is_due = true
+        after 1.second
+        then live.fired = true
+        then idle.fired = false
+        then live.matched = true
+        then idle.matched = false
+}
+
+journey AHookNobodySaidWasActive {
+    cast:
+        c: Clock
+        h: Hook
+    given:
+        c.done = false
+        h.fired = false
+    1. a hook whose `active` the journey never set
+        c does Poke(c) on Console
+        then c.done = true
+}
+
+journey AHookNobodySaidWasActiveAndWhatItWouldHaveSetOff {
+    cast:
+        c: Clock
+        h: Hook
+    given:
+        c.done = false
+        h.fired = false
+    1. a hook whose `active` the journey never set
+        c does Poke(c) on Console
+        then Fan fires
+        then Queue does not fire
+}
+
+journey AHookNobodySaidWasActiveWhileTheClockMoves {
+    cast:
+        c: Clock
+        h: Hook
+    given:
+        c.done = false
+    1. time passes with a hook whose `active` the journey never set
+        stipulate c.is_due = true
+        after 1.second
+}
+
+journey AnArgumentNamedLikeAFieldTheHookHasNotSet {
+    cast:
+        c: Clock
+        h: Hook
+    given:
+        c.done = false
+        h.flagged = false
+    1. wave, with a hook whose `active` the journey never set
+        c does Wave(c) on Console
+}
+
+journey WhatMarkDidNotNeedDoesNotUnsettleIt {
+    cast:
+        c: Clock
+        a: Hook
+        b: Hook
+    given:
+        c.done = false
+        c.is_due = true
+        a.active = true
+    1. mark, deciding everything it ensures from what is set
+        c does Mark(c) on Console
+        then c.done = true
+        then c.marked = true
+}
+
+journey APreconditionInsideTheLoopIsNotTheArgument {
+    cast:
+        h: Hook
+    given:
+        h.active = true
+        h.swept = false
+    1. check a hook, whose loop is named like the argument
+        h does Check(h) on Panel
+}
+
+journey SweepWritesEachMember {
+    cast:
+        c: Clock
+        live: Hook
+        idle: Hook
+    given:
+        c.done = false
+        live.active = true
+        live.swept = false
+        idle.active = false
+        idle.swept = false
+    1. sweep
+        c does Sweep(c) on Console
+        then live.swept = true
+        then idle.swept = false
+        then c.done = true
+}
+
+journey ABellNobodyHungHooksOn {
+    cast:
+        b: Bell
+    given:
+        b.rung = false
+    1. ring a bell whose hooks the journey never said
+        b does Ring(b) on Belfry
+        then b.rung = true
+}

@@ -90,6 +90,7 @@ impl Walker<'_> {
     pub(crate) fn forget(&mut self) {
         self.fired.clear();
         self.undecided.clear();
+        self.unapplied.clear();
         self.refused.clear();
         self.created.clear();
     }
@@ -100,7 +101,18 @@ impl Walker<'_> {
         let outcome = step(self.spec, self.program, self.sources, &self.world, event);
         for rule in &outcome.rules {
             match rule.disposition {
-                Disposition::Fired => self.fired.push(rule.name.clone()),
+                Disposition::Fired => {
+                    self.fired.push(rule.name.clone());
+                    // Fired, and part of what it ensures could not be applied:
+                    // a member of its `for` the filter could not decide about,
+                    // a branch nobody could choose. The world may be missing a
+                    // change — or a chain the missing emission would have set
+                    // off — so the step is undecided, and says what was not
+                    // applied. Kept apart from `undecided`, because it ran.
+                    if let Some(why) = crate::outcome::unapplied(rule) {
+                        self.unapplied.push(Undecided { rule: rule.name.clone(), why });
+                    }
+                }
                 Disposition::Undecided => self.undecided.push(Undecided {
                     rule: rule.name.clone(),
                     why: crate::outcome::undecided(rule),
@@ -233,6 +245,19 @@ impl Walker<'_> {
                 )),
             );
         }
+        // Not run, while something this step ran left part of what it ensures
+        // unapplied or could not be decided at all. Whatever it did not emit
+        // or write is exactly what might have woken this rule, so "did not
+        // run" is a fact about this world and not about the spec — and `does
+        // not fire` holding on it would be the simulator guessing.
+        if !ran && let Some(why) = self.unsettled() {
+            return (
+                Truth::Unknown,
+                Some(format!(
+                    "`{rule}` did not run, but whether it would have is not settled — {why}"
+                )),
+            );
+        }
         // Said either way. A refused `does not fire` with nothing under it
         // reads, in a report, like a line that held.
         (
@@ -351,6 +376,38 @@ pub(crate) fn set_off(undecided: &[Undecided]) -> Option<String> {
     let said: Vec<String> =
         named.iter().map(|it| format!("`{}` could not be decided: {}", it.rule, it.why)).collect();
     (!said.is_empty()).then(|| format!("what it set off: {}", said.join("; ")))
+}
+
+/// What fired and left part of what it ensures unapplied, one line per rule —
+/// or nothing when everything that fired was applied in full.
+///
+/// Worded as having fired, because it did: "could not be decided" beside a
+/// `then Fan fires` that holds is two answers to one question.
+pub(crate) fn partly(unapplied: &[Undecided]) -> Option<String> {
+    let mut named: Vec<&Undecided> = Vec::new();
+    for it in unapplied {
+        if !named.iter().any(|seen| seen.rule == it.rule) {
+            named.push(it);
+        }
+    }
+    let said: Vec<String> = named
+        .iter()
+        .map(|it| {
+            format!("`{}` fired, but part of what it ensures was not applied: {}", it.rule, it.why)
+        })
+        .collect();
+    (!said.is_empty()).then(|| said.join("; "))
+}
+
+impl Walker<'_> {
+    /// Everything this step ran that leaves the world unsettled — what it set
+    /// off that could not be decided, and what fired and was not applied in
+    /// full — or `None` when there is nothing.
+    pub(crate) fn unsettled(&self) -> Option<String> {
+        let said: Vec<String> =
+            set_off(&self.undecided).into_iter().chain(partly(&self.unapplied)).collect();
+        (!said.is_empty()).then(|| said.join("; "))
+    }
 }
 
 /// Every trigger this step emitted, and every creation it made that a rule

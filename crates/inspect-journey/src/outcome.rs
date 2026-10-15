@@ -89,6 +89,20 @@ pub(crate) fn undecided(rule: &RuleOutcome) -> String {
     )
 }
 
+/// What a fired rule's postconditions could not apply, as its first reason —
+/// or `None` when everything it ensures was applied.
+///
+/// Read off the simulator's own mark rather than off the notes: a clause can be
+/// decided, applied in full and still carry notes — an `if` whose `or` was
+/// settled by its left side, an `any` settled by one member — and those say
+/// nothing about whether the world is missing a change.
+pub(crate) fn unapplied(rule: &RuleOutcome) -> Option<String> {
+    rule.unapplied.first().map(|note| match &note.expression {
+        Some(expression) => format!("{} — in `{expression}`", note.reason),
+        None => note.reason.clone(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -106,6 +120,7 @@ mod tests {
             requires: Vec::new(),
             effects: Vec::new(),
             unresolved: Vec::new(),
+            unapplied: Vec::new(),
         }
     }
 
@@ -173,5 +188,48 @@ mod tests {
         // With nothing fired, the refusal is the answer.
         let refused = outcome(vec![rule("AtLimit", Disposition::Refused)]);
         assert_eq!(verdict_of(&refused), Verdict::Refused);
+    }
+
+    mod unapplied {
+        use super::*;
+        use inspect_sim::Unresolved;
+
+        fn note(reason: &str, expression: Option<&str>) -> Unresolved {
+            Unresolved {
+                reason: reason.to_owned(),
+                expression: expression.map(str::to_owned),
+                span: None,
+            }
+        }
+
+        #[test]
+        fn a_rule_that_applied_everything_has_nothing_unapplied() {
+            assert_eq!(super::super::unapplied(&rule("Fan", Disposition::Fired)), None);
+        }
+
+        /// An `if` whose `or` was settled by its left side carries a note about
+        /// the right, and applied everything. A note is not a change the world
+        /// is missing.
+        #[test]
+        fn notes_alone_are_not_unapplied() {
+            let mut fired = rule("Poke", Disposition::Fired);
+            fired.unresolved.push(note("`Clock#1` has no `b` set", Some("c.b")));
+            assert_eq!(super::super::unapplied(&fired), None);
+        }
+
+        /// What the simulator marked as not applied is, and it is quoted with
+        /// where.
+        #[test]
+        fn what_was_marked_unapplied_is_and_says_where() {
+            let mut fired = rule("Fan", Disposition::Fired);
+            fired.unresolved.push(note("`Item#2` has no `packed` set", None));
+            let undone = note("`for w in Hooks` could not tell", Some("active = true"));
+            fired.unresolved.push(undone.clone());
+            fired.unapplied.push(undone);
+            assert_eq!(
+                super::super::unapplied(&fired).as_deref(),
+                Some("`for w in Hooks` could not tell — in `active = true`")
+            );
+        }
     }
 }
