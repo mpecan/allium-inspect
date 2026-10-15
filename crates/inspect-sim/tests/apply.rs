@@ -377,6 +377,47 @@ fn an_argument_the_trigger_has_no_parameter_for_is_dropped() {
     assert_eq!(arguments.len(), 1, "one parameter declared, one argument placed");
 }
 
+/// `CopyBorrowed(word)`, one positional argument the clause names bare.
+fn emitting(word: &str) -> Expr {
+    Expr::Call {
+        span: Span { start: 0, end: 0 },
+        function: Box::new(ident("CopyBorrowed")),
+        args: vec![CallArg::Positional(ident(word))],
+    }
+}
+
+fn carried(word: &str, bindings: &[(&str, Value)]) -> Option<Value> {
+    let (effects, _, _) = apply(&emitting(word), bindings);
+    let Effect::Emitted { arguments, .. } = &effects[0] else { panic!("expected an emission") };
+    arguments.get("loan").cloned()
+}
+
+/// Issue #10. `Finish(repo, cancel)` passes a word nothing binds, and the rule
+/// waiting on it was handed nothing — so its `how = cancel` was undecided
+/// however plainly the spec had said which. A word the spec declares as a state
+/// is that state.
+#[test]
+fn a_declared_state_an_emission_names_bare_is_carried_as_that_state() {
+    assert_eq!(carried("audio", &[]), Some(Value::Enum("audio".to_owned())));
+    // A field's inline states count as declared too.
+    assert_eq!(carried("on_loan", &[]), Some(Value::Enum("on_loan".to_owned())));
+}
+
+/// A trigger's parameters carry no types, so nothing else says an undeclared
+/// word is a state. Carried as unknown, and the rule reading it says so.
+#[test]
+fn an_undeclared_word_an_emission_names_is_carried_undecided() {
+    assert_eq!(carried("abort", &[]), Some(Value::Unknown));
+}
+
+/// A bound name is its binding, even when the binding is unknown and its name
+/// happens to be spelled like a state.
+#[test]
+fn a_bound_name_is_carried_as_its_binding_whatever_it_is_spelled() {
+    assert_eq!(carried("audio", &[("audio", Value::Unknown)]), Some(Value::Unknown));
+    assert_eq!(carried("audio", &[("audio", Value::Int(3))]), Some(Value::Int(3)));
+}
+
 #[test]
 fn a_block_applies_each_of_its_statements_in_order() {
     let clause = block(vec![creation("Loan", vec![]), emission("CopyBorrowed")]);

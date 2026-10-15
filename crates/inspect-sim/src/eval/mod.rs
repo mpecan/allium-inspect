@@ -135,6 +135,12 @@ pub struct Env<'a> {
     /// back to itself. Without this that is a stack overflow — a crash rather
     /// than an answer, over a specification that is merely wrong.
     resolving: BTreeSet<String>,
+    /// The parameters of the rule being evaluated, whether passed or not.
+    ///
+    /// A parameter nobody passed is not in `bindings`, and reads exactly like a
+    /// word nothing binds. Only a call's spelling match asks the difference —
+    /// see `calls::answered_by_spelling` — and there it is the whole question.
+    parameters: BTreeSet<String>,
 }
 
 /// The empty set of definitions, for an environment given none.
@@ -151,7 +157,15 @@ impl<'a> Env<'a> {
             source,
             derived: &NOTHING_DERIVED,
             resolving: BTreeSet::new(),
+            parameters: BTreeSet::new(),
         }
+    }
+
+    /// The same environment, knowing the rule declares `names` as parameters.
+    #[must_use]
+    pub fn declaring(mut self, names: impl IntoIterator<Item = String>) -> Self {
+        self.parameters.extend(names);
+        self
     }
 
     /// The same environment, able to compute what the spec computes.
@@ -198,6 +212,7 @@ impl<'a> Env<'a> {
             source: self.source,
             derived: self.derived,
             resolving: self.resolving.clone(),
+            parameters: self.parameters.clone(),
         }
     }
 
@@ -229,6 +244,8 @@ impl<'a> Env<'a> {
             source: self.source,
             derived: self.derived,
             resolving,
+            // A definition belongs to its entity, not to the rule reading it.
+            parameters: BTreeSet::new(),
         }
     }
 }

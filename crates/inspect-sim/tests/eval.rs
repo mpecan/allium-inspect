@@ -2092,3 +2092,147 @@ fn an_entity_that_defines_all_has_its_own_called() {
     let node = asked(ident("copy"), "all", "c", status_is("lost"));
     assert_eq!(truth_of(&node, &env), Truth::True, "{:?}", reasons(&node, &env));
 }
+
+// --- a black box called with a word nothing binds -------------------------------
+
+/// A world where somebody said what `can(Copy#1, code)` comes back as.
+fn told_can(answer: bool) -> World {
+    let mut world = library();
+    world.answers.push(inspect_sim::world::Answer {
+        call: "can".to_owned(),
+        arguments: vec![Value::Ref(EntityId::new("Copy", 1)), Value::Enum("code".to_owned())],
+        value: Value::Bool(answer),
+    });
+    world
+}
+
+/// `can(repo, code)`, with `repo` bound to `Copy#1`.
+fn can(word: &str) -> Expr {
+    call(ident("can"), vec![ident("repo"), ident(word)])
+}
+
+/// `code` is bound to nothing, and the journey that stipulated `can(r, code)`
+/// read its own `code` as the state it spells. The two are the same call.
+#[test]
+fn a_stipulation_naming_the_same_word_answers_a_call_with_an_unbound_argument() {
+    for answer in [true, false] {
+        let world = told_can(answer);
+        let env = env(&world, "lending").bind("repo", Value::Ref(EntityId::new("Copy", 1)));
+        let evaluated = eval(&can("code"), &env);
+        assert_eq!(evaluated.value, Value::Bool(answer), "{:?}", evaluated.unresolved);
+        assert!(evaluated.unresolved.is_empty(), "settled: {:?}", evaluated.unresolved);
+    }
+}
+
+/// Another word is another call. Answering it would be the simulator inventing
+/// a policy nobody stated.
+#[test]
+fn a_stipulation_about_another_word_does_not_answer_it() {
+    let world = told_can(true);
+    let env = env(&world, "lending").bind("repo", Value::Ref(EntityId::new("Copy", 1)));
+    assert_eq!(truth_of(&can("issues"), &env), Truth::Unknown);
+    let said = reasons(&can("issues"), &env);
+    assert!(said.iter().any(|why| why == "nothing is bound to `issues`"), "{said:?}");
+}
+
+/// About another repo, likewise: the word matching is not the call matching.
+#[test]
+fn a_stipulation_about_the_same_word_and_another_instance_does_not_answer_it() {
+    let world = told_can(true);
+    let env = env(&world, "lending").bind("repo", Value::Ref(EntityId::new("Copy", 2)));
+    assert_eq!(truth_of(&can("code"), &env), Truth::Unknown);
+}
+
+/// A name that *is* bound — to a value nobody knows — is a question about that
+/// value, not about a state called `code`. Matching it would answer
+/// `can(repo, how)` with whatever was said about a state spelled `how`.
+#[test]
+fn a_bound_name_is_never_read_as_its_spelling() {
+    let world = told_can(true);
+    let env = env(&world, "lending")
+        .bind("repo", Value::Ref(EntityId::new("Copy", 1)))
+        .bind("code", Value::Unknown);
+    assert_eq!(truth_of(&can("code"), &env), Truth::Unknown);
+}
+
+/// Something else in the call still undecided keeps the call undecided, and
+/// keeps its own reason.
+#[test]
+fn a_spelling_does_not_settle_an_argument_nobody_bound_elsewhere() {
+    let world = told_can(true);
+    let env = env(&world, "lending");
+    let evaluated = eval(&can("code"), &env);
+    assert_eq!(evaluated.truth(), Truth::Unknown);
+    let said: Vec<String> = evaluated.unresolved.into_iter().map(|note| note.reason).collect();
+    assert!(said.iter().any(|why| why == "nothing is bound to `repo`"), "{said:?}");
+}
+
+/// A world where somebody said what `can(Copy#1, <word>)` comes back as.
+fn told_can_about(word: &str) -> World {
+    let mut world = library();
+    world.answers.push(inspect_sim::world::Answer {
+        call: "can".to_owned(),
+        arguments: vec![Value::Ref(EntityId::new("Copy", 1)), Value::Enum(word.to_owned())],
+        value: Value::Bool(true),
+    });
+    world
+}
+
+/// `Copies` is the collection of copies, not a state spelled `Copies`. A name
+/// that already reads as something is that thing, and a stipulation about its
+/// spelling is about something else.
+#[test]
+fn a_name_that_already_reads_as_something_is_not_its_spelling() {
+    let world = told_can_about("Copies");
+    let env = env(&world, "lending").bind("repo", Value::Ref(EntityId::new("Copy", 1)));
+    assert_eq!(truth_of(&can("Copies"), &env), Truth::Unknown);
+}
+
+/// Inside an entity's own definition a bare name may be one of its fields that
+/// nobody set, which reads exactly like a word nothing binds. `allowed:
+/// can(this, level)` with `level` unset is a question about an unknown number,
+/// and a stipulation about a state spelled `level` must not answer it.
+#[test]
+fn inside_an_entity_a_bare_name_is_never_read_as_its_spelling() {
+    let world = told_can_about("level");
+    let env = env(&world, "lending")
+        .bind("repo", Value::Ref(EntityId::new("Copy", 1)))
+        .bind("this", Value::Ref(EntityId::new("Copy", 1)));
+    assert_eq!(truth_of(&can("level"), &env), Truth::Unknown);
+    // `Copy` defines no `can`, so this is the same black box it is outside an
+    // entity, and says the same thing about it.
+    let said = reasons(&can("level"), &env);
+    assert_eq!(
+        said.first().map(String::as_str),
+        Some("nothing defines `can`, and no stipulation answers this call"),
+        "{said:?}"
+    );
+}
+
+/// A parameter of the rule that nobody passed is a question about what would
+/// have been passed, not about a state with its name.
+#[test]
+fn a_parameter_nobody_passed_is_never_read_as_its_spelling() {
+    let world = told_can_about("kind");
+    let env = env(&world, "lending")
+        .bind("repo", Value::Ref(EntityId::new("Copy", 1)))
+        .declaring(["repo".to_owned(), "kind".to_owned()]);
+    assert_eq!(truth_of(&can("kind"), &env), Truth::Unknown);
+    let said = reasons(&can("kind"), &env);
+    assert!(said.iter().any(|why| why == "nothing is bound to `kind`"), "{said:?}");
+}
+
+/// A call nobody defined and nobody answered says so, and says what would
+/// answer it — the generic "not simulated" sent readers looking for a missing
+/// feature when what was missing was a stipulation.
+#[test]
+fn an_unanswered_black_box_says_a_stipulation_would_answer_it() {
+    let world = library();
+    let env = env(&world, "lending").bind("repo", Value::Ref(EntityId::new("Copy", 1)));
+    let said = reasons(&can("code"), &env);
+    assert_eq!(
+        said.first().map(String::as_str),
+        Some("nothing defines `can`, and no stipulation answers this call"),
+        "{said:?}"
+    );
+}

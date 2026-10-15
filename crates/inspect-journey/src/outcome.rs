@@ -6,7 +6,10 @@
 //! and a rule nobody could evaluate are different things, and only one of them
 //! is the specification saying no.
 
-use inspect_sim::{Disposition, Truth, step::StepOutcome};
+use inspect_sim::{
+    Disposition, Truth,
+    step::{RuleOutcome, StepOutcome},
+};
 
 use crate::check::Verdict;
 
@@ -51,20 +54,7 @@ pub(crate) fn refusal(outcome: &StepOutcome) -> Option<String> {
                 return Some(format!("`{}` refused: {}", rule.name, blocking.join("; ")));
             }
             Disposition::Undecided => {
-                let reason = rule.unresolved.first().map_or_else(
-                    || "something could not be evaluated".to_owned(),
-                    // The sub-expression as well as the reason, when the note
-                    // located one. "`Member#1` has no `is_at_limit` set" says
-                    // what is missing; it does not say which clause asked, and
-                    // a rule with four preconditions has four candidates. The
-                    // quote comes from the spec text, which is why the walker
-                    // is handed it.
-                    |note| match &note.expression {
-                        Some(expression) => format!("{} — in `{expression}`", note.reason),
-                        None => note.reason.clone(),
-                    },
-                );
-                return Some(format!("`{}` could not be decided: {reason}", rule.name));
+                return Some(format!("`{}` could not be decided: {}", rule.name, undecided(rule)));
             }
             Disposition::Unsimulatable => {
                 return Some(format!("`{}`'s clauses did not parse", rule.name));
@@ -76,6 +66,22 @@ pub(crate) fn refusal(outcome: &StepOutcome) -> Option<String> {
         return Some("no rule waits for this".to_owned());
     }
     None
+}
+
+/// Why a rule could not be decided: its first reason, and where.
+pub(crate) fn undecided(rule: &RuleOutcome) -> String {
+    rule.unresolved.first().map_or_else(
+        || "something could not be evaluated".to_owned(),
+        // The sub-expression as well as the reason, when the note located one.
+        // "`Member#1` has no `is_at_limit` set" says what is missing; it does
+        // not say which clause asked, and a rule with four preconditions has
+        // four candidates. The quote comes from the spec text, which is why the
+        // walker is handed it.
+        |note| match &note.expression {
+            Some(expression) => format!("{} — in `{expression}`", note.reason),
+            None => note.reason.clone(),
+        },
+    )
 }
 
 #[cfg(test)]

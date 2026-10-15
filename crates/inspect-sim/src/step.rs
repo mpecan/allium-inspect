@@ -254,6 +254,14 @@ fn run_rule(
     {
         bindings.entry(name).or_insert(Value::Null);
     }
+    // Every parameter by name, passed or not: one nobody passed is unbound,
+    // and must still not be taken for a word a stipulation spells.
+    let declared: Vec<String> = ast
+        .parameters()
+        .into_iter()
+        .map(|(name, _)| name)
+        .filter(|name| !name.is_empty())
+        .collect();
 
     // The rule's own names, before its preconditions read them.
     //
@@ -269,8 +277,7 @@ fn run_rule(
     // the `let` rather than at what defeated it.
     for (name, value) in &ast.lets {
         let evaluated = {
-            let mut scope = Env::new(world, module, source).deriving(program.derivations());
-            scope.bindings.clone_from(&bindings);
+            let scope = rule_scope(Env::new(world, module, source), program, &declared, &bindings);
             eval(value, &scope)
         };
         bindings.insert(name.clone(), evaluated.value);
@@ -341,8 +348,7 @@ fn run_rule(
             .map(|clause| clause.text.clone())
             .unwrap_or_default();
         let evaluated = {
-            let mut scope = Env::new(world, module, source).deriving(program.derivations());
-            scope.bindings.clone_from(&bindings);
+            let scope = rule_scope(Env::new(world, module, source), program, &declared, &bindings);
             eval(clause, &scope)
         };
         unresolved.extend(evaluated.unresolved.clone());
@@ -477,6 +483,22 @@ pub fn enabled(
     }
 
     found
+}
+
+/// The scope a rule's `let`s and preconditions are read in.
+///
+/// One function for both, so they cannot disagree about what is in scope —
+/// and in particular about which names are parameters, which a call's
+/// spelling match must never take for words.
+fn rule_scope<'a>(
+    base: Env<'a>,
+    program: &'a Program,
+    declared: &[String],
+    bindings: &BTreeMap<String, Value>,
+) -> Env<'a> {
+    let mut scope = base.deriving(program.derivations()).declaring(declared.iter().cloned());
+    scope.bindings.clone_from(bindings);
+    scope
 }
 
 /// A state rule's binding and condition: `when: copy: Copy.status = lost`.

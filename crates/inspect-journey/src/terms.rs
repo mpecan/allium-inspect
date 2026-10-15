@@ -38,7 +38,13 @@ pub(crate) fn path(text: &str, line: usize) -> Result<Path, ParseError> {
 /// A literal, a set of terms, or somewhere to read a value from.
 pub(crate) fn term(text: &str, line: usize) -> Result<Term, ParseError> {
     let trimmed = text.trim();
-    if let Some(inside) = trimmed.strip_prefix('{').and_then(|rest| rest.strip_suffix('}')) {
+    if let Some(opened) = trimmed.strip_prefix('{') {
+        // Left open, it would fall through to being read as a *name* spelled
+        // `{"a", "b"` — accepted, bound to nothing, and reported much later as
+        // somebody nobody cast.
+        let Some(inside) = opened.strip_suffix('}') else {
+            return fail(line, format!("a set is closed with `}}` on the same line: `{trimmed}`"));
+        };
         let mut items = Vec::new();
         for part in split_arguments(inside) {
             let part = part.trim();

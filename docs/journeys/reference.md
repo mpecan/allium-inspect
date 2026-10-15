@@ -117,6 +117,18 @@ Values may be a number (`5`, `2_000_000`), a duration (`21.days`), a string
 (`"Ada"`), `true`, `false`, `null`, a set (`{a, b}`), a name the journey cast, or
 a bare word, which is read as a state the spec declares.
 
+A set is written on one line, and may be empty:
+
+```
+given:
+    repo.tags = {"a", "b"}
+    repo.owners = {ada, bruno}
+    repo.labels = {}
+```
+
+What tells the two forms apart is an `=` before the first brace, not the brace:
+`note: Message { body: "a = b" }` is still an instance.
+
 ## `world` — what a whole file starts from
 
 Thirty-nine journeys in one set wrote 166 `given` lines between them, 58 of them
@@ -457,6 +469,35 @@ names, so answering for Ada says nothing about Bob.
 Both answers are sayable. `= false` refuses the rule, or this would be a way of
 making journeys pass rather than a way of saying what nobody has decided.
 
+**A word as an argument.** Permission checks naturally take a kind:
+`requires: can(repo, code)`, where `code` is a word the rule binds to nothing.
+Write the same word in the stipulation:
+
+```
+stipulate can(r, code) = true
+```
+
+The journey reads its own `code` as the state it spells, and the spec's `code`
+is read the same way *only to match a stipulation that names that word in that
+place* — the judgement `copy.status = available` makes, with the journey's
+stipulation as the side that says it is a state. `can(r, issues)` does not
+answer `can(repo, code)`, and with no stipulation naming `code` the rule stays
+undecided and says what would answer it:
+
+```text
+`Grant` could not be decided: nothing defines `can`, and no stipulation answers this call — in `can(repo, code)`
+```
+
+A name that could mean something else is never read as its spelling, because
+then the call is about a value nobody knows rather than about a word:
+
+- a name the rule binds, even to a value nobody knows;
+- a parameter of the rule that nobody passed — `Ask(repo)` emitted for
+  `when: Ask(repo, kind)` leaves `kind` a question, not the state `kind`;
+- any bare name inside an entity's own definition. `allowed: can(this, level)`
+  reads `level` as the repo's field, and a field nobody set is not bound — so
+  inside an entity no word is read, and the call stays undecided.
+
 **Every stipulation is reported, first and always.** An agent can make any
 journey pass; it cannot make one pass invisibly.
 
@@ -499,6 +540,30 @@ the field nobody stated. `for i in box.items: …` reads the same way.
 Write the quantifier the spec means rather than a black-box predicate a
 journey then has to stipulate — the predicate hides the logic the journey was
 meant to check.
+
+**A word one rule hands the next.** `ensures: Finish(repo, cancel)` passes a
+word nothing binds. When the spec declares it as a state — `enum Ending {
+cancel | fail }`, or a field's inline `cancel | fail` — the rule waiting on
+`Finish` receives that state, so its `how = cancel` is decided and a
+`may_close(repo, how)` it calls is answered by `stipulate may_close(r, cancel)`.
+A word the spec does **not** declare stays undecided: a trigger's parameters
+carry no types, so nothing else says the word is a state rather than something
+this simulator does not model. Declare the enumeration and the chain decides.
+
+**What an act set off counts too.** A rule one hop down a chain that could not
+be decided is on no line of the journey, so the act that set it off is
+undecided even when its own rule fired, and says which rule and why:
+
+```text
+r does Halt(r) on Settings
+  what it set off: `Halted` could not be decided: nothing is bound to `abort` — in `abort`
+```
+
+Every refusal after it in the same step is undecided with it, and the step does
+not hold, whichever way a `then` about what `Halted` would have written comes
+out. A later step is not softened: it reads the world as the walk left it, and
+a refusal there stays a refusal. The step that acted is the one that says
+something was undecided, so look there first.
 
 `all` and `any` are the two methods that take a lambda here. Any other —
 `items.filter(i => …)` — and a lambda anywhere else is still undecided, with

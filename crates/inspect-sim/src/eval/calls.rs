@@ -9,7 +9,7 @@
 
 use allium_parser::ast::{CallArg, Expr};
 
-use super::{Env, Evaluation, eval, lambdas, unsupported};
+use super::{Env, Evaluation, ast::bare_name, eval, lambdas, unsupported};
 use inspect_model::Function;
 
 use crate::value::Value;
@@ -39,16 +39,18 @@ pub(super) fn answered(
         return answer;
     }
 
-    let mut given = Vec::with_capacity(args.len());
-    let mut unresolved = Vec::new();
+    let mut nodes = Vec::with_capacity(args.len());
+    let mut evaluated = Vec::with_capacity(args.len());
     for argument in args {
         let CallArg::Positional(value) = argument else {
             return unsupported("a function call with named arguments", whole, env);
         };
-        let evaluated = eval(value, env);
-        unresolved.extend(evaluated.unresolved);
-        given.push(evaluated.value);
+        evaluated.push(eval(value, env));
+        nodes.push(value);
     }
+    let given: Vec<Value> = evaluated.iter().map(|argument| argument.value.clone()).collect();
+    let mut unresolved: Vec<_> =
+        evaluated.iter().flat_map(|argument| argument.unresolved.iter().cloned()).collect();
 
     match function {
         // `may_invite(group, issuer)`, or `is_used_by(m)` inside the entity
@@ -57,9 +59,25 @@ pub(super) fn answered(
             if let Some(answer) = env.world.answer(&called.name, &given) {
                 return Evaluation { value: answer.clone(), unresolved };
             }
+            if let Some(answer) = answered_by_spelling(&called.name, &nodes, &evaluated, env) {
+                return answer;
+            }
             match env.bindings.get("this") {
-                Some(Value::Ref(id)) => defined(whole, id, &called.name, given, env),
-                _ => unsupported("a function call", whole, env),
+                Some(Value::Ref(id)) if defines(id, &called.name, env) => {
+                    defined(whole, id, &called.name, given, env)
+                }
+                // Named and never defined: a black box. What would answer it
+                // is a journey saying so, and that is the sentence worth
+                // reading — "not simulated" sent a reader looking for a
+                // missing feature when what was missing was a stipulation.
+                _ => Evaluation::unknown(
+                    format!(
+                        "nothing defines `{}`, and no stipulation answers this call",
+                        called.name
+                    ),
+                    whole,
+                    env.source,
+                ),
             }
             .carrying(unresolved)
         }
@@ -85,6 +103,82 @@ pub(super) fn answered(
         }
         _ => unsupported("a function call", whole, env).carrying(unresolved),
     }
+}
+
+/// `can(repo, code)` answered by a stipulation that names the same word.
+///
+/// `code` is bound to nothing, so it evaluates to undecided — and the journey
+/// that wrote `stipulate can(r, code) = true` read its own `code` as the state
+/// it spells, because nothing in the journey is called that either. The two are
+/// the same call, and matching on values alone could never see it.
+///
+/// So an argument nothing binds is retried as the state its name spells, and
+/// kept only if a stipulation names exactly that state in exactly that place.
+/// It is the judgement `compare` makes for `status = available`: one side is
+/// a bare name and the other side says it is a state. Here the other side is
+/// what the journey wrote, and without it nothing is read: a word nobody
+/// stipulated stays undecided, with the reason it already had.
+///
+/// Only a name that could mean nothing else — see [`could_be_a_word`].
+///
+/// Looser than the emission path, `apply::Application::carried`, which reads
+/// a bare word as a state only when the spec declares it. There nobody else
+/// has spoken; here the journey's own stipulation is the other side, and it
+/// is kept only on an exact match.
+fn answered_by_spelling(
+    name: &str,
+    nodes: &[&Expr],
+    evaluated: &[Evaluation],
+    env: &Env<'_>,
+) -> Option<Evaluation> {
+    let mut spelled = Vec::with_capacity(nodes.len());
+    let mut unresolved = Vec::new();
+    let mut read_any = false;
+    for (node, argument) in nodes.iter().zip(evaluated) {
+        match bare_name(node) {
+            Some(word) if argument.value.is_unknown() && could_be_a_word(word, env) => {
+                spelled.push(Value::Enum(word.to_owned()));
+                read_any = true;
+            }
+            _ => {
+                spelled.push(argument.value.clone());
+                unresolved.extend(argument.unresolved.iter().cloned());
+            }
+        }
+    }
+    if !read_any {
+        return None;
+    }
+    let answer = env.world.answer(name, &spelled)?;
+    Some(Evaluation { value: answer.clone(), unresolved })
+}
+
+/// Whether nothing in scope could give `word` a meaning of its own.
+///
+/// Three things read exactly like a word nothing binds, and each is a question
+/// about a value rather than about a state with that spelling:
+///
+/// - a name bound to a value nobody knows — `can(repo, how)` with `how`
+///   undecided must not be answered by what was said about a state `how`;
+/// - a parameter of the rule that nobody passed, which is unbound;
+/// - inside an entity's own definition, one of its fields nobody set. Its
+///   stored fields are bound only when they hold something, and nothing here
+///   knows the entity's declared field list — so inside an entity (`this`
+///   bound) no name is read as a word at all. `allowed: can(this, level)` with
+///   `level` unset is a question about an unknown number.
+fn could_be_a_word(word: &str, env: &Env<'_>) -> bool {
+    !env.bindings.contains_key(word)
+        && !env.parameters.contains(word)
+        && !env.bindings.contains_key("this")
+}
+
+/// Whether the entity `id` is an instance of defines a function `name` — or
+/// `id` is in no world, which [`defined`] is the one to say.
+fn defines(id: &crate::value::EntityId, name: &str, env: &Env<'_>) -> bool {
+    env.world.instance(id).is_none_or(|instance| {
+        let key = inspect_model::derived_key(&instance.module, &instance.entity, name);
+        env.derived.functions.contains_key(key.as_str())
+    })
 }
 
 /// `name(given…)` computed from its definition on the instance `id`.

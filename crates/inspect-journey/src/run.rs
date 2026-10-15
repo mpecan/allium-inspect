@@ -107,6 +107,13 @@ pub fn walk(
     }
 }
 
+/// A rule the engine could not decide, and the first reason it gave.
+#[derive(Debug, Clone)]
+pub(crate) struct Undecided {
+    pub(crate) rule: String,
+    pub(crate) why: String,
+}
+
 pub(crate) struct Walker<'a> {
     pub(crate) spec: &'a SpecGraph,
     pub(crate) program: &'a Program,
@@ -123,8 +130,8 @@ pub(crate) struct Walker<'a> {
     pub(crate) cast: Vec<CastMember>,
     /// Rules that ran since the last clause, for `then … fires`.
     pub(crate) fired: Vec<String>,
-    /// Rules that could not be decided since it, for the same.
-    pub(crate) undecided: Vec<String>,
+    /// Rules that could not be decided since it, for the same, and why.
+    pub(crate) undecided: Vec<Undecided>,
     /// Faults that belong to no step clause.
     ///
     /// A cast member whose type the spec does not have, or a `given` that
@@ -319,7 +326,19 @@ impl Walker<'_> {
             }
         }
 
-        Outcome { line, verdict: verdict_of(&outcome), about, detail: refusal(&outcome) }
+        let verdict = verdict_of(&outcome);
+        // The act's own rule fired, and something it set off could not be
+        // decided. That rule is on no line of the journey, so without this the
+        // step held — and a `then` about what it would have written read as
+        // the spec answering, either way, when nothing had been decided.
+        // Undecided here, the same as the clock moving into a rule nobody
+        // could decide, and every refusal after it in this step with it.
+        if verdict == Verdict::Specified
+            && let Some(why) = crate::drive::set_off(&self.undecided)
+        {
+            return Outcome { line, verdict: Verdict::Undecided, about, detail: Some(why) };
+        }
+        Outcome { line, verdict, about, detail: refusal(&outcome) }
     }
 
     /// What a `cannot do` came to: the verdicts, mirrored.
@@ -400,7 +419,7 @@ impl Walker<'_> {
                 about,
                 detail: Some(format!(
                     "{} could not be decided while the clock moved",
-                    self.undecided.join(", ")
+                    self.undecided.iter().map(|it| it.rule.as_str()).collect::<Vec<_>>().join(", ")
                 )),
             }
         }

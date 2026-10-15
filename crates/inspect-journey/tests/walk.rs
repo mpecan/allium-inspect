@@ -1960,7 +1960,11 @@ fn a_rule_nobody_could_decide_is_not_a_rule_that_did_not_run() {
         .cloned()
         .expect("the journey asserts it fires");
     assert_eq!(verdict, Verdict::Undecided);
-    assert_eq!(detail.as_deref(), Some("`BorrowCopy` could not be decided"));
+    // And why, so the line says what to fix rather than only where.
+    assert_eq!(
+        detail.as_deref(),
+        Some("`BorrowCopy` could not be decided: `Copy#1` has no `status` set — in `copy.status`")
+    );
 
     let (_, _, detail) = lines
         .iter()
@@ -2314,7 +2318,8 @@ fn a_call_nobody_answered_is_still_undecided() {
     let act = &result.steps[0].outcomes[0];
     assert_eq!(act.verdict, Verdict::Undecided, "{act:?}");
     assert!(
-        act.detail.as_deref().is_some_and(|why| why.contains("a function call is not simulated")),
+        act.detail.as_deref().is_some_and(|why| why
+            .contains("nothing defines `may_reserve`, and no stipulation answers this call")),
         "{act:?}"
     );
 }

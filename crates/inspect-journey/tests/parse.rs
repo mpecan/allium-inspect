@@ -754,6 +754,87 @@ fn a_given_line_knows_which_line_it_was_on() {
     assert_eq!(lines, vec![3, 4]);
 }
 
+/// Issue #10. A set is a value a `given` can hold, and the brace that opens it
+/// was taken for the brace that opens an instance's fields — so the line was
+/// read as a cast entry and refused as `expected <name>: <Type>`, an error
+/// about a shape the author never wrote.
+mod set_literals_in_given {
+    use super::*;
+
+    fn given_set(written: &str) -> Vec<Term> {
+        let source = format!("journey J {{\n    given:\n        r.tags = {written}\n}}");
+        let journeys = parse(&source).unwrap_or_else(|error| panic!("`{written}`: {error}"));
+        match journeys[0].given.first() {
+            Some(Given::Assign { path, value: Term::Set(items), line: 3 }) => {
+                assert_eq!(path, &path_of("r.tags"));
+                items.clone()
+            }
+            other => panic!("`{written}`: expected a set assigned to r.tags, got {other:#?}"),
+        }
+    }
+
+    fn text(value: &str) -> Term {
+        Term::Literal(Value::Str(value.to_owned()))
+    }
+
+    #[test]
+    fn a_set_of_strings_is_an_assignment() {
+        assert_eq!(given_set("{\"a\", \"b\"}"), vec![text("a"), text("b")]);
+        assert_eq!(given_set("{\"a\"}"), vec![text("a")]);
+    }
+
+    #[test]
+    fn a_set_of_names_is_an_assignment() {
+        assert_eq!(given_set("{a, b}"), vec![Term::Path(path_of("a")), Term::Path(path_of("b"))]);
+    }
+
+    #[test]
+    fn an_empty_set_is_an_assignment() {
+        assert!(given_set("{}").is_empty());
+        assert!(given_set("{ }").is_empty());
+    }
+
+    /// A world's `given:` is read by the same line reader, and was refused the
+    /// same way.
+    #[test]
+    fn a_world_takes_a_set_too() {
+        let journeys = parse(
+            "world {\n    cast:\n        r: Repo\n    given:\n        r.tags = {\"a\"}\n}\n\
+             journey J {\n    1. look\n        then r.flag = false\n}",
+        )
+        .expect("it parses");
+        let world = journeys[0].inherits.as_ref().expect("the journey takes the world");
+        assert!(
+            matches!(world.given.first(), Some(Given::Assign { value: Term::Set(items), .. }) if items.len() == 1),
+            "{:#?}",
+            world.given
+        );
+    }
+
+    /// The instance form is told apart by where the brace is: after a
+    /// `name: Type`, with no `=` before it. An `=` *inside* the braces is part
+    /// of a field's value and must not turn the instance into an assignment.
+    #[test]
+    fn an_instance_whose_field_holds_an_equals_sign_is_still_an_instance() {
+        let journeys =
+            parse("journey J {\n    given:\n        note: Message { body: \"a = b\" }\n}")
+                .expect("it parses");
+        let Some(Given::Instance { name, fields, .. }) = journeys[0].given.first() else {
+            panic!("a given instance: {:#?}", journeys[0].given)
+        };
+        assert_eq!(name, "note");
+        assert_eq!(fields[0], ("body".to_owned(), text("a = b")));
+    }
+
+    /// A set left open is still a mistake, and the message says what kind.
+    #[test]
+    fn an_unclosed_set_says_so() {
+        let message = refuse("journey J {\n    given:\n        r.tags = {\"a\", \"b\"\n}");
+        assert!(message.contains("set"), "{message}");
+        assert!(!message.contains("<name>: <Type>"), "{message}");
+    }
+}
+
 #[test]
 fn a_comparison_spelled_the_way_a_programmer_types_it_is_refused() {
     // `==` is not this grammar, and splitting on the first `=` inside it would

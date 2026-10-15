@@ -247,9 +247,36 @@ impl<'a> Application<'a> {
                 CallArg::Positional(value) => (declared.get(at).cloned(), value),
             };
             let Some(name) = name else { continue };
-            carried.insert(name, self.evaluate(value).value);
+            carried.insert(name, self.carried(value));
         }
         carried
+    }
+
+    /// One argument of an emission, as the receiving rule will be handed it.
+    ///
+    /// `Finish(repo, cancel)` passes a word nothing binds, and evaluated as a
+    /// name it is nobody — so `Finish` was handed nothing for `how`, and its
+    /// `how = cancel` could never be decided. When the spec declares that word
+    /// as a state, the state is what was meant: an emission is the spec's own
+    /// act, and an act's bare word is read the same way when a journey writes
+    /// one.
+    ///
+    /// Only a declared state. A trigger's parameters carry no types, so there
+    /// is no other side to say a word is a state, and an undeclared word may be
+    /// something this simulator does not model. It stays undecided, and the
+    /// rule that reads it says so.
+    fn carried(&self, value: &Expr) -> Value {
+        let evaluated = self.evaluate(value).value;
+        match bare_name(value) {
+            Some(word)
+                if evaluated.is_unknown()
+                    && !self.bindings.contains_key(word)
+                    && self.against.spec.declared_states().contains(word) =>
+            {
+                Value::Enum(word.to_owned())
+            }
+            _ => evaluated,
+        }
     }
 
     /// `let group = Group.created(…)`.

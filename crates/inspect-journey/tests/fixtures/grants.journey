@@ -1,0 +1,29 @@
+-- Issue #10, as it was filed: two literals a journey could not say.
+
+-- A set in `given:`. This was refused as `expected <name>: <Type>`, because
+-- the brace was read as the start of an instance's fields.
+journey SetLiteralInGiven {
+    cast:
+        r: Repo
+    given:
+        r.flag = false
+        r.tags = {"a", "b"}
+    1. a rule reads the set back
+        r does Tag(r) on Settings
+        then r.flag = true
+}
+
+-- A black box called with a word nothing binds. The journey says what
+-- `can(r, code)` comes back as, and the walk reported "a function call is not
+-- simulated" anyway, because the spec's `code` was a name nothing bound and
+-- the journey's was a state.
+journey EnumArgument {
+    cast:
+        r: Repo
+    given:
+        r.flag = false
+    1. a black box called with an enum literal argument
+        stipulate can(r, code) = true
+        r does Grant(r) on Settings
+        then r.flag = true
+}

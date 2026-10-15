@@ -19,7 +19,7 @@ use inspect_sim::{StepOutcome, Value, enabled, step::step, world::Event};
 use crate::{
     check,
     journey::Journey,
-    run::{Ground, Settled, Walked, Walker, already_ran},
+    run::{Ground, Settled, Undecided, Walked, Walker, already_ran},
 };
 
 impl Walker<'_> {
@@ -75,7 +75,10 @@ impl Walker<'_> {
         for rule in &outcome.rules {
             match rule.disposition {
                 Disposition::Fired => self.fired.push(rule.name.clone()),
-                Disposition::Undecided => self.undecided.push(rule.name.clone()),
+                Disposition::Undecided => self.undecided.push(Undecided {
+                    rule: rule.name.clone(),
+                    why: crate::outcome::undecided(rule),
+                }),
                 Disposition::Refused | Disposition::Unsimulatable => {}
             }
         }
@@ -239,6 +242,24 @@ impl Walker<'_> {
     }
 }
 
+/// What an act set off that could not be decided, as the reason the act was
+/// not decided either — or `None` when everything it set off was.
+///
+/// Each rule once, in the order it first ran, with the first reason it gave: a
+/// rule woken twice is still one rule nobody could decide, and the reason is
+/// what tells a reader whether the fix is in their journey or in the spec.
+pub(crate) fn set_off(undecided: &[Undecided]) -> Option<String> {
+    let mut named: Vec<&Undecided> = Vec::new();
+    for it in undecided {
+        if !named.iter().any(|seen| seen.rule == it.rule) {
+            named.push(it);
+        }
+    }
+    let said: Vec<String> =
+        named.iter().map(|it| format!("`{}` could not be decided: {}", it.rule, it.why)).collect();
+    (!said.is_empty()).then(|| format!("what it set off: {}", said.join("; ")))
+}
+
 /// Every trigger this step emitted, as the events they would be.
 fn emissions(outcome: &StepOutcome) -> Vec<Event> {
     let mut found = Vec::new();
@@ -270,6 +291,38 @@ fn key_of(event: &Event) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod set_off {
+        use super::*;
+
+        fn rule(name: &str, why: &str) -> Undecided {
+            Undecided { rule: name.to_owned(), why: why.to_owned() }
+        }
+
+        #[test]
+        fn nothing_undecided_says_nothing() {
+            assert_eq!(set_off(&[]), None);
+        }
+
+        /// Named, with its reason: the name says where, the reason says what.
+        #[test]
+        fn names_the_rule_and_why() {
+            assert_eq!(
+                set_off(&[rule("Halted", "nothing is bound to `abort`")]).as_deref(),
+                Some("what it set off: `Halted` could not be decided: nothing is bound to `abort`")
+            );
+        }
+
+        /// Fan-out wakes one rule once per recipient; it is still one rule.
+        #[test]
+        fn a_rule_woken_twice_is_named_once_in_the_order_it_first_ran() {
+            let said = set_off(&[rule("B", "first"), rule("A", "a"), rule("B", "second")])
+                .expect("something to say");
+            assert_eq!(said.matches("`B`").count(), 1, "{said}");
+            assert!(said.contains("`B` could not be decided: first"), "{said}");
+            assert!(said.find("`B`") < said.find("`A`"), "{said}");
+        }
+    }
 
     /// What makes one firing the same as another.
     ///

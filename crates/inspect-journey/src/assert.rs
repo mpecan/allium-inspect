@@ -46,8 +46,8 @@ impl Walker<'_> {
                 let ran = self.fired.iter().any(|name| name == rule);
                 // "did not run" and "could not be told whether it should" are
                 // different answers, and only one of them is about the spec.
-                if !ran && self.undecided.iter().any(|name| name == rule) {
-                    (Truth::Unknown, Some(format!("`{rule}` could not be decided")))
+                if !ran && let Some(it) = self.undecided.iter().find(|it| it.rule == *rule) {
+                    (Truth::Unknown, Some(format!("`{rule}` could not be decided: {}", it.why)))
                 } else if !ran && self.waits_on_the_world(rule) {
                     // Nobody fires a state-condition rule; it becomes true or it
                     // does not. The simulator lists the ones that became true and
