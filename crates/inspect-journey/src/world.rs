@@ -379,16 +379,16 @@ fn ledger(
 /// What a line is *about*, which is what two lines have to share to collide.
 ///
 /// A parameter by the one it resolves to, so `switches/config.x` written here
-/// overrides `config.x` in the world: two spellings of one switch.
+/// overrides `config.x` in the world: two spellings of one switch. Anything
+/// `resolve` does not take as a parameter, a field path included, is about
+/// the path as written.
 fn about(given: &Given, spec: &SpecGraph) -> String {
     match given {
         Given::Instance { name, .. } => name.clone(),
-        Given::Assign { path, .. } if config::is_config(path) => config::resolve(spec, path)
-            .map_or_else(
-                |_| path.as_written(),
-                |parameter| format!("{}/config.{}", parameter.module, parameter.name),
-            ),
-        Given::Assign { path, .. } => path.as_written(),
+        Given::Assign { path, .. } => config::resolve(spec, path).map_or_else(
+            |_| path.as_written(),
+            |parameter| format!("{}/config.{}", parameter.module, parameter.name),
+        ),
     }
 }
 
