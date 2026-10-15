@@ -40,6 +40,22 @@ pub const GRANTS: &[&str] = &["grants"];
 /// The guards fixture, alone: exposures shown only while a `when` holds.
 pub const GUARDS: &[&str] = &["guards"];
 
+/// The orders fixture, alone: a rule that reacts to a creation.
+pub const ORDERS: &[&str] = &["orders"];
+
+/// The pinboard fixture and the module whose entity it creates.
+pub const PINBOARD: &[&str] = &["notes", "pinboard"];
+
+/// The cells fixture, alone: a reaction that makes another of its own kind.
+pub const CELLS: &[&str] = &["cells"];
+
+/// The tickets fixture, alone: reactions that refuse, split, and are reached
+/// one emission away from the act.
+pub const TICKETS: &[&str] = &["tickets"];
+
+/// Two modules that each declare an `Order`.
+pub const SHOPS: &[&str] = &["shop", "warehouse"];
+
 /// `modules`, replayed from their recordings, with each module's source.
 pub fn library(modules: &[&str]) -> (SpecGraph, Program, Sources) {
     let root = fixtures();

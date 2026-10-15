@@ -1,0 +1,20 @@
+-- allium: 3
+-- warehouse.allium
+--
+-- Another module's `Order`, with fields the shop's does not have, created
+-- unqualified from here. Nothing in this module reacts to it (issue #9).
+
+entity Order {
+    crate: Integer
+}
+
+rule Stock {
+    when: Stock(o)
+    ensures: Order.created(crate: 1)
+}
+
+surface Dock {
+    facing o: Order
+    provides:
+        Stock(o)
+}

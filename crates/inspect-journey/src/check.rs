@@ -262,12 +262,16 @@ fn check_field(
     let [field] = path.segments.as_slice() else { return };
     let Some(type_expr) = known.types.get(&path.root) else { return };
 
-    // Qualified names carry their module, and an optional carries a `?`.
-    let bare = type_expr.rsplit('/').next().unwrap_or(type_expr).trim_end_matches('?');
+    // Qualified names carry their module, and an optional carries a `?`. The
+    // module counts: two modules may each declare an `Order`, with different
+    // fields, and `warehouse/Order` is the one the journey said.
+    let written = type_expr.trim_end_matches('?');
+    let (module, bare) = written.rsplit_once('/').map_or((None, written), |(m, b)| (Some(m), b));
     let Some(detail) = graph
         .nodes
         .iter()
         .filter(|node| matches!(node.kind, NodeKind::Entity | NodeKind::Value))
+        .filter(|node| module.is_none_or(|module| node.module == module))
         .find(|node| node.name == bare)
         .and_then(|node| node.detail.as_entity())
     else {

@@ -1,0 +1,15 @@
+-- Issue #9, as it was filed: a rule that reacts to an entity being created,
+-- `when: o: Order.created`. The creation was recorded — `fresh.placed` held —
+-- and the reaction never ran, so `Welcome fires` was undecided and the field
+-- it writes was never written.
+
+journey CreatedTriggerFires {
+    cast:
+        seed: Order
+    1. placing an order creates one, which should be welcomed
+        seed does Place(seed) on Shop
+            creating fresh: Order
+        then fresh.placed = true
+        then Welcome fires
+        then fresh.welcomes = 1
+}

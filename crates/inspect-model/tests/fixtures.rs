@@ -42,14 +42,19 @@ fn recorded_version() -> String {
     read(&fixtures().join("cli/VERSION")).trim().to_owned()
 }
 
-/// A runner and reader replaying every recorded module.
+/// A runner and reader replaying the lending fixture's recorded modules.
 fn replay() -> (MapRunner, MemoryReader, Vec<PathBuf>) {
+    replay_of(&["catalogue", "lending"])
+}
+
+/// A runner and reader replaying the recorded `modules`.
+fn replay_of(modules: &[&str]) -> (MapRunner, MemoryReader, Vec<PathBuf>) {
     let root = fixtures();
     let mut runner = MapRunner::new(recorded_version());
     let mut reader = MemoryReader::default();
     let mut paths = Vec::new();
 
-    for module in ["catalogue", "lending"] {
+    for &module in modules {
         // Ingestion is driven with the same path the CLI was run with, so the
         // module name it derives matches the recordings.
         let path = root.join(format!("specs/{module}.allium"));
@@ -477,4 +482,30 @@ fn an_invariant_with_an_expression_carries_its_condition() {
             );
         }
     }
+}
+
+/// `when: note: memo/Note.created`, from what the CLI really printed: a
+/// qualified name, named for the entity rather than left with no trigger at
+/// all. The unit test beside the pass builds the same shape by hand; this is
+/// the proof the shape was the right one.
+#[test]
+fn a_reaction_to_another_modules_entity_is_triggered_by_that_entity() {
+    let (runner, reader, paths) = replay_of(&["notes", "pinboard"]);
+    let graph = ingest(&runner, &reader, &paths).expect("the recorded fixtures ingest").graph;
+    let notice =
+        graph.node(&id("pinboard", NodeKind::Rule, "Notice")).expect("Notice is a rule node");
+    let detail = notice.detail.as_rule().expect("a rule's detail");
+    assert_eq!(detail.trigger, "Note");
+
+    let woken_by: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.kind == EdgeKind::Triggers && edge.to == notice.id)
+        .filter_map(|edge| graph.node(&edge.from))
+        .collect();
+    assert_eq!(woken_by.len(), 1, "the trigger node the Flow view draws into it: {woken_by:?}");
+    assert_eq!(woken_by[0].name, "Note");
+    let trigger = woken_by[0].detail.as_trigger().expect("a trigger's detail");
+    assert_eq!(trigger.entity.as_deref(), Some("Note"));
+    assert_eq!(trigger.parameters, ["note"]);
 }

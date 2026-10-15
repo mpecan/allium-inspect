@@ -647,6 +647,164 @@ fn an_instance_of_a_type_the_spec_does_not_declare_falls_back_to_the_rule() {
     assert_eq!(world.instance(id).expect("it was created").module, "lending");
 }
 
+// --- a creation through a qualified name (issue #9) ------------------------
+
+/// `alias/Entity.created(field: value, …)`.
+fn qualified_creation(alias: &str, entity: &str, fields: Vec<(&str, Expr)>) -> Expr {
+    let Expr::Call { span, args, .. } = creation(entity, fields) else { unreachable!() };
+    let qualified = Expr::QualifiedName(allium_parser::ast::QualifiedName {
+        span: NOWHERE,
+        qualifier: Some(alias.to_owned()),
+        name: entity.to_owned(),
+    });
+    Expr::Call { span, function: Box::new(field(qualified, "created")), args }
+}
+
+/// `lending` imports `catalogue` as `cat`, and a second module, `archive`,
+/// declares a `Copy` of its own ahead of it in the graph — so finding the
+/// module by the entity's name alone would pick the wrong one.
+fn spec_with_alias() -> SpecGraph {
+    let mut graph = spec();
+    graph.nodes.insert(
+        0,
+        Node::new("archive", NodeKind::Entity, "Copy").with(NodeDetail::Entity(EntityDetail {
+            kind: EntityKind::Internal,
+            fields: Vec::new(),
+            transitions: Vec::new(),
+            parent: None,
+        })),
+    );
+    graph.modules.push(inspect_model::graph::Module {
+        name: "lending".to_owned(),
+        path: "lending.allium".to_owned(),
+        imports: vec![inspect_model::graph::Import {
+            alias: "cat".to_owned(),
+            path: "./catalogue.allium".to_owned(),
+            target: Some("catalogue".to_owned()),
+            span: None,
+        }],
+        language_version: Some(3),
+    });
+    graph
+}
+
+fn apply_qualified(graph: &SpecGraph, clause: &Expr) -> (Vec<Effect>, World) {
+    let (mut world, _) = world();
+    let mut application = Application::new(
+        Against { spec: graph, module: "lending", source: "", derived: &NOTHING },
+        &mut world,
+        BTreeMap::new(),
+    );
+    let effects = application.apply(clause).effects;
+    (effects, world)
+}
+
+/// What applying `clause` in `lending` left unresolved.
+fn unresolved_of(graph: &SpecGraph, clause: &Expr) -> Vec<String> {
+    let (mut world, _) = world();
+    let mut application = Application::new(
+        Against { spec: graph, module: "lending", source: "", derived: &NOTHING },
+        &mut world,
+        BTreeMap::new(),
+    );
+    application.apply(clause).unresolved.into_iter().map(|note| note.reason).collect()
+}
+
+#[test]
+fn a_qualified_creation_is_a_creation() {
+    // It was read as neither a creation nor a trigger: the rule fired and the
+    // world held nothing new.
+    let (effects, world) = apply_qualified(
+        &spec(),
+        &qualified_creation("cat", "Copy", vec![("shelfmark", text("QA76"))]),
+    );
+    let Some(Effect::Created { id, entity }) = effects.first() else {
+        panic!("expected a creation, got {effects:?}");
+    };
+    assert_eq!(entity, "Copy");
+    let copy = world.instance(id).expect("created");
+    assert_eq!(copy.field("shelfmark"), Value::Str("QA76".to_owned()));
+}
+
+#[test]
+fn a_qualified_creation_lands_in_the_module_its_alias_names() {
+    let (effects, world) =
+        apply_qualified(&spec_with_alias(), &qualified_creation("cat", "Copy", vec![]));
+    let Some(Effect::Created { id, .. }) = effects.first() else {
+        panic!("expected a creation, got {effects:?}");
+    };
+    assert_eq!(world.instance(id).expect("created").module, "catalogue");
+}
+
+/// The alias is the creating module's: another module that imports something
+/// else `as cat` says nothing about what `cat` means in `lending`.
+#[test]
+fn the_alias_is_read_from_the_imports_of_the_module_creating() {
+    let mut graph = spec_with_alias();
+    graph.modules.insert(
+        0,
+        inspect_model::graph::Module {
+            name: "archive".to_owned(),
+            path: "archive.allium".to_owned(),
+            imports: vec![inspect_model::graph::Import {
+                alias: "cat".to_owned(),
+                path: "./archive.allium".to_owned(),
+                target: Some("archive".to_owned()),
+                span: None,
+            }],
+            language_version: Some(3),
+        },
+    );
+    let (effects, world) = apply_qualified(&graph, &qualified_creation("cat", "Copy", vec![]));
+    let Some(Effect::Created { id, .. }) = effects.first() else {
+        panic!("expected a creation, got {effects:?}");
+    };
+    assert_eq!(world.instance(id).expect("created").module, "catalogue");
+}
+
+#[test]
+fn an_alias_that_resolves_leaves_nothing_unresolved() {
+    let notes = unresolved_of(&spec_with_alias(), &qualified_creation("cat", "Copy", vec![]));
+    assert!(notes.is_empty(), "{notes:?}");
+}
+
+#[test]
+fn an_unqualified_creation_is_still_placed_by_name() {
+    // The alias is consulted only when one was written.
+    let (effects, world) = apply_qualified(&spec_with_alias(), &creation("Copy", vec![]));
+    let Some(Effect::Created { id, .. }) = effects.first() else {
+        panic!("expected a creation, got {effects:?}");
+    };
+    assert_eq!(world.instance(id).expect("created").module, "archive");
+}
+
+#[test]
+fn an_alias_this_module_does_not_import_falls_back_to_the_name() {
+    let (effects, world) =
+        apply_qualified(&spec_with_alias(), &qualified_creation("nowhere", "Copy", vec![]));
+    let Some(Effect::Created { id, .. }) = effects.first() else {
+        panic!("expected a creation, got {effects:?}");
+    };
+    assert_eq!(world.instance(id).expect("created").module, "archive");
+    // Placed, and said to be a guess: the spec gave no home for it.
+    let notes = unresolved_of(&spec_with_alias(), &qualified_creation("nowhere", "Copy", vec![]));
+    assert!(notes.iter().any(|note| note.contains("`nowhere/Copy`")), "{notes:?}");
+}
+
+#[test]
+fn an_alias_whose_module_does_not_declare_the_entity_falls_back_to_the_name() {
+    // `cat/Loan`: `catalogue` declares no `Loan`, so the alias is no help and
+    // the entity is placed where it is declared rather than nowhere.
+    let (effects, world) =
+        apply_qualified(&spec_with_alias(), &qualified_creation("cat", "Loan", vec![]));
+    let Some(Effect::Created { id, .. }) = effects.first() else {
+        panic!("expected a creation, got {effects:?}");
+    };
+    assert_eq!(world.instance(id).expect("created").module, "lending");
+    let notes = unresolved_of(&spec_with_alias(), &qualified_creation("cat", "Loan", vec![]));
+    assert!(notes.iter().any(|note| note.contains("`cat/Loan`")), "{notes:?}");
+}
+
 // --- quoting the clause the author wrote ----------------------------------
 
 /// Apply `clause` against `source`, so spans have text to slice.

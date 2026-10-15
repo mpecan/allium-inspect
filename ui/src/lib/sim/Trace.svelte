@@ -9,6 +9,7 @@
   import type { RuleOutcome } from "../api/RuleOutcome";
   import type { StepOutcome } from "../api/StepOutcome";
   import Verdict from "../panels/Verdict.svelte";
+  import { offered } from "./enabled";
   import { render } from "./values";
 
   interface Props {
@@ -164,18 +165,18 @@
       <article class="enabled">
         <h3>Now possible</h3>
         <p class="prose">
-          These rules watch the world rather than waiting for a person. Each one
-          holds now and did not before.
+          These rules wait for no person. Each one either watches the world and
+          holds now when it did not before, or reacts to something this step
+          created.
         </p>
         <ul>
           {#each outcome.newly_enabled as rule, index (index)}
+            {@const said = offered(rule)}
             <li>
-              <span class="eyebrow">{rule.source}</span>
+              <span class="eyebrow">{said.eyebrow}</span>
               <strong>{rule.name}</strong>
-              {#if rule.over.length > 0}
-                <span class="over">
-                  over {rule.over.map((value) => render(value).text).join(", ")}
-                </span>
+              {#if said.about}
+                <span class="over">{said.about}</span>
               {/if}
               {#each rule.undecided as note, at (note.reason + at)}
                 <!-- Instances the condition could not settle. Without these a

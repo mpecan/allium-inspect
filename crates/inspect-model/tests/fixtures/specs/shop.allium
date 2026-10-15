@@ -1,0 +1,37 @@
+-- allium: 3
+-- shop.allium
+--
+-- An `Order` of its own, and a rule reacting to one being made. Read beside
+-- `warehouse.allium`, which declares a different `Order`: the warehouse making
+-- one of its own is not a shop order being placed (issue #9). A `Receipt` is
+-- made here too, and is not an order either.
+
+entity Order {
+    welcomed: Boolean
+}
+
+entity Receipt {
+    printed: Boolean
+}
+
+rule Welcome {
+    when: o: Order.created
+    ensures: o.welcomed = true
+}
+
+rule Buy {
+    when: Buy(o)
+    ensures: Order.created(welcomed: false)
+}
+
+rule Pay {
+    when: Pay(o)
+    ensures: Receipt.created(printed: true)
+}
+
+surface Till {
+    facing o: Order
+    provides:
+        Buy(o)
+        Pay(o)
+}

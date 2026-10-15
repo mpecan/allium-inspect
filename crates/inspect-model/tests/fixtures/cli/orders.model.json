@@ -1,0 +1,1 @@
+{"diagnostics":[],"entities":[{"fields":[{"name":"placed","type_expr":"Boolean"},{"name":"welcomes","type_expr":"Integer"}],"kind":"internal","name":"Order"}],"version":3}

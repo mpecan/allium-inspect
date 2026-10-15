@@ -317,6 +317,39 @@ what a rule two hops away made, and `then <Rule> fires` can ask about it. The
 Simulate view in the browser stops at the first rule and offers you the emission
 to follow, because there a person is picking. A journey has already picked.
 
+**A creation is followed the same way.** A rule written `when: o: Order.created`
+runs once for each order the act's rules create, about that order, and whatever
+it changes is there for the `then` lines after it. It is not a condition over
+the world: an order that was already in the cast, or made by an earlier step, was
+not just created, so nothing reacts to it again — and a firing about an order for
+some other reason does not wake it either. In the browser the reaction is listed
+under *Now possible*, labelled *created*, as reacting to the instances that were.
+
+Because it is not a condition, `then Welcome fires` about it is decided either
+way. If the act made no order, it did not run. If its `requires` refused, the
+line quotes the clause that did.
+
+A reaction can itself create, including another of what it reacts to. Each new
+instance is a new event, so no memory of what already ran will stop a rule that
+makes a cell every time a cell is made. After 32 rounds the act is reported
+*undecided*, naming what was still being set off, rather than being judged on a
+world cut off partway through.
+
+Two modules may each declare an `Order`. A reaction written `o: Order.created`
+reacts to its own module's orders, and `memo/Order.created` to those of the
+module imported `as memo`. Another module's `Order` being made does not wake it.
+
+A creation written through another module's name — `ensures: memo/Note.created(…)`
+— is a creation like any other, placed in the module the `use … as memo` names.
+An unqualified `Order.created(…)` goes in the creating module when that module
+declares an `Order`. `creating` catches by the entity's name, so
+`creating n: notes/Note` and `creating n: Note` name the same thing, and a
+reaction written `when: n: memo/Note.created` reacts to it.
+
+`creating` catches the first instance of that kind made since the act began,
+in the order they were made. That is the act's own creation when it made one,
+even if a reaction to it made another of the same kind afterwards.
+
 ### `cannot do` — the spec refuses, and that is the point
 
 ```

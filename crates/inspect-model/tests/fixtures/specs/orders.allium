@@ -1,0 +1,41 @@
+-- allium: 3
+-- orders.allium
+--
+-- A fixture of its own, standing alone: a rule that reacts to an entity
+-- being created. `when: o: Order.created` is one of the trigger kinds the
+-- language reference lists, and for a while this tool never fired it — the
+-- creation was recorded and the reaction to it was not (issue #9).
+--
+-- `welcomes` counts, rather than flags, so a reaction that ran twice for one
+-- creation is visible as a two.
+
+entity Order {
+    placed: Boolean
+    welcomes: Integer
+}
+
+rule Place {
+    when: Place(o)
+    ensures: Order.created(placed: true, welcomes: 0)
+}
+
+rule Welcome {
+    when: o: Order.created
+    ensures: o.welcomes = o.welcomes + 1
+}
+
+-- An order made and unmade in the same breath. Nothing was there afterwards
+-- for anything to react to, so nothing does.
+rule Retract {
+    when: Retract(o)
+    ensures:
+        let draft = Order.created(placed: false, welcomes: 0)
+        not exists draft
+}
+
+surface Shop {
+    facing o: Order
+    provides:
+        Place(o)
+        Retract(o)
+}

@@ -75,6 +75,8 @@ pub fn walk(
         cast: Vec::new(),
         fired: Vec::new(),
         undecided: Vec::new(),
+        refused: Vec::new(),
+        created: Vec::new(),
         notes: Vec::new(),
     };
     // The ground first, when this journey stands on some. Everything below —
@@ -132,6 +134,11 @@ pub(crate) struct Walker<'a> {
     pub(crate) fired: Vec<String>,
     /// Rules that could not be decided since it, for the same, and why.
     pub(crate) undecided: Vec<Undecided>,
+    /// Rules that were woken and refused since it, and the clauses that did.
+    pub(crate) refused: Vec<Undecided>,
+    /// Every instance made since it, in the order it was made — the act's own
+    /// first, then whatever it set off.
+    pub(crate) created: Vec<EntityId>,
     /// Faults that belong to no step clause.
     ///
     /// A cast member whose type the spec does not have, or a `given` that
@@ -267,9 +274,7 @@ impl Walker<'_> {
             event = event.with(name, self.value_of(argument));
         }
 
-        let before: Vec<EntityId> = self.world.entities.keys().cloned().collect();
-        self.fired.clear();
-        self.undecided.clear();
+        self.forget();
         let outcome = self.fire(&event);
 
         // `bruno cannot do MemberAsksToChat(…)`: the journey asserting a
@@ -286,13 +291,15 @@ impl Walker<'_> {
         }
 
         if let Some(caught) = creating {
+            // The first made, not the first in the world's order: ids sort as
+            // text, so `Order#10` comes before `Order#9`, and a reaction that
+            // made another order would be caught instead of the act's own
+            // whenever the count crossed a digit.
             let bare = caught.type_expr.rsplit('/').next().unwrap_or(&caught.type_expr);
             let fresh = self
-                .world
-                .entities
-                .keys()
-                .filter(|id| !before.contains(id))
-                .find(|id| id.entity() == bare)
+                .created
+                .iter()
+                .find(|id| id.entity() == bare && self.world.instance(id).is_some())
                 .cloned();
             match fresh {
                 Some(id) => {
@@ -391,8 +398,7 @@ impl Walker<'_> {
             };
         };
         self.world.now = self.world.now.saturating_add(*by);
-        self.fired.clear();
-        self.undecided.clear();
+        self.forget();
 
         // Time passing is a claim about the world, so it answers like one.
         // It used to report `Specified` whatever happened underneath it: two

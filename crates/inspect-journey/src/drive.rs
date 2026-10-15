@@ -14,7 +14,8 @@
 //! Both are bounded and both remember what they have already run, because a
 //! spec whose rules feed each other is ordinary rather than exceptional.
 
-use inspect_sim::{StepOutcome, Value, enabled, step::step, world::Event};
+use inspect_model::NodeKind;
+use inspect_sim::{StepOutcome, Truth, Value, enabled, step::step, world::Event};
 
 use crate::{
     check,
@@ -52,12 +53,31 @@ impl Walker<'_> {
 
         let mut seen = vec![key_of(event)];
         let mut pending = emissions(&acted);
-        for _ in 0..ROUNDS {
+        let mut rounds = 0;
+        loop {
             let next: Vec<Event> =
                 pending.into_iter().filter(|event| !seen.contains(&key_of(event))).collect();
             if next.is_empty() {
                 break;
             }
+            // Reaching the bound is said, as `settle` says it. The memory stops
+            // a loop that repeats itself; it cannot stop one that makes
+            // something new every round — `Divide` reacting to a cell being
+            // made by making another — and a world cut off there is not one
+            // the act leads to.
+            if rounds == ROUNDS {
+                let mut triggers: Vec<&str> = next.iter().map(|it| it.trigger.as_str()).collect();
+                triggers.dedup();
+                self.undecided.push(Undecided {
+                    rule: triggers.join("`, `"),
+                    why: format!(
+                        "it was still being set off after {ROUNDS} rounds, so what this act \
+                         leads to never settled"
+                    ),
+                });
+                break;
+            }
+            rounds += 1;
             pending = Vec::new();
             for event in next {
                 seen.push(key_of(&event));
@@ -66,6 +86,14 @@ impl Walker<'_> {
         }
 
         acted
+    }
+
+    /// Forget what ran, before a step that will say what it ran.
+    pub(crate) fn forget(&mut self) {
+        self.fired.clear();
+        self.undecided.clear();
+        self.refused.clear();
+        self.created.clear();
     }
 
     /// One turn of the engine, remembering what ran.
@@ -79,7 +107,16 @@ impl Walker<'_> {
                     rule: rule.name.clone(),
                     why: crate::outcome::undecided(rule),
                 }),
-                Disposition::Refused | Disposition::Unsimulatable => {}
+                Disposition::Refused => self.refused.push(Undecided {
+                    rule: rule.name.clone(),
+                    why: crate::outcome::refused(rule),
+                }),
+                Disposition::Unsimulatable => {}
+            }
+            for effect in &rule.effects {
+                if let inspect_sim::Effect::Created { id, .. } = effect {
+                    self.created.push(id.clone());
+                }
             }
         }
         self.world = outcome.world.clone();
@@ -166,6 +203,64 @@ impl Walker<'_> {
             }
         }
         Settled::No { rounds: ROUNDS }
+    }
+}
+
+impl Walker<'_> {
+    /// `then <Rule> fires`, or `does not fire`, against what the last step ran.
+    pub(crate) fn fires(&self, rule: &str, negated: bool) -> (Truth, Option<String>) {
+        let ran = self.fired.iter().any(|name| name == rule);
+        // "did not run" and "could not be told whether it should" are
+        // different answers, and only one of them is about the spec.
+        if !ran && let Some(it) = self.undecided.iter().find(|it| it.rule == rule) {
+            return (Truth::Unknown, Some(format!("`{rule}` could not be decided: {}", it.why)));
+        }
+        // Woken and refused: the spec's own reason, in its own words, rather
+        // than a bare "did not run" a reader has to go and explain.
+        if !ran && let Some(it) = self.refused.iter().find(|it| it.rule == rule) {
+            return (Truth::from_bool(negated), Some(format!("`{rule}` refused: {}", it.why)));
+        }
+        if !ran && self.waits_on_the_world(rule) {
+            // Nobody fires a state-condition rule; it becomes true or it does
+            // not. The simulator lists the ones that became true and says
+            // nothing about the rest, so a rule whose condition is *false* and
+            // one whose condition could not be *decided* look identical from
+            // here — and reporting the second as a flat no is the failure this
+            // whole design refuses.
+            return (
+                Truth::Unknown,
+                Some(format!(
+                    "`{rule}` never became true, and whether its condition is false or could \
+                     not be decided is not visible from here"
+                )),
+            );
+        }
+        // Said either way. A refused `does not fire` with nothing under it
+        // reads, in a report, like a line that held.
+        (
+            Truth::from_bool(ran != negated),
+            Some(if ran { format!("`{rule}` ran") } else { format!("`{rule}` did not run") }),
+        )
+    }
+
+    /// Whether a rule waits on the world rather than on somebody acting.
+    ///
+    /// Not a creation rule, although the model files one as a state rule: a
+    /// creation is followed whenever a step makes one, so one that did not run
+    /// was either never woken — nothing of its kind was made — or refused, and
+    /// both of those are visible from here.
+    fn waits_on_the_world(&self, rule: &str) -> bool {
+        use inspect_model::graph::TriggerSource;
+        self.spec.nodes_of(NodeKind::Rule).find(|node| node.name == rule).is_some_and(|node| {
+            let creation = self
+                .program
+                .rule(node.id.as_str())
+                .is_some_and(|ast| inspect_sim::creation::creation_of(ast.when.as_ref()).is_some());
+            !creation
+                && node.detail.as_rule().is_some_and(|detail| {
+                    matches!(detail.source, TriggerSource::State | TriggerSource::Temporal)
+                })
+        })
     }
 }
 
@@ -260,7 +355,13 @@ pub(crate) fn set_off(undecided: &[Undecided]) -> Option<String> {
     (!said.is_empty()).then(|| format!("what it set off: {}", said.join("; ")))
 }
 
-/// Every trigger this step emitted, as the events they would be.
+/// Every trigger this step emitted, and every creation it made that a rule
+/// reacts to, as the events they would be.
+///
+/// A creation is followed for the same reason an emission is: `when: o:
+/// Order.created` is a rule the specification says runs when an order is made,
+/// and a journey that made one has said it was. Left out, the order was there
+/// and the rule that reacts to it never ran.
 fn emissions(outcome: &StepOutcome) -> Vec<Event> {
     let mut found = Vec::new();
     for rule in &outcome.rules {
@@ -274,6 +375,7 @@ fn emissions(outcome: &StepOutcome) -> Vec<Event> {
             }
         }
     }
+    found.extend(inspect_sim::reactions(outcome));
     found
 }
 

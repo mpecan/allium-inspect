@@ -257,7 +257,9 @@ fn call_parameters(call: &Value) -> (Vec<String>, Vec<String>) {
 /// the entity being watched is at the bottom of it.
 fn root_identifier(value: &Value) -> Option<String> {
     match json::tagged(value)? {
-        ("Ident", inner) => json::string(inner, "name"),
+        // `memo/Note`: named for the entity, as the world holds it. The alias
+        // is the importing file's spelling for a module, not part of the name.
+        ("Ident" | "QualifiedName", inner) => json::string(inner, "name"),
         ("MemberAccess", inner) => root_identifier(inner.get("object")?),
         ("Comparison" | "BinaryOp" | "LogicalOp", inner) => root_identifier(inner.get("left")?),
         ("Not" | "Exists" | "NotExists", inner) => {
@@ -380,6 +382,30 @@ mod more_tests {
         assert_eq!(detail.source, TriggerSource::State);
         assert_eq!(detail.entity.as_deref(), Some("Copy"));
         assert_eq!(detail.parameters, ["copy"], "the binding name is the parameter");
+    }
+
+    /// `when: note: memo/Note.created` — a reaction to another module's entity.
+    /// The qualifier is the alias the module uses for it, and what the trigger
+    /// is named for is the entity. Without this the rule had no trigger at all.
+    #[test]
+    fn a_qualified_state_condition_is_named_for_the_entity_it_watches() {
+        let when = json!({"Binding": {
+            "span": {"start": 0, "end": 0},
+            "name": {"span": {"start": 0, "end": 0}, "name": "note"},
+            "value": member(
+                json!({"QualifiedName": {
+                    "span": {"start": 0, "end": 0},
+                    "qualifier": "memo",
+                    "name": "Note",
+                }}),
+                "created",
+            ),
+        }});
+        let (name, detail) = trigger_from_when(&when);
+        assert_eq!(name, "Note");
+        assert_eq!(detail.source, TriggerSource::State);
+        assert_eq!(detail.entity.as_deref(), Some("Note"));
+        assert_eq!(detail.parameters, ["note"]);
     }
 
     #[test]

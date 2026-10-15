@@ -30,6 +30,7 @@ use ts_rs::TS;
 use crate::{
     apply::Against,
     apply::{Application, Effect},
+    creation,
     eval::{Env, Unresolved, eval},
     truth::Truth,
     value::Value,
@@ -90,7 +91,8 @@ pub struct RuleOutcome {
     pub unresolved: Vec<Unresolved>,
 }
 
-/// A state-condition rule that holds now.
+/// A state-condition rule that holds now, or a rule reacting to something the
+/// step created — told apart by a trigger ending `.created` (see `creation`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../ui/src/lib/api/")]
 pub struct Enabled {
@@ -175,7 +177,8 @@ pub fn step(
 
     for node in spec.nodes_of(NodeKind::Rule) {
         let Some(detail) = node.detail.as_rule() else { continue };
-        if detail.trigger != event.trigger {
+        let when = program.rule(node.id.as_str()).and_then(|ast| ast.when.as_ref());
+        if !creation::wakes(&detail.trigger, when, event) {
             continue;
         }
         let source = sources.get(&node.module).map(String::as_str).unwrap_or_default();
@@ -212,10 +215,14 @@ pub fn step(
         })
         .collect();
 
-    let newly_enabled = enabled(spec, program, sources, &next)
+    let mut newly_enabled: Vec<Enabled> = enabled(spec, program, sources, &next)
         .into_iter()
         .filter(|candidate| !enabled_before.iter().any(|earlier| earlier.rule == candidate.rule))
         .collect();
+    // What this step created, offered to the rules that react to a creation —
+    // run by nobody here, for the same reason an emission is not: one step is
+    // one step. `reactions` turns these into the events to fire.
+    newly_enabled.extend(creation::reacting(spec, program, &rules, &next));
 
     StepOutcome { world: next, event: event.clone(), rules, invariants, newly_enabled, emitted }
 }
@@ -298,6 +305,37 @@ fn run_rule(
 
     let mut requires = Vec::new();
     let mut unresolved = Vec::new();
+
+    // A creation rule's `when` is the creation, not a condition to read: the
+    // instance it is about is the one the event carries, under the rule's own
+    // name or, when another rule's name was used, the one of its entity.
+    if let Some((binding, entity)) = creation::creation_of(ast.when.as_ref())
+        && let Some(when) = ast.when.as_ref()
+    {
+        if !bindings.contains_key(binding)
+            && let Some(id) = carried(&event.arguments, world, entity)
+        {
+            bindings.insert(binding.to_owned(), Value::Ref(id));
+        }
+        let home = creation::reacts_in(spec, module, Some(when));
+        let (truth, why) = creation::when_verdict(
+            (binding, entity, home.as_deref()),
+            when,
+            &bindings,
+            world,
+            source,
+        );
+        unresolved.extend(why.clone());
+        requires.push(ClauseVerdict {
+            text: detail
+                .clauses_of("when")
+                .next()
+                .map(|clause| clause.text.clone())
+                .unwrap_or_default(),
+            truth,
+            unresolved: why,
+        });
+    }
 
     // A state rule's own condition, first, as a precondition. Nobody names a
     // state rule's trigger: it is the entity, so whatever made *one* rule on
@@ -510,6 +548,10 @@ fn state_condition<'a>(
     ast: &'a inspect_model::RuleAst,
 ) -> Option<(&'a str, &'a Expr)> {
     if detail.source == TriggerSource::External {
+        return None;
+    }
+    // Written like a condition and not one: see `creation`.
+    if creation::creation_of(ast.when.as_ref()).is_some() {
         return None;
     }
     match &ast.when {

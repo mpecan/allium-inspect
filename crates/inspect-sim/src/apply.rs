@@ -204,11 +204,19 @@ impl<'a> Application<'a> {
     /// `Entity.created(...)` or `TriggerName(...)`.
     fn call(&mut self, function: &Expr, args: &[CallArg]) -> Applied {
         // `Message.created(...)`: a member access whose field is `created`.
+        // Or `memo/Note.created(...)`, an entity another module declares —
+        // which, read only as a bare name, was neither a creation nor a
+        // trigger, so the rule fired and nothing was made.
         if let Expr::MemberAccess { object, field, .. } = function
             && field.name == "created"
-            && let Some(entity) = bare_name(object)
         {
-            return self.creation(entity, args);
+            match object.as_ref() {
+                Expr::Ident(ident) => return self.creation(&ident.name, None, args),
+                Expr::QualifiedName(name) => {
+                    return self.creation(&name.name, name.qualifier.as_deref(), args);
+                }
+                _ => {}
+            }
         }
 
         // Otherwise a bare name: a trigger emission.
@@ -319,12 +327,16 @@ impl<'a> Application<'a> {
         }
     }
 
-    /// `Entity.created(field: value, ...)`.
-    fn creation(&mut self, entity: &str, args: &[CallArg]) -> Applied {
-        let home = self.declaring_module(entity).unwrap_or_else(|| self.against.module.to_owned());
+    /// `Entity.created(field: value, ...)`, or `alias/Entity.created(...)`.
+    fn creation(&mut self, entity: &str, alias: Option<&str>, args: &[CallArg]) -> Applied {
+        let (home, guessed) = self.declaring_module(entity, alias);
+        let home = home.unwrap_or_else(|| self.against.module.to_owned());
         let id = self.world.create(entity, &home);
         let mut applied =
             Applied::effect(Effect::Created { id: id.clone(), entity: entity.to_owned() });
+        if let Some(reason) = guessed {
+            applied.unresolved.push(Unresolved { reason, expression: None, span: None });
+        }
 
         for argument in args {
             let CallArg::Named(named) = argument else { continue };
@@ -339,7 +351,7 @@ impl<'a> Application<'a> {
             // status, and every rule that later reads it is undecided too.
             if evaluated.value.is_unknown()
                 && let Some(name) = bare_name(value_node)
-                && let Some(state) = self.declared_state(entity, field, name)
+                && let Some(state) = self.declared_state(&home, entity, field, name)
             {
                 evaluated = Evaluation { value: state, unresolved: Vec::new() };
             }
@@ -389,8 +401,11 @@ impl<'a> Application<'a> {
         // inventing a state nothing declares.
         if evaluated.value.is_unknown()
             && let Some(name) = bare_name(value_node)
-            && let Some(entity) = self.world.instance(&id).map(|instance| instance.entity.clone())
-            && let Some(state) = self.declared_state(&entity, &field, name)
+            && let Some((home, entity)) = self
+                .world
+                .instance(&id)
+                .map(|instance| (instance.module.clone(), instance.entity.clone()))
+            && let Some(state) = self.declared_state(&home, &entity, &field, name)
         {
             evaluated = Evaluation { value: state, unresolved: Vec::new() };
         }
@@ -510,13 +525,35 @@ impl<'a> Application<'a> {
 
     /// The module that declares `entity`, so a created instance knows where it
     /// is from even when the rule creating it lives elsewhere.
-    fn declaring_module(&self, entity: &str) -> Option<String> {
-        self.against
-            .spec
+    ///
+    /// Where the creation's own spelling leads first: `memo/Note` through
+    /// whatever this module imported `as memo`, a bare `Order` to this module
+    /// when it declares one — two modules may each have an `Order`, and the
+    /// first one in the graph is not this one's. Then by name alone, which is
+    /// how an unqualified creation of another module's entity is placed. An
+    /// alias that leads nowhere is placed the same way, and says so: the
+    /// spec did not give the home this guesses.
+    fn declaring_module(
+        &self,
+        entity: &str,
+        alias: Option<&str>,
+    ) -> (Option<String>, Option<String>) {
+        let Against { spec, module, .. } = self.against;
+        if let Some(home) = crate::creation::declared_in(spec, module, alias, entity) {
+            return (Some(home), None);
+        }
+        let by_name = spec
             .nodes
             .iter()
             .find(|node| node.kind == NodeKind::Entity && node.name == entity)
-            .map(|node| node.module.clone())
+            .map(|node| node.module.clone());
+        let note = alias.map(|alias| {
+            format!(
+                "`{alias}/{entity}` leads to no module `{module}` imports that declares \
+                 `{entity}`, so where the created `{entity}` belongs is a guess"
+            )
+        });
+        (by_name, note)
     }
 
     /// `name` as a state of `entity.field`, when the spec declares it as one.
@@ -532,15 +569,15 @@ impl<'a> Application<'a> {
     /// asks `not exists Receipt{…, kind: read}` before creating one could
     /// never tell whether it already had, and a person reading the same
     /// message twice was undecidable from the second time on.
-    fn declared_state(&self, entity: &str, field: &str, name: &str) -> Option<Value> {
-        let node = self
-            .against
-            .spec
-            .nodes
-            .iter()
-            .find(|node| node.kind == NodeKind::Entity && node.name == entity)?;
+    fn declared_state(&self, home: &str, entity: &str, field: &str, name: &str) -> Option<Value> {
+        // The entity of the module the instance was filed in, when it is one:
+        // another module's `Order` need not have the same fields.
+        let spec = self.against.spec;
+        let node = spec.node(&NodeId::new(home, NodeKind::Entity, entity)).or_else(|| {
+            spec.nodes.iter().find(|node| node.kind == NodeKind::Entity && node.name == entity)
+        })?;
         let declared = node.detail.as_entity()?.field(field)?;
-        let known = self.against.spec.states_of(declared).iter().any(|state| state == name);
+        let known = spec.states_of(declared).iter().any(|state| state == name);
         known.then(|| Value::Enum(name.to_owned()))
     }
 

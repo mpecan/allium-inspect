@@ -1,0 +1,10 @@
+-- allium: 3
+-- notes.allium
+--
+-- Declares an entity and nothing else, so that everything that happens to a
+-- note is done from `pinboard.allium`, across a module boundary (issue #9).
+
+entity Note {
+    text: String
+    seen: Boolean
+}

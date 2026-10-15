@@ -45,13 +45,7 @@ pub(crate) fn refusal(outcome: &StepOutcome) -> Option<String> {
     for rule in &outcome.rules {
         match rule.disposition {
             Disposition::Refused => {
-                let blocking: Vec<&str> = rule
-                    .requires
-                    .iter()
-                    .filter(|clause| clause.truth == Truth::False)
-                    .map(|clause| clause.text.as_str())
-                    .collect();
-                return Some(format!("`{}` refused: {}", rule.name, blocking.join("; ")));
+                return Some(format!("`{}` refused: {}", rule.name, refused(rule)));
             }
             Disposition::Undecided => {
                 return Some(format!("`{}` could not be decided: {}", rule.name, undecided(rule)));
@@ -66,6 +60,17 @@ pub(crate) fn refusal(outcome: &StepOutcome) -> Option<String> {
         return Some("no rule waits for this".to_owned());
     }
     None
+}
+
+/// Why a rule refused: the clauses that were false, as the spec wrote them.
+pub(crate) fn refused(rule: &RuleOutcome) -> String {
+    let blocking: Vec<&str> = rule
+        .requires
+        .iter()
+        .filter(|clause| clause.truth == Truth::False)
+        .map(|clause| clause.text.as_str())
+        .collect();
+    blocking.join("; ")
 }
 
 /// Why a rule could not be decided: its first reason, and where.

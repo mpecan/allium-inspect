@@ -1,0 +1,57 @@
+-- allium: 3
+-- tickets.allium
+--
+-- Reactions to a creation that refuse, that make another of the same kind,
+-- and that are reached one emission away from the act (issue #9).
+--
+-- `Open` makes a ticket. `Split` reacts by making a child ticket, once: a
+-- child does not split. `Greet` greets only an opened ticket, so it refuses
+-- every child. `Queue` makes nothing itself and emits `Open`, and `Touch`
+-- makes nothing at all.
+
+entity Ticket {
+    placed: Boolean
+    child: Boolean
+    greeted: Boolean
+}
+
+rule Open {
+    when: Open(t)
+    ensures: Ticket.created(placed: true, child: false, greeted: false)
+}
+
+rule OpenChild {
+    when: OpenChild(t)
+    ensures: Ticket.created(placed: false, child: true, greeted: false)
+}
+
+rule Queue {
+    when: Queue(t)
+    ensures: Open(t)
+}
+
+rule Touch {
+    when: Touch(t)
+    ensures: t.greeted = true
+}
+
+rule Split {
+    when: t: Ticket.created
+    requires: t.child = false
+    ensures: Ticket.created(placed: false, child: true, greeted: false)
+}
+
+rule Greet {
+    when: t: Ticket.created
+    requires: t.placed = true
+    ensures: t.greeted = true
+}
+
+surface Counter {
+    facing t: Ticket
+    provides:
+        Open(t)
+        OpenChild(t)
+        Queue(t)
+        Touch(t)
+}

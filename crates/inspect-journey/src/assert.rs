@@ -7,7 +7,6 @@
 use std::collections::BTreeMap;
 
 use allium_parser::ast::{CallArg, Expr, ForBinding};
-use inspect_model::NodeKind;
 use inspect_sim::{
     Truth, Value,
     eval::{Env, eval},
@@ -42,39 +41,7 @@ impl Walker<'_> {
                 };
                 (truth, Some(format!("{} is {}", haystack.as_written(), inside.render())))
             }
-            Assertion::Fires { rule, negated } => {
-                let ran = self.fired.iter().any(|name| name == rule);
-                // "did not run" and "could not be told whether it should" are
-                // different answers, and only one of them is about the spec.
-                if !ran && let Some(it) = self.undecided.iter().find(|it| it.rule == *rule) {
-                    (Truth::Unknown, Some(format!("`{rule}` could not be decided: {}", it.why)))
-                } else if !ran && self.waits_on_the_world(rule) {
-                    // Nobody fires a state-condition rule; it becomes true or it
-                    // does not. The simulator lists the ones that became true and
-                    // says nothing about the rest, so a rule whose condition is
-                    // *false* and one whose condition could not be *decided* look
-                    // identical from here — and reporting the second as a flat no
-                    // is the failure this whole design refuses.
-                    (
-                        Truth::Unknown,
-                        Some(format!(
-                            "`{rule}` never became true, and whether its condition is false or \
-                             could not be decided is not visible from here"
-                        )),
-                    )
-                } else {
-                    // Said either way. A refused `does not fire` with nothing
-                    // under it reads, in a report, like a line that held.
-                    (
-                        Truth::from_bool(ran != *negated),
-                        Some(if ran {
-                            format!("`{rule}` ran")
-                        } else {
-                            format!("`{rule}` did not run")
-                        }),
-                    )
-                }
-            }
+            Assertion::Fires { rule, negated } => self.fires(rule, *negated),
             Assertion::Exists { path, negated } => {
                 let value = self.read(path);
                 // An unknown is not an absence, and this is the one arm where
@@ -106,18 +73,6 @@ impl Walker<'_> {
             Truth::Unknown => Verdict::Undecided,
         };
         Outcome { line, verdict, about, detail: if truth == Truth::True { None } else { detail } }
-    }
-
-    /// Whether a rule waits on the world rather than on somebody acting.
-    fn waits_on_the_world(&self, rule: &str) -> bool {
-        use inspect_model::graph::TriggerSource;
-        self.spec
-            .nodes_of(NodeKind::Rule)
-            .find(|node| node.name == rule)
-            .and_then(|node| node.detail.as_rule())
-            .is_some_and(|detail| {
-                matches!(detail.source, TriggerSource::State | TriggerSource::Temporal)
-            })
     }
 
     /// Can this actor observe this value here?
