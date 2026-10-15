@@ -513,6 +513,69 @@ fn iterating_over_something_that_is_not_a_collection_applies_nothing() {
     assert!(!reasons.is_empty());
 }
 
+/// A collection nothing settled is named as unsettled, quoted from the
+/// source, not described as "an unknown" the reader cannot find in the file.
+#[test]
+fn an_iteration_over_an_unsettled_collection_quotes_it_as_never_settled() {
+    let source = "for x in nobody";
+    let collection = Expr::Ident(Ident { span: Span::new(9, 15), name: "nobody".to_owned() });
+    let clause = iteration("x", collection, emission("Seen"));
+    let graph = spec();
+    let mut world = World::new();
+    let mut application = Application::new(
+        Against { spec: &graph, module: "lending", source, derived: &NOTHING },
+        &mut world,
+        BTreeMap::new(),
+    );
+    let applied = application.apply(&clause);
+    assert_eq!(
+        unapplied(&applied),
+        vec![
+            "`for x in nobody`: `nobody` was never settled, so the clauses inside it were not applied"
+        ]
+    );
+}
+
+/// An instance whose module is not where its entity is declared still has
+/// that entity's fields found, by name — and only that entity's. Another
+/// entity ahead of it in the graph, declaring nothing, is not it.
+#[test]
+fn a_member_from_another_module_is_still_read_against_its_own_entity() {
+    let mut graph = spec();
+    graph.nodes.insert(
+        0,
+        Node::new("circulation", NodeKind::Entity, "Shelf").with(NodeDetail::Entity(
+            EntityDetail {
+                kind: EntityKind::Internal,
+                fields: Vec::new(),
+                transitions: Vec::new(),
+                parent: None,
+            },
+        )),
+    );
+    let mut world = World::new();
+    let unset = world.create("Copy", "elsewhere");
+    let bound = BTreeMap::from([("status".to_owned(), Value::Enum("available".to_owned()))]);
+    let clause = filtered_iteration(
+        "c",
+        ident("Copies"),
+        compare(ident("status"), ComparisonOp::Eq, ident("available")),
+        seen_for("c"),
+    );
+    let mut application = Application::new(
+        Against { spec: &graph, module: "lending", source: "", derived: &NOTHING },
+        &mut world,
+        bound,
+    );
+    let applied = application.apply(&clause);
+    assert!(emitted_for(&applied.effects).is_empty(), "{:?}", applied.effects);
+    assert!(
+        unapplied(&applied).iter().any(|reason| reason.contains(&unset.to_string())),
+        "{:?}",
+        unapplied(&applied)
+    );
+}
+
 /// Apply `clause` against `world`, with nothing bound beforehand.
 fn apply_in(world: &mut World, clause: &Expr) -> (Vec<Effect>, Vec<String>) {
     let applied = applied_in(world, BTreeMap::new(), clause);

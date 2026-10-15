@@ -487,6 +487,33 @@ mod tests {
         }
     }
 
+    mod partly {
+        use super::*;
+
+        fn rule(name: &str, why: &str) -> Undecided {
+            Undecided { rule: name.to_owned(), why: why.to_owned() }
+        }
+
+        /// A fan-out that skipped two members left two notes from one rule;
+        /// it is one rule that fired, said once, with its first reason.
+        #[test]
+        fn a_rule_that_left_two_things_unapplied_is_named_once() {
+            let said = partly(&[rule("Fan", "Hook#1"), rule("Ring", "b"), rule("Fan", "Hook#2")])
+                .expect("something to say");
+            assert_eq!(said.matches("`Fan`").count(), 1, "{said}");
+            assert_eq!(said.matches("`Ring`").count(), 1, "{said}");
+            assert!(
+                said.contains("`Fan` fired, but part of what it ensures was not applied: Hook#1")
+            );
+            assert!(!said.contains("Hook#2"), "{said}");
+        }
+
+        #[test]
+        fn everything_applied_says_nothing() {
+            assert_eq!(partly(&[]), None);
+        }
+    }
+
     /// What makes one firing the same as another.
     ///
     /// The whole of the loop guard. Two rules that emit each other would run
