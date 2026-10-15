@@ -142,6 +142,22 @@ fn an_actor_nothing_settled_is_undecided_both_ways() {
     }
 }
 
+/// Every field of `bob` unset, `flag` declared first: the reason names the
+/// field the condition reads, not whichever unset field the entity lists first.
+#[test]
+fn an_unsettled_actor_is_told_the_field_the_condition_reads() {
+    let clause = "bob cannot do Flip(bob) on AdminPanel";
+    let result = walked(&journey(
+        "        bob: User\n        desk: Workspace",
+        "        desk.archived = false",
+        &format!("        {clause}"),
+    ));
+    let (verdict, why) = line(&result, clause);
+    assert_eq!(verdict, Verdict::Undecided, "{why}");
+    assert!(why.ends_with("`bob` has no `is_admin` set"), "{why}");
+    assert!(!why.contains("`flag`"), "{why}");
+}
+
 /// Unsettled, nothing ran — but nothing *decided* it did not, either. A
 /// `then Flip does not fire` holding there is unknown read as false.
 #[test]
@@ -407,6 +423,47 @@ fn a_look_binds_within_to_the_context_it_names() {
     assert_eq!(
         why,
         "`WorkspacePanel` faces `WorkspaceOwner`, and `theirs` is not one: not `workspace = within`"
+    );
+}
+
+/// A look at a surface that *is* at a workspace, naming none: told the `in`
+/// that would say which, since this surface has one to name.
+#[test]
+fn a_look_that_named_no_context_is_told_to_name_one() {
+    for clause in [
+        "seat sees desk.archived on WorkspacePanel",
+        "seat cannot see desk.archived on WorkspacePanel",
+    ] {
+        let result = walked(&journey(
+            "        seat: Seat\n        desk: Workspace",
+            "        seat.workspace = desk\n        desk.archived = false",
+            &format!("        {clause}"),
+        ));
+        let (verdict, why) = line(&result, clause);
+        assert_eq!(verdict, Verdict::Undecided, "{clause}: {why}");
+        assert!(
+            why.ends_with("say which one with `… on WorkspacePanel in <the Workspace>`"),
+            "{clause}: {why}"
+        );
+    }
+}
+
+/// An act on that surface whose argument is not a workspace placed nothing,
+/// and is told which of the surface's contexts no argument was.
+#[test]
+fn an_act_that_passed_no_context_is_told_which_one_it_did_not_pass() {
+    let clause = "seat does Archive(seat) on WorkspacePanel";
+    let result = walked(&journey(
+        "        seat: Seat\n        desk: Workspace",
+        "        seat.workspace = desk\n        seat.left = false",
+        &format!("        {clause}"),
+    ));
+    let (_, why) = line(&result, clause);
+    assert!(
+        why.contains(
+            "no argument of this act is the `Workspace` `WorkspacePanel` passes as `workspace`"
+        ),
+        "{why}"
     );
 }
 

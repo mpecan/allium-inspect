@@ -4,7 +4,8 @@
 -- Who a surface faces (issue #13). `AdminPanel` faces a `SiteAdmin`, who is a
 -- user whose `is_admin` is true, and `Flip` has no `requires` of its own — so
 -- the only thing standing between a user who is not an admin and the panel is
--- the actor the surface faces. `OpenPanel` faces any user at all, `TeamPanel`
+-- the actor the surface faces. `is_admin` is declared after `flag`, so a field
+-- left unset is not named only because it comes first. `OpenPanel` faces any user at all, `TeamPanel`
 -- faces an entity directly, and `WorkspacePanel` faces somebody identified
 -- `within` the workspace it is at, while `BarePanel` faces the same owner and
 -- is at no workspace at all. `Lock` restates a permission as a `requires`, so
@@ -12,8 +13,8 @@
 -- faces `SiteAdmin` from another module.
 
 entity User {
-    is_admin: Boolean
     flag: Boolean
+    is_admin: Boolean
 }
 
 entity Team {
