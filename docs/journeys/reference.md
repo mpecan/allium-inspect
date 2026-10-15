@@ -426,6 +426,37 @@ for m in group.messages:
 from two places. `loan.shelfmark` is not, and does not match `loan.copy.
 shelfmark` merely because both end in the same word.
 
+**A `when` guard is read against the world.** An item the language marks as
+conditionally visible —
+
+```text
+context doc: Doc
+exposes:
+    doc.owner
+    doc.secret when doc.is_private = false
+```
+
+— is shown while its guard holds and hidden while it does not, the same as a
+`for … where` filter: `sees` holds and `cannot see` is refused for a public
+document, and the other way round for a private one. Inside a `for` body the
+guard is about the element being visited, so one shelf can show one document's
+secret and hide the next. The guard may read whoever the surface faces, so
+`doc.secret when viewer.owner = doc.owner` shows the same field to one reader
+and not the next. A hidden field says which guard hid it — ``… shows
+`d.secret` only `when doc.is_private = false`, which does not hold here`` —
+because the answer is in the journey's `given:`, not in the surface.
+
+A guard nothing could settle — `is_private` never set — leaves **both** `sees`
+and `cannot see` undecided, and the reason quotes the guard as written, ``…
+`when doc.is_private = false` could not be settled``, followed by what was
+missing. So does a guard that came back something other than true or false,
+and so does one computed over a filtered set that left a member out because
+nothing could decide it: `(shelf.docs where is_private = true).count > 0` is
+not settled while one document's privacy is unsaid, however definite the count
+looks, and the same holds for a `for … where` filter. The guard reaches only
+the item it is written on; `doc.owner` beside it is shown whatever the guard
+says.
+
 **Say which one with `in`.** A surface scoped to a `Group` shows one group's
 business, and a person is usually in several — so
 `bruno sees proposal.decision on GroupMembers in room` says which room he has

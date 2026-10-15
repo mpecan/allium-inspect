@@ -1,0 +1,98 @@
+-- allium: 3
+-- guards.allium
+--
+-- A fixture of its own, standing alone: exposures shown only while their
+-- `when` guard holds (issue #8).
+--
+-- `doc.secret when doc.is_private = false` is the language's way of saying a
+-- field is conditionally visible. For a while the walk read the guarded item
+-- as never shown at all, so `sees` came back unexposed and — the dangerous
+-- half — `cannot see` held without anything being checked.
+--
+-- `DocPage` guards a field of its context; `ShelfPage` guards the body of a
+-- `for`, where the guard is about each element in turn. `FilteredShelf` puts
+-- a `where` beside the guard, `MinePage` a guard that depends on who is
+-- looking, `TallyPage` a guard computed over a filtered set, `QuietShelf` a
+-- `where` computed the same way, and `OddPage` a guard that is not a
+-- condition at all.
+--
+-- The non-ASCII in the comments above the guards is load-bearing: a guard is quoted
+-- back by byte span (stipulation 4), and a slice by character index would land
+-- beside it.
+
+entity Shelf {
+    name: String
+    docs: Doc with shelf = this
+}
+
+entity Doc {
+    shelf: Shelf
+    owner: String
+    secret: String
+    is_private: Boolean
+}
+
+surface DocPage {
+    facing viewer: Doc
+    context doc: Doc
+
+    exposes:
+        doc.owner
+        -- shown only while public — the café rule
+        doc.secret when doc.is_private = false
+}
+
+surface ShelfPage {
+    facing viewer: Doc
+    context shelf: Shelf
+
+    exposes:
+        shelf.name
+        for doc in shelf.docs:
+            doc.owner
+            -- shown only while public — the café rule
+            doc.secret when doc.is_private = false
+}
+
+surface FilteredShelf {
+    facing viewer: Doc
+    context shelf: Shelf
+
+    exposes:
+        for doc in shelf.docs where doc.owner = "a":
+            doc.secret when doc.is_private = false
+}
+
+surface QuietShelf {
+    facing viewer: Doc
+    context shelf: Shelf
+
+    exposes:
+        for doc in shelf.docs where (shelf.docs where is_private = true).count = 0:
+            doc.secret
+}
+
+surface MinePage {
+    facing viewer: Doc
+    context doc: Doc
+
+    exposes:
+        -- only to whoever owns it — naïvely, by name
+        doc.secret when viewer.owner = doc.owner
+}
+
+surface TallyPage {
+    facing viewer: Doc
+    context shelf: Shelf
+
+    exposes:
+        shelf.name when (shelf.docs where is_private = true).count > 0
+}
+
+surface OddPage {
+    facing viewer: Doc
+    context doc: Doc
+
+    exposes:
+        doc.secret when doc.owner
+}

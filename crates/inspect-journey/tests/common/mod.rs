@@ -37,6 +37,9 @@ pub const PACKING: &[&str] = &["packing"];
 /// The grants fixture, alone: literals a journey says back to a spec.
 pub const GRANTS: &[&str] = &["grants"];
 
+/// The guards fixture, alone: exposures shown only while a `when` holds.
+pub const GUARDS: &[&str] = &["guards"];
+
 /// `modules`, replayed from their recordings, with each module's source.
 pub fn library(modules: &[&str]) -> (SpecGraph, Program, Sources) {
     let root = fixtures();

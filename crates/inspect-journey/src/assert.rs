@@ -122,20 +122,19 @@ impl Walker<'_> {
 
     /// Can this actor observe this value here?
     ///
-    /// Two questions, and only the first is answerable today. Whether the
+    /// Two questions. Whether the
     /// boundary carries the field at all is a fact about the surface, and it
     /// decides a `cannot see` outright: not "no instance matched" but "this
     /// boundary does not carry it", which is the strongest form of the claim.
     ///
-    /// Whether the surface's own filter admits *this* actor needs the
-    /// `exposes` clause as an expression rather than as text, and that is not
-    /// read yet. So once the field *is* carried, neither direction can be
-    /// settled — including the negative one. That last part is the whole
-    /// reason this reads the surface itself rather than the value: a field
-    /// nothing has set used to make `cannot see` come back satisfied, so
-    /// `ada cannot see ada.open_loan_count on MemberShelf` held against a
-    /// surface that exposes it on the line above. A privacy claim that passes
-    /// because nothing checked it is the worst answer this tool could give.
+    /// Whether it is carried *to this actor* is `admits`, which walks the
+    /// clause as an expression: its contexts, `for … where` filters and `when`
+    /// guards read against the world. Whatever it cannot settle stays
+    /// undecided in both directions, the negative one included — a field
+    /// nothing has set once made `ada cannot see ada.open_loan_count on
+    /// MemberShelf` hold against a surface that exposes it on the line above,
+    /// and a privacy claim that passes because nothing checked it is the worst
+    /// answer this tool could give.
     pub(crate) fn observe(&self, sight: &Sight<'_>, about: String) -> Outcome {
         let Sight { actor, subject, surface, negated, line, .. } = *sight;
         let written = subject.as_written();
@@ -181,6 +180,11 @@ impl Walker<'_> {
                 if negated { Verdict::Specified } else { Verdict::Unexposed },
                 format!("nothing `{surface}` shows to {actor} is `{written}`"),
             ),
+            // Hidden by a guard, which is said: the reason is in the world.
+            Ok(Admission::Hidden(why)) => say(
+                if negated { Verdict::Specified } else { Verdict::Unexposed },
+                format!("`{surface}` shows `{written}` {why}"),
+            ),
             // Not open here at all, so nothing on it is shown to anybody.
             Err(why) => say(if negated { Verdict::Specified } else { Verdict::Unexposed }, why),
             Ok(Admission::Undecided(why)) => {
@@ -191,9 +195,12 @@ impl Walker<'_> {
 }
 
 /// Whether a surface shows a particular thing to a particular person.
-enum Admission {
+pub(crate) enum Admission {
     Yes,
     No,
+    /// Reached, and hidden by a `when` guard — with which one, because that
+    /// is a fact about the world a reader set up, not about the surface.
+    Hidden(String),
     /// With the reason, which is the half a reader can act on.
     Undecided(String),
 }
@@ -263,26 +270,20 @@ impl Walker<'_> {
             }
         };
 
-        let mut undecided = None;
-        let mut shown = false;
+        let mut found = Admission::No;
         for item in items {
-            match self.exposed_by(item, &Asking { asked: &asking, context, module: &module }) {
-                Admission::Yes => {
-                    shown = true;
-                    break;
-                }
-                Admission::Undecided(why) => undecided = undecided.or(Some(why)),
-                Admission::No => {}
+            found = found
+                .or(self.exposed_by(item, &Asking { asked: &asking, context, module: &module }));
+            if matches!(found, Admission::Yes) {
+                break;
             }
         }
 
-        let answer = match (shown, standing.gated.clone()) {
+        let answer = match (found, standing.gated.clone()) {
             // Shown, by a surface nobody knows is open here.
-            (true, Some(why)) => Admission::Undecided(why),
-            (true, None) => Admission::Yes,
-            (false, _) => undecided
-                .map_or(Admission::No, Admission::Undecided)
-                .or_undecided(standing.unsettled.clone()),
+            (Admission::Yes, Some(why)) => Admission::Undecided(why),
+            (Admission::Yes, None) => Admission::Yes,
+            (unshown, _) => unshown.or_undecided(standing.unsettled.clone()),
         };
         Ok(match answer {
             Admission::Undecided(why) => Admission::Undecided(standing.explain(why)),
@@ -293,6 +294,13 @@ impl Walker<'_> {
     /// Whether one item of an `exposes` block shows what is being asked about.
     fn exposed_by(&self, item: &Expr, asking: &Asking<'_>) -> Admission {
         let Asking { asked, context, module } = *asking;
+
+        // `doc.secret when doc.is_private = false` — shown while the guard
+        // holds, which is a question about the world, not about the clause.
+        if let Expr::WhenGuard { action, condition, .. } = item {
+            let shown = self.exposed_by(action, asking);
+            return self.guarded((action, condition), shown, context, module);
+        }
 
         // A call the surface exposes — `announces_reads(owner)` — matched
         // against the call being asked about. The name has to be the same and
@@ -384,15 +392,20 @@ impl Walker<'_> {
         // A `for` body is usually several lines, and any of them may be the
         // one being asked about.
         if let Expr::Block { items, .. } = item {
-            let mut undecided = None;
+            let mut found = Admission::No;
             for item in items {
-                match self.walks_to(item, (of, segments), context, module) {
-                    Admission::Yes => return Admission::Yes,
-                    Admission::Undecided(why) => undecided = undecided.or(Some(why)),
-                    Admission::No => {}
+                found = found.or(self.walks_to(item, (of, segments), context, module));
+                if matches!(found, Admission::Yes) {
+                    break;
                 }
             }
-            return undecided.map_or(Admission::No, Admission::Undecided);
+            return found;
+        }
+        // A guard in a `for` body is about the element being visited, which
+        // is already bound in `context` by the time this reads it.
+        if let Expr::WhenGuard { action, condition, .. } = item {
+            let shown = self.walks_to(action, (of, segments), context, module);
+            return self.guarded((action, condition), shown, context, module);
         }
 
         let (root, fields) = walked(item);
@@ -418,29 +431,24 @@ impl Walker<'_> {
         asking: &Asking<'_>,
     ) -> Admission {
         let Asking { context, module, .. } = *asking;
-        let mut undecided = None;
+        let mut found = Admission::No;
         for member in over.members {
             let Value::Ref(id) = member else { continue };
             let mut scope = context.clone();
             scope.insert(over.binding.to_owned(), member.clone());
 
-            match self.walks_to(over.body, (of, segments), &scope, module) {
-                Admission::No => continue,
-                Admission::Undecided(why) => {
-                    undecided = undecided.or(Some(why));
-                    continue;
-                }
-                Admission::Yes => {}
+            let reached = self.walks_to(over.body, (of, segments), &scope, module);
+            if !matches!(reached, Admission::Yes) {
+                found = found.or(reached);
+                continue;
             }
-
             // Reached from this element, and its `where` is a second gate.
-            match self.admits_element(over.filter, id, scope, module) {
-                Admission::Yes => return Admission::Yes,
-                Admission::Undecided(why) => undecided = undecided.or(Some(why)),
-                Admission::No => {}
+            found = found.or(self.admits_element(over.filter, id, scope, module));
+            if matches!(found, Admission::Yes) {
+                break;
             }
         }
-        undecided.map_or(Admission::No, Admission::Undecided)
+        found
     }
 
     /// Whether an iteration's `where` admits one element.
@@ -481,7 +489,9 @@ impl Walker<'_> {
         }
 
         match self.evaluate(filter, &scope, module) {
-            Ok((Value::Bool(admitted), _)) => Ok(admitted),
+            // Definite only if nothing under it was dropped as undecided.
+            Ok((Value::Bool(_), Some(why))) => Err(why),
+            Ok((Value::Bool(admitted), None)) => Ok(admitted),
             Ok(_) => Err("its filter did not come back true or false".to_owned()),
             Err(why) => Err(why),
         }
@@ -576,7 +586,7 @@ impl Admission {
     /// nothing checked.
     fn or_undecided(self, unsettled: Option<String>) -> Self {
         match (self, unsettled) {
-            (Admission::No, Some(why)) => Admission::Undecided(why),
+            (Admission::No | Admission::Hidden(_), Some(why)) => Admission::Undecided(why),
             (settled, _) => settled,
         }
     }

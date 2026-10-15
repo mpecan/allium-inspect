@@ -19,6 +19,7 @@ pub mod check;
 mod clauses;
 mod drive;
 pub mod evidence;
+mod guard;
 pub mod journey;
 pub mod outcome;
 pub mod parse;
