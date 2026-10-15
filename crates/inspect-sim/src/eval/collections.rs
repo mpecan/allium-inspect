@@ -16,7 +16,7 @@ use std::ops::Not;
 use allium_parser::ast::{BinaryOp, Expr, ForBinding, JoinField};
 
 use super::{
-    Env, Evaluation, Unresolved, ast::truth_value, bare_name, eval, span_of, unresolved_at,
+    Env, Evaluation, Unresolved, ast::truth_value, bare_name, eval, lambdas, span_of, unresolved_at,
 };
 use crate::{truth::Truth, value::Value};
 
@@ -293,6 +293,10 @@ pub(super) fn quantified(
     };
 
     let over = eval(collection, env);
+    // Reasons on the collection may mean members left out of it; an undecided
+    // filter certainly does. Either way agreement among the rest settles
+    // nothing — see `lambdas::undecided_by_omission`.
+    let mut incomplete = !over.unresolved.is_empty();
     let mut unresolved = over.unresolved;
     let Value::Set(items) = over.value else {
         unresolved.push(Unresolved {
@@ -318,6 +322,9 @@ pub(super) fn quantified(
             let keep = eval(filter, &scope);
             let holds = keep.truth();
             unresolved.extend(keep.unresolved);
+            if holds == Truth::Unknown {
+                incomplete = true;
+            }
             if holds != Truth::True {
                 continue;
             }
@@ -329,7 +336,15 @@ pub(super) fn quantified(
         verdicts.push(verdict);
     }
 
-    Evaluation { value: truth_value(Truth::all(verdicts)), unresolved }
+    let (answer, omitted) = lambdas::undecided_by_omission(
+        Truth::all(verdicts),
+        Truth::True,
+        incomplete.then_some(collection),
+        &format!("for {name} in"),
+        env,
+    );
+    unresolved.extend(omitted);
+    Evaluation { value: truth_value(answer), unresolved }
 }
 
 /// A scope in which `item`'s own fields are visible without naming it.

@@ -31,6 +31,7 @@
 mod ast;
 mod calls;
 mod collections;
+mod lambdas;
 mod literals;
 mod ops;
 
@@ -205,13 +206,30 @@ impl<'a> Env<'a> {
     /// `this` is the instance and its stored fields are visible bare, which is
     /// what lets `devices where status = active` mean what it reads as. The key
     /// is remembered so a definition that comes back to itself stops.
+    ///
+    /// **Nothing else** is in scope: not the rule's parameters, not a loop
+    /// variable, not whatever the caller happened to bind. A definition belongs
+    /// to its entity and means the same wherever it is read from. Inheriting
+    /// the caller's names let `items: Item with box = this`, read from a rule
+    /// whose parameter is also called `box`, take that parameter for an item's
+    /// unset `box` — so an item nobody placed was counted in the box, and the
+    /// verdict turned on what the rule's parameter was called.
     fn computing(&self, instance: &Instance, key: String) -> Env<'_> {
-        let mut scope = self.scoped("this", Value::Ref(instance.id.clone()));
+        let mut bindings = BTreeMap::new();
+        bindings.insert("this".to_owned(), Value::Ref(instance.id.clone()));
         for (field, value) in &instance.fields {
-            scope.bindings.insert(field.clone(), value.clone());
+            bindings.insert(field.clone(), value.clone());
         }
-        scope.resolving.insert(key);
-        scope
+        let mut resolving = self.resolving.clone();
+        resolving.insert(key);
+        Env {
+            world: self.world,
+            module: self.module,
+            bindings,
+            source: self.source,
+            derived: self.derived,
+            resolving,
+        }
     }
 }
 
@@ -286,6 +304,7 @@ pub fn eval(expr: &Expr, env: &Env<'_>) -> Evaluation {
         // one by one rather than lumped together, because "a pipe was not
         // evaluated" is something a reader can act on and "unsupported" is not.
         Expr::Pipe { .. } => unsupported("a `|` alternation", expr, env),
+        // `items.all(i => …)` and `.any` are caught as calls; see `lambdas`.
         Expr::Lambda { .. } => unsupported("a lambda", expr, env),
         Expr::Call { function, args, .. } => calls::answered(expr, function, args, env),
         Expr::JoinLookup { entity, fields, .. } => {

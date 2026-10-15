@@ -482,6 +482,28 @@ send you to three different places, and a report that called all of them
 a field nobody stated, a name nobody bound — comes back undecided
 with the sub-expression that could not be settled, never as false.
 
+**A collection a journey filled in is asked about member by member.**
+`box.items.all(i => i.kind = a)` and `box.items.any(i => i.kind = b)` are
+computed over whatever the set holds — a `stipulate box.items = {x, y}`, a
+relationship the spec computes, or every instance of a type — by the same
+three-valued rules as `and` and `or`. So one member that settles the answer
+settles it: a `b` among the items makes `all … = a` false whatever the others
+are, and an empty set makes `all` true and `any` false. Only when nothing
+settled it does a member nobody described leave the step undecided, and the
+reason names that member's field: `` `Item#2` has no `kind` set — in `i.kind` ``.
+A relationship is only as complete as what decides it: with
+`items: Item with box = this`, an item whose `box` nobody stated may or may
+not be in the box, so the items it does hold can refute `all` (or satisfy
+`any`) but cannot settle it by agreeing — that comes back undecided, naming
+the field nobody stated. `for i in box.items: …` reads the same way.
+Write the quantifier the spec means rather than a black-box predicate a
+journey then has to stipulate — the predicate hides the logic the journey was
+meant to check.
+
+`all` and `any` are the two methods that take a lambda here. Any other —
+`items.filter(i => …)` — and a lambda anywhere else is still undecided, with
+the reason *a lambda is not simulated*.
+
 ## Running them
 
 ```sh

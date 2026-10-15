@@ -31,6 +31,9 @@ pub const LENDING: &[&str] = &["catalogue", "lending"];
 /// The lending fixture and the desk beside it.
 pub const DESK: &[&str] = &["catalogue", "lending", "desk"];
 
+/// The packing fixture, alone: a set asked about through `all` and `any`.
+pub const PACKING: &[&str] = &["packing"];
+
 /// `modules`, replayed from their recordings, with each module's source.
 pub fn library(modules: &[&str]) -> (SpecGraph, Program, Sources) {
     let root = fixtures();

@@ -1,0 +1,63 @@
+-- allium: 3
+-- packing.allium
+--
+-- A fixture of its own, standing alone: a collection asked about through a
+-- lambda. `items.all(i => …)` and `items.any(i => …)` are how a real spec says
+-- "every one of these" and "at least one of these" about a set it holds, and
+-- for a while this tool answered both as undecided even when a journey had
+-- said exactly what was in the set (issue #7).
+
+entity Item {
+    kind: a | b
+}
+
+entity Box {
+    items: Set<Item>
+    sealed: Boolean
+    flagged: Boolean
+}
+
+-- The same question asked of a relationship the spec computes rather than a
+-- set a journey states. The rule's parameter shares its name with the field
+-- the relationship reads, so a definition that saw the rule's names would
+-- count a parcel nobody placed as in the crate.
+entity Parcel {
+    crate: Crate
+    kind: a | b
+}
+
+entity Crate {
+    parcels: Parcel with crate = this
+    sealed: Boolean
+}
+
+rule Seal {
+    when: Seal(box)
+    requires: box.items.all(i => i.kind = a)
+    ensures: box.sealed = true
+}
+
+rule Flag {
+    when: Flag(box)
+    requires: box.items.any(i => i.kind = b)
+    ensures: box.flagged = true
+}
+
+rule SealCrate {
+    when: SealCrate(crate)
+    requires: crate.parcels.all(p => p.kind = a)
+    ensures: crate.sealed = true
+}
+
+surface Packing {
+    facing box: Box
+    provides:
+        Seal(box)
+        Flag(box)
+}
+
+surface Loading {
+    facing crate: Crate
+    provides:
+        SealCrate(crate)
+}

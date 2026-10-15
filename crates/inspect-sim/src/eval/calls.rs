@@ -9,7 +9,7 @@
 
 use allium_parser::ast::{CallArg, Expr};
 
-use super::{Env, Evaluation, eval, unsupported};
+use super::{Env, Evaluation, eval, lambdas, unsupported};
 use inspect_model::Function;
 
 use crate::value::Value;
@@ -30,6 +30,15 @@ pub(super) fn answered(
     args: &[CallArg],
     env: &Env<'_>,
 ) -> Evaluation {
+    // `items.all(i => …)` and `items.any(i => …)` are quantifiers rather than
+    // calls, and must be caught before the arguments are evaluated: a lambda
+    // evaluated as a value is only ever "not simulated".
+    if let Expr::MemberAccess { object, field, .. } = function
+        && let Some(answer) = lambdas::quantified(whole, object, &field.name, args, env)
+    {
+        return answer;
+    }
+
     let mut given = Vec::with_capacity(args.len());
     let mut unresolved = Vec::new();
     for argument in args {
