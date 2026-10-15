@@ -40,13 +40,18 @@ fn read(path: &Path) -> String {
 
 /// The library spec set, ingested exactly as the server ingests it.
 fn library_spec() -> (SpecGraph, Program, Sources) {
+    recorded(&["catalogue", "lending"])
+}
+
+/// The recorded fixture modules named, ingested exactly as the server does.
+fn recorded(modules: &[&str]) -> (SpecGraph, Program, Sources) {
     let root = fixtures();
     let mut runner = MapRunner::new(read(&root.join("cli/VERSION")).trim());
     let mut reader = MemoryReader::default();
     let mut sources: Sources = BTreeMap::new();
     let mut paths = Vec::new();
 
-    for module in ["catalogue", "lending"] {
+    for &module in modules {
         let path = root.join(format!("specs/{module}.allium"));
         for command in Command::ALL {
             let document = read(&root.join(format!("cli/{module}.{command}.json")));
@@ -843,4 +848,42 @@ fn a_state_event_carrying_other_entities_still_names_its_one_instance() {
         .with("who", Value::Ref(member));
     let outcome = outcome_for("ReportLostCopy", &step(&graph, &program, &sources, &world, &event));
     assert_eq!(outcome.disposition, Disposition::Fired, "{outcome:?}");
+}
+
+// --- a parameter nobody passed is not a word ------------------------------
+
+/// `rule Ask { when: Ask(repo, kind)  requires: can(repo, kind) }`, fired with
+/// or without `kind`, against a world that stipulates `can(repo, kind)`.
+fn ask(kind: Option<&str>) -> inspect_sim::RuleOutcome {
+    let (graph, program, sources) = recorded(&["grants"]);
+    let mut world = World::new().at(1_000);
+    let repo = world.create("Repo", "grants");
+    world.answers.push(inspect_sim::world::Answer {
+        call: "can".to_owned(),
+        arguments: vec![Value::Ref(repo.clone()), Value::Enum("kind".to_owned())],
+        value: Value::Bool(true),
+    });
+    let mut event = Event::new("Ask", "grants").with("repo", Value::Ref(repo));
+    if let Some(kind) = kind {
+        event = event.with("kind", Value::Enum(kind.to_owned()));
+    }
+    outcome_for("Ask", &step(&graph, &program, &sources, &world, &event))
+}
+
+/// The control: passed as the word the stipulation names, the call is
+/// answered and the rule fires — so the case below is not undecided for some
+/// reason that has nothing to do with the parameter.
+#[test]
+fn a_parameter_passed_as_the_stipulated_word_is_answered() {
+    let fired = ask(Some("kind"));
+    assert_eq!(fired.disposition, Disposition::Fired, "{:?}", fired.requires);
+}
+
+/// Not passed, `kind` is unbound and reads exactly like a word nothing binds.
+/// It is the rule's own parameter, so a stipulation spelling `kind` is about a
+/// different thing, and the rule is undecided rather than fired on it.
+#[test]
+fn a_parameter_nobody_passed_is_not_answered_by_its_spelling() {
+    let undecided = ask(None);
+    assert_eq!(undecided.disposition, Disposition::Undecided, "{:?}", undecided.requires);
 }
