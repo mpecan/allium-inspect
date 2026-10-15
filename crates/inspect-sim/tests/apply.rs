@@ -621,6 +621,33 @@ fn a_state_of_some_other_enumeration_is_not_this_fields() {
     assert_eq!(loan.fields.get("copy"), Some(&Value::Unknown));
 }
 
+/// An instance filed in a module that does not declare its entity — a world
+/// written by hand, or one placed before its module was known — still has its
+/// states read from the entity of that name. Looking only in the instance's
+/// own module would leave every bare state assigned to it undecided.
+#[test]
+fn a_state_is_read_by_name_when_the_instances_module_does_not_declare_it() {
+    let graph = spec();
+    let (mut world, _) = world();
+    let loan = world.create("Loan", "elsewhere");
+    world.set_field(&loan, "status", Value::Enum("open".to_owned()));
+
+    let scope = BTreeMap::from([("loan".to_owned(), Value::Ref(loan.clone()))]);
+    let applied = {
+        let mut application = Application::new(
+            Against { spec: &graph, module: "lending", source: "", derived: &NOTHING },
+            &mut world,
+            scope,
+        );
+        application.apply(&assign(field(ident("loan"), "status"), ident("returned")))
+    };
+    assert!(applied.unresolved.is_empty(), "{:?}", applied.unresolved);
+    assert_eq!(
+        world.instance(&loan).expect("the loan").field("status"),
+        Value::Enum("returned".to_owned())
+    );
+}
+
 // --- where a created instance comes from ----------------------------------
 
 #[test]

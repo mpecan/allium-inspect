@@ -53,8 +53,7 @@ impl Walker<'_> {
 
         let mut seen = vec![key_of(event)];
         let mut pending = emissions(&acted);
-        let mut rounds = 0;
-        loop {
+        for round in 0..=ROUNDS {
             let next: Vec<Event> =
                 pending.into_iter().filter(|event| !seen.contains(&key_of(event))).collect();
             if next.is_empty() {
@@ -65,7 +64,7 @@ impl Walker<'_> {
             // something new every round — `Divide` reacting to a cell being
             // made by making another — and a world cut off there is not one
             // the act leads to.
-            if rounds == ROUNDS {
+            if round == ROUNDS {
                 let mut triggers: Vec<&str> = next.iter().map(|it| it.trigger.as_str()).collect();
                 triggers.dedup();
                 self.undecided.push(Undecided {
@@ -77,7 +76,6 @@ impl Walker<'_> {
                 });
                 break;
             }
-            rounds += 1;
             pending = Vec::new();
             for event in next {
                 seen.push(key_of(&event));

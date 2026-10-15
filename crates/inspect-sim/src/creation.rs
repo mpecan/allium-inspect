@@ -181,11 +181,15 @@ pub(crate) fn reacting(
     rules: &[RuleOutcome],
     world: &World,
 ) -> Vec<Enabled> {
-    let created: Vec<&EntityId> = rules
+    // Each with the module it was filed in, read once: an instance the world
+    // no longer holds has none, and drops out here.
+    let created: Vec<(&EntityId, &str)> = rules
         .iter()
         .flat_map(|rule| &rule.effects)
         .filter_map(|effect| match effect {
-            Effect::Created { id, .. } if world.instance(id).is_some() => Some(id),
+            Effect::Created { id, .. } => {
+                world.instance(id).map(|instance| (id, instance.module.as_str()))
+            }
             _ => None,
         })
         .collect();
@@ -204,13 +208,9 @@ pub(crate) fn reacting(
         let home = reacts_in(spec, &node.module, ast.when.as_ref());
         let over: Vec<Value> = created
             .iter()
-            .filter(|id| id.entity() == entity)
-            .filter(|id| {
-                home.as_ref().is_none_or(|home| {
-                    world.instance(id).is_some_and(|instance| instance.module == *home)
-                })
-            })
-            .map(|id| Value::Ref((*id).clone()))
+            .filter(|(id, _)| id.entity() == entity)
+            .filter(|(_, module)| home.as_deref().is_none_or(|home| *module == home))
+            .map(|(id, _)| Value::Ref((*id).clone()))
             .collect();
         if over.is_empty() {
             continue;

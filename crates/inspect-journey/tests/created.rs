@@ -262,3 +262,23 @@ fn another_modules_creation_of_the_same_name_is_not_reacted_to() {
 }";
     all_held(&walked(source, SHOPS));
 }
+
+/// What ran is what ran in *this* step. Carrying the previous step's firings
+/// over would let `Welcome`, which ran for the order placed in step 1, answer
+/// for step 2, where nothing was left to welcome — and refuse a line that
+/// holds.
+#[test]
+fn a_reaction_in_one_step_does_not_answer_for_the_next() {
+    let source = "journey J {
+    cast:
+        seed: Order
+    1. an order placed
+        seed does Place(seed) on Shop
+        then Welcome fires
+    2. an order made and withdrawn
+        seed does Retract(seed) on Shop
+        then Welcome does not fire
+}";
+    let walk = walked(source, ORDERS);
+    all_held(&walk);
+}
