@@ -66,7 +66,12 @@ impl Walker<'_> {
 /// quoting from there shows the reader a line they did not write. A `)` the
 /// span stops short of is taken back for the same reason.
 fn quoted(source: &str, action: &Expr, condition: &Expr) -> Option<String> {
-    let (from, to) = (span_of(action)?.end, span_of(condition)?.end);
+    quoted_between(source, span_of(action)?.end, span_of(condition)?.end)
+}
+
+/// [`quoted`], from the byte where the item ends to the byte where the
+/// condition's span ends.
+fn quoted_between(source: &str, from: usize, to: usize) -> Option<String> {
     let between = source.get(from..to)?;
     let written = between.trim_start_matches(|c: char| c == ')' || c.is_whitespace());
     let mut written = written.strip_prefix("when")?.trim_start().to_owned();
@@ -131,6 +136,63 @@ mod tests {
     use super::*;
 
     const GUARD: &str = "`when doc.is_private = false`";
+
+    /// `source` quoted as the parser spans it: from the end of `item` to the
+    /// end of `condition`, which stops short of any closing parenthesis.
+    fn quote(source: &str, item: &str, condition: &str) -> Option<String> {
+        let from = source.find(item)? + item.len();
+        let to = source.find(condition)? + condition.len();
+        quoted_between(source, from, to)
+    }
+
+    #[test]
+    fn a_closing_parenthesis_the_span_stopped_short_of_is_taken_back() {
+        let source = "doc.secret when (doc.is_private = false)\n";
+        assert_eq!(
+            quote(source, "doc.secret", "doc.is_private = false").as_deref(),
+            Some("(doc.is_private = false)")
+        );
+    }
+
+    /// Only as many as were opened: a `)` past the last one closes something
+    /// the guard is not part of.
+    #[test]
+    fn no_more_parentheses_are_taken_back_than_the_guard_opened() {
+        let source = "(doc.secret when (doc.is_private = false))";
+        assert_eq!(
+            quote(source, "doc.secret", "doc.is_private = false").as_deref(),
+            Some("(doc.is_private = false)")
+        );
+    }
+
+    #[test]
+    fn whitespace_before_a_closing_parenthesis_is_kept_as_written() {
+        let source = "doc.secret when ( doc.is_private = false )";
+        assert_eq!(
+            quote(source, "doc.secret", "doc.is_private = false").as_deref(),
+            Some("( doc.is_private = false )")
+        );
+    }
+
+    /// Nothing but whitespace and closers is taken back: the next word is the
+    /// next item, not part of the guard.
+    #[test]
+    fn taking_back_stops_at_anything_but_whitespace_and_a_closer() {
+        let source = "doc.secret when (doc.is_private = false\n    doc.owner";
+        assert_eq!(
+            quote(source, "doc.secret", "doc.is_private = false").as_deref(),
+            Some("(doc.is_private = false")
+        );
+    }
+
+    #[test]
+    fn a_balanced_guard_takes_nothing_back() {
+        let source = "doc.secret when doc.is_private = false)";
+        assert_eq!(
+            quote(source, "doc.secret", "doc.is_private = false").as_deref(),
+            Some("doc.is_private = false")
+        );
+    }
 
     fn unsettled(why: &str) -> Result<bool, String> {
         Err(why.to_owned())
