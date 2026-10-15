@@ -1,0 +1,114 @@
+-- allium: 3
+-- chains.allium
+--
+-- A trigger one rule emits and another listens for, and how what the emission
+-- carries reaches the listener's names (issue #12).
+--
+-- `Publish` emits `Published(item: doc)`, naming its argument `item`, and
+-- `MarkSeen` listens for `Published(doc)`: a named argument binds only the
+-- parameter it names, so nothing binds `doc`. `Republish` emits the same
+-- trigger naming `doc`, which does. `Announce` emits `Announced(doc)` by
+-- position, and two listeners call that argument by different names.
+--
+-- `Share` passes an expression by position, `doc.owner`, and `Pair` passes two
+-- that `Ping` calls by names of its own. `Note` names an argument `reason` that
+-- `Mark` has no parameter for, beside an optional `cause?` it may have meant.
+-- `Weigh` is fired a parameter short against a precondition that is false
+-- whatever the missing one is.
+
+entity User {
+    notified: Boolean
+    pinged: Boolean
+}
+
+entity Doc {
+    owner: User
+    seen: Boolean
+    told: Boolean
+    filed: Boolean
+    relayed: Boolean
+    echoed: Boolean
+    marked: Boolean
+    weighed: Boolean
+}
+
+rule Publish {
+    when: Publish(doc)
+    ensures: Published(item: doc)
+}
+
+rule Republish {
+    when: Republish(doc)
+    ensures: Published(doc: doc)
+}
+
+-- The listener the issue was filed about — and a comment with an em-dash in
+-- it, so every span after this point is a byte offset that is not a char one.
+rule MarkSeen {
+    when: Published(doc)
+    ensures: doc.seen = true
+}
+
+rule Announce {
+    when: Announce(doc)
+    ensures: Announced(doc)
+}
+
+rule Tell {
+    when: Announced(thing)
+    ensures: thing.told = true
+}
+
+rule File {
+    when: Announced(doc)
+    ensures: doc.filed = true
+}
+
+rule Share {
+    when: Share(doc)
+    ensures: Shared(doc.owner)
+}
+
+rule Notify {
+    when: Shared(user)
+    ensures: user.notified = true
+}
+
+rule Pair {
+    when: Pair(doc)
+    ensures: Paired(doc, doc.owner)
+}
+
+rule Ping {
+    when: Paired(d, u)
+    requires: d.owner = u
+    ensures: u.pinged = true
+}
+
+rule Note {
+    when: Note(doc)
+    ensures: Noted(doc: doc, reason: doc)
+}
+
+rule Mark {
+    when: Noted(doc, cause?)
+    requires: cause = null
+    ensures: doc.marked = true
+}
+
+rule Weigh {
+    when: Weighed(doc, scale)
+    requires: doc.seen = true
+    ensures: doc.weighed = true
+}
+
+surface Desk {
+    facing d: Doc
+    provides:
+        Publish(d)
+        Republish(d)
+        Announce(d)
+        Share(d)
+        Pair(d)
+        Note(d)
+}

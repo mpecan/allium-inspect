@@ -1,0 +1,14 @@
+-- Issue #12, as it was filed: `Publish` emits `Published(item: doc)` and
+-- `MarkSeen` listens for `Published(doc)`. A named argument binds only the
+-- parameter it names, so `MarkSeen` is handed nothing for `doc` — and the walk
+-- used to report `refused` with no word about why, as if the spec had said no.
+
+journey ChainedByName {
+    cast:
+        d: Doc
+    given:
+        d.seen = false
+    1. publish
+        d does Publish(d) on Desk
+        then d.seen = true
+}

@@ -30,7 +30,7 @@ use ts_rs::TS;
 use crate::{
     apply::Against,
     apply::{Application, Effect},
-    creation,
+    binding, creation,
     eval::{Env, Unresolved, eval},
     truth::Truth,
     value::Value,
@@ -247,28 +247,15 @@ fn run_rule(
     let empty = inspect_model::RuleAst::default();
     let ast = program.rule(id).unwrap_or(&empty);
 
-    let mut bindings: BTreeMap<String, Value> = event.arguments.clone();
-    // An optional parameter nobody passed is `null`, which is what `?` means
-    // and what a rule guarding `attachment_size = null` is written against.
-    // Left unbound it is undecided instead — for every caller who did not pass
-    // one, which is all of them, since not passing it is the point.
-    //
     // Read off the rule's own `when` clause rather than looked up in the graph:
     // that clause *is* the declaration, and one answer is better than two that
-    // can disagree.
-    for (name, _) in
-        ast.parameters().into_iter().filter(|(name, optional)| *optional && !name.is_empty())
-    {
-        bindings.entry(name).or_insert(Value::Null);
-    }
+    // can disagree — two listeners may call one argument by different names.
+    let parameters = ast.parameters();
+    let mut bindings = binding::bind(event, &parameters);
     // Every parameter by name, passed or not: one nobody passed is unbound,
     // and must still not be taken for a word a stipulation spells.
-    let declared: Vec<String> = ast
-        .parameters()
-        .into_iter()
-        .map(|(name, _)| name)
-        .filter(|name| !name.is_empty())
-        .collect();
+    let declared: Vec<String> =
+        parameters.iter().map(|(name, _)| name.clone()).filter(|name| !name.is_empty()).collect();
 
     // The rule's own names, before its preconditions read them.
     //
@@ -305,6 +292,21 @@ fn run_rule(
 
     let mut requires = Vec::new();
     let mut unresolved = Vec::new();
+
+    // A parameter the firing did not bind is the rule run about nothing, so
+    // its `when` is undecided and says which name went unbound and why. A
+    // precondition that is definitely false still refuses: that is decided
+    // whatever the missing name would have been.
+    let when = detail.clauses_of("when").next();
+    let gaps = binding::unbound(event, &parameters, &bindings, when);
+    if !gaps.is_empty() {
+        unresolved.extend(gaps.clone());
+        requires.push(ClauseVerdict {
+            text: when.map(|clause| clause.text.clone()).unwrap_or_default(),
+            truth: Truth::Unknown,
+            unresolved: gaps,
+        });
+    }
 
     // A creation rule's `when` is the creation, not a condition to read: the
     // instance it is about is the one the event carries, under the rule's own

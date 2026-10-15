@@ -17,6 +17,7 @@
 #![forbid(unsafe_code)]
 
 pub mod apply;
+mod binding;
 pub mod creation;
 pub mod eval;
 pub mod seed;

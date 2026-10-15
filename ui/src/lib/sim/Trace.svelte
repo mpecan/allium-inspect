@@ -10,11 +10,13 @@
   import type { StepOutcome } from "../api/StepOutcome";
   import Verdict from "../panels/Verdict.svelte";
   import { offered } from "./enabled";
+  import type { Emission } from "./event";
   import { render } from "./values";
 
   interface Props {
     outcome: StepOutcome | null;
-    onfire: (trigger: string) => void;
+    /** Fire an emission again, carrying exactly what it carried. */
+    onfire: (emission: Emission) => void;
   }
 
   const { outcome, onfire }: Props = $props();
@@ -106,7 +108,7 @@
                   <span class="to">{render(effect.to).text}</span>
                 {:else if effect.kind === "emitted"}
                   <span class="verb">emitted</span>
-                  <button type="button" onclick={() => onfire(effect.trigger)}>
+                  <button type="button" onclick={() => onfire(effect)}>
                     {effect.trigger}
                   </button>
                 {:else if effect.kind === "refused"}

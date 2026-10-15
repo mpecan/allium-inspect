@@ -1,0 +1,1 @@
+{"command":"analyse","diagnostics":[{"code":"allium.use.unresolvedPath","location":{"col":5,"file":"relay.allium","line":10},"message":"Use path \"./chains.allium\" does not resolve to a file in the current check set.","severity":"warning"}],"findings":[],"spec_file":"relay.allium"}

@@ -27,7 +27,12 @@
      * undecided here while the same act in a journey fired.
      */
     states?: string[];
-    onfire: (trigger: string, module: string, args: Record<string, Value>) => void;
+    /**
+     * Called with the values in the trigger's parameter order. The names are
+     * the form's labels, not bindings: each rule woken binds by position under
+     * its own names (see `event.ts`).
+     */
+    onfire: (trigger: string, module: string, values: Value[]) => void;
   }
 
   const { triggers, instances, pending, states = [], onfire }: Props = $props();
@@ -55,11 +60,8 @@
     if (!chosen) {
       return;
     }
-    const args: Record<string, Value> = {};
-    for (const [name, text] of Object.entries(bindings)) {
-      args[name] = parse(text, states);
-    }
-    onfire(chosen.trigger, chosen.module, args);
+    const values = chosen.parameters.map((name) => parse(bindings[name] ?? "", states));
+    onfire(chosen.trigger, chosen.module, values);
   }
 
   /** Whether every parameter has something in it. */

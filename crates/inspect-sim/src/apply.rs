@@ -55,7 +55,17 @@ pub enum Effect {
     /// and `QueueOnSend` cannot fill the outbox without knowing which message.
     /// The simulator still stops here and offers the trigger to the reader —
     /// one step is one step — but a walk has already said the act happened.
-    Emitted { trigger: String, module: String, arguments: BTreeMap<String, Value> },
+    ///
+    /// Named arguments under the name written, positional ones in order: which
+    /// name a positional argument goes by is the *listener's* to say, and two
+    /// listeners may say differently (see [`crate::world::Event::positional`]).
+    Emitted {
+        trigger: String,
+        module: String,
+        arguments: BTreeMap<String, Value>,
+        #[serde(default)]
+        positional: Vec<Value>,
+    },
     /// A state change the entity's lifecycle does not permit.
     ///
     /// Reported rather than performed. The lifecycle is part of the spec, and a
@@ -221,43 +231,40 @@ impl<'a> Application<'a> {
 
         // Otherwise a bare name: a trigger emission.
         match bare_name(function) {
-            Some(trigger) => Applied::effect(Effect::Emitted {
-                trigger: trigger.to_owned(),
-                module: self.against.module.to_owned(),
-                arguments: self.emission_arguments(trigger, args),
-            }),
+            Some(trigger) => {
+                let (arguments, positional) = self.emission_arguments(args);
+                Applied::effect(Effect::Emitted {
+                    trigger: trigger.to_owned(),
+                    module: self.against.module.to_owned(),
+                    arguments,
+                    positional,
+                })
+            }
             None => self.unmodelled(function, "this call is neither a creation nor a trigger"),
         }
     }
 
-    /// What an emission carries, by the parameter name the trigger declares.
+    /// What an emission carries: named arguments by the name written, and
+    /// positional ones in the order written.
     ///
-    /// `MessageSent(message: message)` names its argument and most emissions
-    /// do; a positional one is matched against the trigger's own parameter
-    /// list, which is where the receiving rule's `when` gets its names from.
-    /// An argument that cannot be placed is dropped rather than invented —
-    /// the receiving rule then reports the binding as unset, which is the
-    /// honest answer and points at the emission.
-    fn emission_arguments(&self, trigger: &str, args: &[CallArg]) -> BTreeMap<String, Value> {
-        let declared = self
-            .against
-            .spec
-            .nodes_of(NodeKind::Trigger)
-            .find(|node| node.name == trigger)
-            .and_then(|node| node.detail.as_trigger())
-            .map(|detail| detail.parameters.clone())
-            .unwrap_or_default();
-
-        let mut carried = BTreeMap::new();
-        for (at, argument) in args.iter().enumerate() {
-            let (name, value) = match argument {
-                CallArg::Named(named) => (Some(named.name.name.clone()), &named.value),
-                CallArg::Positional(value) => (declared.get(at).cloned(), value),
-            };
-            let Some(name) = name else { continue };
-            carried.insert(name, self.carried(value));
+    /// `MessageSent(message: message)` names its argument and binds the
+    /// listener's `message`; `Announced(doc)` passes one by position, and each
+    /// listener takes it under whatever its own `when` calls the first
+    /// parameter. Naming a positional argument here — after whichever
+    /// listener the graph happened to list first — handed it to that one and
+    /// to no other listener that called it something else.
+    fn emission_arguments(&self, args: &[CallArg]) -> (BTreeMap<String, Value>, Vec<Value>) {
+        let mut named = BTreeMap::new();
+        let mut positional = Vec::new();
+        for argument in args {
+            match argument {
+                CallArg::Named(argument) => {
+                    named.insert(argument.name.name.clone(), self.carried(&argument.value));
+                }
+                CallArg::Positional(value) => positional.push(self.carried(value)),
+            }
         }
-        carried
+        (named, positional)
     }
 
     /// One argument of an emission, as the receiving rule will be handed it.

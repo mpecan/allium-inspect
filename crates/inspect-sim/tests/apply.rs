@@ -335,14 +335,20 @@ fn an_emission_is_reported_without_changing_anything() {
 /// `MessageSent(message: message)` hands the message on, and `QueueOnSend`
 /// reads it to file the outbox entry. Recording the trigger's name alone left
 /// every chained rule firing against nothing.
+///
+/// Positional, in order and unnamed: which name it goes by is each listener's
+/// own `when` clause's to say (issue #12). Named here after the trigger's
+/// first-listed listener, it reached that listener and no other.
 #[test]
-fn an_emission_carries_its_arguments_under_the_names_the_trigger_declares() {
+fn an_emission_carries_a_positional_argument_in_its_place_and_unnamed() {
     let loan = EntityId::new("Loan", 7);
     let (effects, _, _) =
         apply(&emission("CopyBorrowed"), &[("whatever", Value::Ref(loan.clone()))]);
-    let Effect::Emitted { arguments, .. } = &effects[0] else { panic!("expected an emission") };
-    // Positional, so placed against `CopyBorrowed(loan)`.
-    assert_eq!(arguments.get("loan"), Some(&Value::Ref(loan)));
+    let Effect::Emitted { arguments, positional, .. } = &effects[0] else {
+        panic!("expected an emission")
+    };
+    assert_eq!(positional, &[Value::Ref(loan)]);
+    assert!(arguments.is_empty(), "named after nobody: {arguments:?}");
 }
 
 #[test]
@@ -358,23 +364,26 @@ fn a_named_argument_keeps_the_name_it_was_written_with() {
         })],
     };
     let (effects, _, _) = apply(&clause, &[("whatever", Value::Ref(loan.clone()))]);
-    let Effect::Emitted { arguments, .. } = &effects[0] else { panic!("expected an emission") };
+    let Effect::Emitted { arguments, positional, .. } = &effects[0] else {
+        panic!("expected an emission")
+    };
     assert_eq!(arguments.get("loan"), Some(&Value::Ref(loan)));
+    assert!(positional.is_empty(), "{positional:?}");
 }
 
-/// An argument with nowhere to go is dropped rather than invented. The rule
-/// waiting on it then reports the binding as unset, which points at the
-/// emission; a made-up name would point nowhere.
+/// More positional arguments than any listener names are still carried, each
+/// in its place: whether one has nowhere to go is the listener's to find out,
+/// and a listener taking two is entitled to the second.
 #[test]
-fn an_argument_the_trigger_has_no_parameter_for_is_dropped() {
+fn every_positional_argument_is_carried_in_order() {
     let clause = Expr::Call {
         span: Span { start: 0, end: 0 },
         function: Box::new(ident("CopyBorrowed")),
-        args: vec![CallArg::Positional(ident("whatever")), CallArg::Positional(ident("whatever"))],
+        args: vec![CallArg::Positional(ident("first")), CallArg::Positional(ident("second"))],
     };
-    let (effects, _, _) = apply(&clause, &[("whatever", Value::Int(1))]);
-    let Effect::Emitted { arguments, .. } = &effects[0] else { panic!("expected an emission") };
-    assert_eq!(arguments.len(), 1, "one parameter declared, one argument placed");
+    let (effects, _, _) = apply(&clause, &[("first", Value::Int(1)), ("second", Value::Int(2))]);
+    let Effect::Emitted { positional, .. } = &effects[0] else { panic!("expected an emission") };
+    assert_eq!(positional, &[Value::Int(1), Value::Int(2)]);
 }
 
 /// `CopyBorrowed(word)`, one positional argument the clause names bare.
@@ -388,8 +397,8 @@ fn emitting(word: &str) -> Expr {
 
 fn carried(word: &str, bindings: &[(&str, Value)]) -> Option<Value> {
     let (effects, _, _) = apply(&emitting(word), bindings);
-    let Effect::Emitted { arguments, .. } = &effects[0] else { panic!("expected an emission") };
-    arguments.get("loan").cloned()
+    let Effect::Emitted { positional, .. } = &effects[0] else { panic!("expected an emission") };
+    positional.first().cloned()
 }
 
 /// Issue #10. `Finish(repo, cancel)` passes a word nothing binds, and the rule

@@ -9,9 +9,10 @@
   // handed a world and an event and answers with the world that resulted — so
   // going back a step is free and nothing has to be undone anywhere else.
 
-  import type { Value } from "../api/Value";
+  import type { Event } from "../api/Event";
   import type { World } from "../api/World";
   import { ApiError, InspectClient } from "../client";
+  import { chosenEvent, followedEvent, type Emission } from "./event";
   import {
     advance,
     back,
@@ -63,17 +64,13 @@
   const instances = $derived(Object.keys(frame?.world.entities ?? {}));
   const pending = $derived(history ? pendingTriggers(history) : []);
 
-  async function fire(trigger: string, module: string, args: Record<string, Value>) {
+  async function fire(event: Event) {
     if (!history) {
       return;
     }
     busy = true;
     try {
-      const outcome = await client.step(current(history).world, {
-        trigger,
-        module,
-        arguments: args,
-      });
+      const outcome = await client.step(current(history).world, event);
       history = advance(history, outcome);
       failure = null;
     } catch (error: unknown) {
@@ -83,10 +80,9 @@
     }
   }
 
-  /** Fire a trigger with no arguments — used by the "follow this" links. */
-  function follow(trigger: string) {
-    const known = setup?.triggers.find((candidate) => candidate.trigger === trigger);
-    void fire(trigger, known?.module ?? "", {});
+  /** Fire an emission as it was emitted — used by the "follow this" links. */
+  function follow(emission: Emission) {
+    void fire(followedEvent(emission));
   }
 
   function editWorld(world: World) {
@@ -113,7 +109,7 @@
       {instances}
       {pending}
       states={setup.states}
-      onfire={(trigger, module, args) => void fire(trigger, module, args)}
+      onfire={(trigger, module, values) => void fire(chosenEvent(trigger, module, values))}
     />
 
     <main class:busy>

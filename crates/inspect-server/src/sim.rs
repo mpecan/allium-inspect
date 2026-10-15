@@ -129,7 +129,11 @@ fn entities(graph: &inspect_model::SpecGraph) -> Vec<EntityChoice> {
         .collect()
 }
 
-/// The names a rule binds this trigger's arguments under.
+/// The names a listening rule gives this trigger's arguments, as labels.
+///
+/// One listener's names, for the form to show. Nothing binds by them: the
+/// browser sends the values by position, and each rule woken takes them under
+/// its own `when` clause's names (`inspect_sim::binding`).
 ///
 /// `None` when no trigger node declares it — a surface can offer an operation
 /// the spec never declares a trigger for, and the surface's own spelling is
@@ -153,19 +157,16 @@ fn fireable(graph: &inspect_model::SpecGraph) -> Vec<Fireable> {
             offered.push(Fireable {
                 trigger: operation.trigger.clone(),
                 module: surface.module.clone(),
-                // The *trigger's* parameter names, not the surface's.
+                // The *trigger's* parameter names, not the surface's, as
+                // the form's labels.
                 //
                 // A spec may spell the same argument twice: `MemberShelf`
                 // provides `MemberBorrows(reader, copy)` because it faces a
                 // reader, while `BorrowCopy` waits on `MemberBorrows(member,
-                // copy)` because it thinks about a member. Rules read the
-                // second set. Firing with the first bound `reader`, so
-                // `not member.is_at_limit` came back "nothing is bound to
-                // `member`" and the rule could never be satisfied from this
-                // view — for a spec that is perfectly well formed.
-                //
-                // The surface's spelling is a label for the actor's benefit.
-                // It is the binding names that have to match.
+                // copy)` because it thinks about a member. The form shows the
+                // names a rule reads. The values are sent by position, so
+                // neither spelling decides what binds: each rule woken takes
+                // them under its own `when` clause's names.
                 parameters: bound_as(graph, &operation.trigger)
                     .unwrap_or_else(|| operation.parameters.clone()),
                 surface: Some(surface.name.clone()),

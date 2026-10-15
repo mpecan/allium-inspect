@@ -297,9 +297,10 @@ Under each step come its clauses, in the order they happen.
 ada does MemberBorrows(ada, copy) on MemberShelf
 ```
 
-`<actor> does <Trigger>(<arguments>) on <Surface>`. Arguments are positional and
-matched against the trigger's declared parameters, which is how the spec writes
-the act and how you read it back.
+`<actor> does <Trigger>(<arguments>) on <Surface>`. Arguments are positional,
+which is how the spec writes the act and how you read it back. Each rule the act
+wakes takes them under the names its own `when` clause gives them, in order —
+see [how a trigger's arguments reach a rule](#how-a-triggers-arguments-reach-a-rule).
 
 To keep what the act created:
 
@@ -349,6 +350,47 @@ reaction written `when: n: memo/Note.created` reacts to it.
 `creating` catches the first instance of that kind made since the act began,
 in the order they were made. That is the act's own creation when it made one,
 even if a reaction to it made another of the same kind afterwards.
+
+### How a trigger's arguments reach a rule
+
+A trigger is declared by nothing but the rules that listen for it: `when:
+Published(doc)` *is* the declaration, for that rule. So each rule a firing wakes
+binds what it carries on its own terms, whether the firing was an act or an
+`ensures:` emission:
+
+- **By position, under the rule's own names.** `ensures: Announced(doc)` reaches
+  `when: Announced(thing)` as `thing`, `when: Announced(doc)` as `doc`, and
+  `when: chains/Announced(story)` in another module as `story`. Two listeners
+  need not agree on what to call an argument, and each is handed it.
+- **By name, under that name only.** `ensures: Published(item: doc)` binds
+  `item`. A rule waiting on `when: Published(doc)` is not handed it, even
+  though it has only the one parameter: which of a rule's names an argument
+  written for another name was *meant* for is a guess, and the walk does not
+  make one.
+- **By neither, when it is handed both.** `ensures: Moved(doc, to: doc.owner)`
+  against `when: Moved(to, from)` says two things about `to` — `doc` by
+  position, `doc.owner` by name — and picking one is the same guess, so `to`
+  is left unbound and the reason says it was handed both.
+- **`?` is `null` when nothing was passed.** `when: Reported(loan, note?)` fired
+  with one argument binds `note` to `null`. Not when the firing named an
+  argument the rule has no parameter for: `Noted(doc: d, reason: d)` against
+  `when: Noted(doc, cause?)` may have meant `reason` for `cause`, so `cause`
+  is left unbound and the reason names `reason`.
+
+A parameter nothing bound is the rule run about nothing, so the rule is
+**undecided** — not run, and not refused — and says which name it waited for
+and what the firing carried instead. The act that set it off is undecided with
+it:
+
+```text
+d does Publish(d) on Desk
+  what it set off: `MarkSeen` could not be decided: nothing this firing of `Published` carried binds `doc`: it was handed `item` by name, and a named argument binds only the parameter it names — in `Published(doc)`
+```
+
+The fix is in the spec: name the argument the way the listener does
+(`Published(doc: doc)`), pass it by position (`Published(doc)`), or rename the
+listener's parameter. A precondition that is definitely false still refuses
+the rule, because that is decided whatever the missing name would have been.
 
 ### `cannot do` — the spec refuses, and that is the point
 

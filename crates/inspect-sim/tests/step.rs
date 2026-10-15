@@ -855,13 +855,18 @@ fn a_state_event_carrying_other_entities_still_names_its_one_instance() {
 /// `rule Ask { when: Ask(repo, kind)  requires: can(repo, kind) }`, fired with
 /// or without `kind`, against a world that stipulates `can(repo, kind)`.
 fn ask(kind: Option<&str>) -> inspect_sim::RuleOutcome {
+    ask_answered(kind, true)
+}
+
+/// [`ask`], with the stipulation answering `answer`.
+fn ask_answered(kind: Option<&str>, answer: bool) -> inspect_sim::RuleOutcome {
     let (graph, program, sources) = recorded(&["grants"]);
     let mut world = World::new().at(1_000);
     let repo = world.create("Repo", "grants");
     world.answers.push(inspect_sim::world::Answer {
         call: "can".to_owned(),
         arguments: vec![Value::Ref(repo.clone()), Value::Enum("kind".to_owned())],
-        value: Value::Bool(true),
+        value: Value::Bool(answer),
     });
     let mut event = Event::new("Ask", "grants").with("repo", Value::Ref(repo));
     if let Some(kind) = kind {
@@ -885,5 +890,16 @@ fn a_parameter_passed_as_the_stipulated_word_is_answered() {
 #[test]
 fn a_parameter_nobody_passed_is_not_answered_by_its_spelling() {
     let undecided = ask(None);
+    assert_eq!(undecided.disposition, Disposition::Undecided, "{:?}", undecided.requires);
+}
+
+/// The same, where it would show: a stipulation answering `can(repo, kind)`
+/// *false*. Read as its spelling, the unbound `kind` would be answered, the
+/// precondition would be definitely false, and the rule would be reported
+/// refused — the spec saying no about a parameter nobody passed. Undecided,
+/// because whether the rule refuses depends on what `kind` would have been.
+#[test]
+fn a_parameter_nobody_passed_is_not_refused_on_by_its_spelling() {
+    let undecided = ask_answered(None, false);
     assert_eq!(undecided.disposition, Disposition::Undecided, "{:?}", undecided.requires);
 }

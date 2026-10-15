@@ -56,10 +56,38 @@ describe("TriggerPicker", () => {
     await fireEvent.input(boxes[1]!, { target: { value: "moved" } });
     await fireEvent.click(screen.getByRole("button", { name: "Fire" }));
 
-    expect(onfire).toHaveBeenCalledWith("MemberWithdrawsHold", "reading", {
-      reason: { kind: "enum", value: "changed_mind" },
-      note: { kind: "str", value: "moved" },
+    expect(onfire).toHaveBeenCalledWith("MemberWithdrawsHold", "reading", [
+      { kind: "enum", value: "changed_mind" },
+      { kind: "str", value: "moved" },
+    ]);
+  });
+
+  it("hands its values over in the trigger's parameter order, whatever order they were typed in", async () => {
+    // Each rule woken binds them by position under its own names, so the
+    // order is the whole of what the values mean.
+    watchScrolling();
+    const onfire = vi.fn();
+    render(TriggerPicker, {
+      props: {
+        triggers: [fireable("Assign", ["task", "user", "note"])],
+        instances: [],
+        pending: [],
+        onfire,
+      },
     });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Assign" }));
+    const boxes = screen.getAllByRole("combobox");
+    await fireEvent.input(boxes[2]!, { target: { value: "third" } });
+    await fireEvent.input(boxes[0]!, { target: { value: "first" } });
+    await fireEvent.input(boxes[1]!, { target: { value: "second" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Fire" }));
+
+    expect(onfire).toHaveBeenCalledWith("Assign", "reading", [
+      { kind: "str", value: "first" },
+      { kind: "str", value: "second" },
+      { kind: "str", value: "third" },
+    ]);
   });
 
   it("brings the argument form into view when a trigger is chosen", async () => {

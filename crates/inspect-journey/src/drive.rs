@@ -364,11 +364,13 @@ fn emissions(outcome: &StepOutcome) -> Vec<Event> {
     let mut found = Vec::new();
     for rule in &outcome.rules {
         for effect in &rule.effects {
-            if let inspect_sim::Effect::Emitted { trigger, module, arguments } = effect {
+            if let inspect_sim::Effect::Emitted { trigger, module, arguments, positional } = effect
+            {
                 found.push(Event {
                     trigger: trigger.clone(),
                     module: module.clone(),
                     arguments: arguments.clone(),
+                    positional: positional.clone(),
                 });
             }
         }
@@ -383,8 +385,12 @@ fn emissions(outcome: &StepOutcome) -> Vec<Event> {
 /// asking `Value` for `Ord` — the lists here are a handful long, and a spec
 /// that emitted enough for that to matter would hit the round bound first.
 fn key_of(event: &Event) -> String {
-    let carried: Vec<String> =
-        event.arguments.iter().map(|(name, value)| format!("{name}={}", value.render())).collect();
+    let carried: Vec<String> = event
+        .positional
+        .iter()
+        .map(Value::render)
+        .chain(event.arguments.iter().map(|(name, value)| format!("{name}={}", value.render())))
+        .collect();
     format!("{}/{}({})", event.module, event.trigger, carried.join(", "))
 }
 
@@ -452,6 +458,18 @@ mod tests {
         #[test]
         fn the_same_trigger_carrying_different_things_is_not() {
             assert_ne!(key_of(&about("MessageSent", 1)), key_of(&about("MessageSent", 2)));
+        }
+
+        /// Positional arguments count as well as named ones: `Announced(a)`
+        /// and `Announced(b)` are two firings, not a loop.
+        #[test]
+        fn the_same_trigger_carrying_different_things_by_position_is_not() {
+            let carrying = |who: u64| {
+                Event::new("Announced", "chains").passing(Value::Ref(EntityId::new("Doc", who)))
+            };
+            assert_eq!(key_of(&carrying(1)), key_of(&carrying(1)));
+            assert_ne!(key_of(&carrying(1)), key_of(&carrying(2)));
+            assert_ne!(key_of(&carrying(1)), key_of(&Event::new("Announced", "chains")));
         }
 
         #[test]

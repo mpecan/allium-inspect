@@ -265,13 +265,12 @@ impl Walker<'_> {
         let Act { trigger, arguments, creating, negated } = *act;
         let module = trigger_module(self.spec, trigger);
 
-        // Positional, matched against the trigger's declared parameters — which
-        // is how the spec writes the act and how a person reads it back.
-        let (parameters, _) = self.parameters_of(trigger);
+        // Positional, as the spec writes the act and a person reads it back:
+        // each rule that wakes takes them under its own `when` clause's names,
+        // and two of them may name one argument differently.
         let mut event = Event::new(trigger, &module);
-        for (at, argument) in arguments.iter().enumerate() {
-            let name = parameters.get(at).cloned().unwrap_or_else(|| format!("arg{at}"));
-            event = event.with(name, self.value_of(argument));
+        for argument in arguments {
+            event = event.passing(self.value_of(argument));
         }
 
         self.forget();
@@ -371,16 +370,6 @@ impl Walker<'_> {
             other => (other, refusal(outcome)),
         };
         Outcome { line, verdict, about, detail }
-    }
-
-    /// The trigger's parameters, in the order the spec declares them.
-    fn parameters_of(&self, trigger: &str) -> (Vec<String>, Vec<String>) {
-        self.spec
-            .nodes_of(NodeKind::Trigger)
-            .find(|node| node.name == trigger)
-            .and_then(|node| node.detail.as_trigger())
-            .map(|detail| (detail.parameters.clone(), detail.optional.clone()))
-            .unwrap_or_default()
     }
 
     /// Move the clock, and let whatever becomes true fire.

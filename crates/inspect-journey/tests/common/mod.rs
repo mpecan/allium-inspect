@@ -56,6 +56,10 @@ pub const TICKETS: &[&str] = &["tickets"];
 /// Two modules that each declare an `Order`.
 pub const SHOPS: &[&str] = &["shop", "warehouse"];
 
+/// The chains fixture and the module that listens to it across a boundary:
+/// emitted triggers, and how what they carry reaches a listener's names.
+pub const CHAINS: &[&str] = &["chains", "relay"];
+
 /// `modules`, replayed from their recordings, with each module's source.
 pub fn library(modules: &[&str]) -> (SpecGraph, Program, Sources) {
     let root = fixtures();
