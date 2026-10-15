@@ -1199,18 +1199,23 @@ fn a_walk_that_ends_the_same_way_off_something_else_is_not_this_walk() {
 /// instance of is the ordinary case in a real spec set — `GroupMembers` is
 /// scoped to a `Group` and faces a person, and a person is in several groups —
 /// so which one they have open is a fact about them that only the journey has.
+///
+/// Bea looks at Ada's loans rather than her own: without `in`, the context is
+/// bound from whoever is looking. She is a `Member`, because `MyLoans` faces a
+/// `Reader` and the loan that used to look here is nobody the surface faces.
 #[test]
 fn a_journey_can_say_which_one_it_is_looking_at() {
     let result = walked(
         "journey J {
     cast:
         ada:  Member
+        bea:  Member
         copy: catalogue/Copy
     given:
         copy.status = available
     1. the copy is looked at on a member's shelf
         ada does MemberBorrows(ada, copy) on MemberShelf creating loan: Loan
-        loan sees loan.status on MyLoans in ada
+        bea sees loan.status on MyLoans in ada
 }",
     );
     let seen = &result.steps[0].outcomes[1];

@@ -251,6 +251,11 @@ impl<'a> Env<'a> {
     }
 }
 
+/// The name an [`Env`] binds the context an actor is identified within under.
+///
+/// `within` is a keyword, so no spec can declare a name that collides with it.
+pub const WITHIN: &str = "within";
+
 /// Evaluate `expr` against `env`.
 #[must_use]
 pub fn eval(expr: &Expr, env: &Env<'_>) -> Evaluation {
@@ -337,7 +342,16 @@ pub fn eval(expr: &Expr, env: &Env<'_>) -> Evaluation {
         Expr::TransitionsTo { .. } => unsupported("a `transitions_to` assertion", expr, env),
         Expr::Becomes { .. } => unsupported("a `becomes` assertion", expr, env),
         Expr::WhenGuard { .. } => unsupported("a `when` guard", expr, env),
-        Expr::Within { .. } => unsupported("a `within` deadline", expr, env),
+        // `identified_by: Seat where workspace = within` — the context an
+        // actor is identified within. Only whoever reads an actor's condition
+        // knows which instance that is, and it binds it; anywhere else it is
+        // a name nothing bound, said the way every other one is.
+        Expr::Within { .. } => match env.bindings.get(WITHIN) {
+            Some(value) => Evaluation::known(value.clone()),
+            None => {
+                Evaluation::unknown(format!("nothing is bound to `{WITHIN}`"), expr, env.source)
+            }
+        },
     }
 }
 

@@ -68,6 +68,10 @@ pub const FANOUT: &[&str] = &["fanout"];
 /// turns it on.
 pub const SWITCHES: &[&str] = &["switches"];
 
+/// The admins fixture and the module that faces its actor from outside: who a
+/// surface faces, and whether somebody is one.
+pub const FACING: &[&str] = &["admins", "portal"];
+
 /// `modules`, replayed from their recordings, with each module's source.
 pub fn library(modules: &[&str]) -> (SpecGraph, Program, Sources) {
     let root = fixtures();

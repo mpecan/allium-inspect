@@ -71,6 +71,14 @@ one.
 
 The names are what every clause below refers to.
 
+**A type may be an actor.** `ines: Reader` makes somebody who *is* a `Reader`,
+by the journey's say-so, and every surface facing a `Reader` faces her — the
+actor's `identified_by` condition is not asked of her, because the cast line is
+where the claim is made and where a reader looks for it. Cast her as the entity
+instead — `ines: Person` with `ines.role = reader` in `given` — and the
+condition is asked, which is what to do when whether she is one is the point.
+See [the surface has to face whoever acts](#does--somebody-acts).
+
 ## `shows` — how it should be demonstrated
 
 Optional, and only worth writing when a journey is photographed more than one
@@ -375,6 +383,77 @@ what a rule two hops away made, and `then <Rule> fires` can ask about it. The
 Simulate view in the browser stops at the first rule and offers you the emission
 to follow, because there a person is picking. A journey has already picked.
 
+**The surface has to face whoever acts.** A surface's `facing` names who is on
+the other side of it, and an actor's `identified_by` says who that is:
+
+```text
+actor SiteAdmin {
+    identified_by: User where is_admin = true
+}
+
+surface AdminPanel {
+    facing admin: SiteAdmin
+    provides:
+        Flip(admin)
+}
+```
+
+`bob does Flip(bob) on AdminPanel` asks the actor's condition of Bob before
+anything fires, the same three ways a `requires` is asked:
+
+- **It holds**, and the act goes ahead to the rules behind it.
+- **It is definitely false**, and the act is refused without firing anything,
+  so a rule that restates nothing of the surface's actor is still closed to
+  somebody the surface does not face. The world is the one he walked up to, and
+  a `then Flip fires` after it is told the surface is why.
+- **Nothing settles it** — `is_admin` never set — and the rules behind the act
+  are still asked, because an act goes through only if the surface faces him
+  *and* its rule lets him. A rule that refuses him anyway decides the line:
+  `cannot do` holds and `does` is refused, each saying both halves. Otherwise
+  the act is undecided, with the condition as written and what was missing from
+  it; the world is put back, and every rule it would have woken is undecided
+  too, so a `then Flip does not fire` after it is not answered by a rule nobody
+  ran. It is never let through and never blocked on a condition nothing
+  checked.
+
+```text
+`AdminPanel` faces `SiteAdmin`, and `bob` is not one: not `is_admin = true`
+whether `bob` is the `SiteAdmin` `AdminPanel` faces could not be settled — `is_admin = true`: `bob` has no `is_admin` set
+```
+
+An actor declared in another module (`facing admin: admins/SiteAdmin`) is read
+the same way.
+
+Three cases ask nothing:
+
+- An actor that is only a type — `identified_by: User` — or a surface facing an
+  entity directly (`facing c: Clock`) demands nothing beyond the type. And a
+  type that differs from whoever acts is not adjudicated: a surface facing a
+  `Member` and an act by an `Identity` is either a small inconsistency or one
+  person being both, and a walk that picked would be guessing. So it goes
+  ahead, as it always has.
+- Somebody [cast as the actor itself](#cast--who-is-in-it) — `boss: SiteAdmin`
+  — is one, because the journey said so.
+
+An actor *with* a condition asked of somebody of another type — `crew: Team`
+acting on `AdminPanel` — is undecided, naming both types: the condition is a
+demand on a `User`'s fields, and nothing says whether a `Team` meets it.
+
+An actor identified **`within`** a context —
+`identified_by: Seat where workspace = within` beside `within: Workspace` —
+reads `within` as the instance of the surface's context it is at. An act says
+which one through the surface's own `provides`: `provides: Archive(workspace)`
+passes the context as the first argument, so `seat does Archive(desk) on
+WorkspacePanel` is at `desk`. A surface at no context of that type has no way
+to say, and an act or look on it is undecided, both ways, saying so — casting
+the person as the actor is then the one thing that settles it. Two contexts of
+the type on one surface, and which one is meant is not picked for you: it is
+undecided, naming the ambiguity.
+
+A specification that restates every permission as a rule's `requires` as well is
+still a good one — a rule should not trust its caller — but it no longer has to,
+for a journey to notice that a surface is closed to somebody.
+
 **A fan-out runs once per member.** A rule that wraps some of its clauses in
 `for w in Hooks where active = true:` applies them once for each member the
 filter keeps, with `w` bound to that member, and the clauses after the loop
@@ -506,7 +585,10 @@ is refused — and written as `does` it reports `refused`, which is the correct
 verdict about the specification and the wrong one about the journey. Correct,
 and shaped exactly like a step that is simply wrong.
 
-Satisfied when the spec refuses, and it says which precondition held the line.
+Satisfied when the spec refuses, and it says which precondition held the line —
+or which actor, when [the surface does not face whoever acts](#does--somebody-acts):
+`bob cannot do Flip(bob) on AdminPanel` holds for a user who is not an admin even
+when `Flip` has no `requires` at all.
 **Refused when the act goes through**, which is the whole reason this is a
 clause and not a comment. Undecided stays undecided: a refusal that came back
 green because nothing could work out whether the act happens is the same failure
@@ -648,6 +730,19 @@ afternoon and not about the specification. So the tool asks, and the reason on
 an undecided `sees` names the surface and the type it wants.
 
 `in` is for `sees` alone. An act names which one with its arguments.
+
+**A surface shows nothing to somebody it does not face.** The actor's
+condition is asked of whoever is looking, the same as
+[for an act](#does--somebody-acts): definitely not one, and `cannot see` holds
+— with the actor and the condition — while `sees` reads *unexposed*. Not
+settled, and a `sees` it would otherwise show is undecided, and so is a
+`cannot see`; a field the surface does not carry at all is still settled from
+the clause text, whoever is looking. An actor identified `within` a context
+reads `within` as the instance `in` named (or the one bound from the actor), so
+`mine sees desk.archived on WorkspacePanel in desk` asks whether *this* seat is
+in *that* workspace. Nothing naming one leaves it undecided, with the `in` that
+would settle it — or, on a surface at no context of that type, saying that no
+`in` can.
 
 Undecided is still the answer whenever anything under it is: a filtered
 collection keeps its definite members and notes what it could not settle, and a

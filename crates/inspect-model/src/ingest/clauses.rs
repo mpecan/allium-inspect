@@ -15,7 +15,7 @@ use allium_parser::ast::{BlockItemKind, BlockKind, Decl, Expr, ForBinding, Modul
 use crate::{
     NodeKind, SpecGraph,
     graph::NodeId,
-    program::{Boundary, Context, Function, Program, RuleAst},
+    program::{Boundary, Context, Function, Party, Program, RuleAst},
 };
 
 #[cfg(test)]
@@ -43,6 +43,12 @@ pub fn ingest(ast: &Ast, module: &str, graph: &SpecGraph, program: &mut Program)
                     program.add_boundary(
                         NodeId::new(module, NodeKind::Surface, &name.name).as_str(),
                         boundary(block),
+                    );
+                }
+                BlockKind::Actor => {
+                    program.add_actor(
+                        NodeId::new(module, NodeKind::Actor, &name.name).as_str(),
+                        party(block),
                     );
                 }
                 _ => {}
@@ -122,6 +128,31 @@ fn boundary(block: &allium_parser::ast::BlockDecl) -> Boundary {
     }
 
     boundary
+}
+
+/// Who one actor is, as expressions.
+///
+/// `identified_by: User where is_admin = true` is the entity and the condition
+/// on it; `identified_by: User` is the entity alone, and says nothing more
+/// than the type. `within: Workspace` is kept beside them because the
+/// condition may read it.
+fn party(block: &allium_parser::ast::BlockDecl) -> Party {
+    let mut party = Party::default();
+    for item in &block.items {
+        let BlockItemKind::Clause { keyword, value } = &item.kind else { continue };
+        match keyword.as_str() {
+            "identified_by" => match value {
+                Expr::Where { source, condition, .. } => {
+                    party.entity = entity_named(source);
+                    party.condition = Some(condition.as_ref().clone());
+                }
+                bare => party.entity = entity_named(bare),
+            },
+            "within" => party.within = entity_named(value),
+            _ => {}
+        }
+    }
+    party
 }
 
 /// The entity a `context` binding names, unqualified.
@@ -439,6 +470,63 @@ surface MyLoans {
         MemberReturns(loan)
 }
 ";
+
+    /// Who an actor is, read from the tree (issue #13).
+    ///
+    /// The graph keeps the condition as text for a panel; a walk asking whether
+    /// Bob is a `SiteAdmin` needs it as something to evaluate.
+    fn party_of(source: &str, actor: &str) -> Party {
+        program_of(source)
+            .actor(NodeId::new("lending", NodeKind::Actor, actor).as_str())
+            .cloned()
+            .expect("the actor")
+    }
+
+    #[test]
+    fn an_actor_keeps_the_entity_and_the_condition_that_identify_it() {
+        let party = party_of(
+            "actor SiteAdmin {\n    identified_by: User where is_admin = true\n}",
+            "SiteAdmin",
+        );
+        assert_eq!(party.entity.as_deref(), Some("User"));
+        assert!(
+            matches!(&party.condition, Some(Expr::Comparison { left, .. })
+                if matches!(left.as_ref(), Expr::Ident(name) if name.name == "is_admin")),
+            "{:?}",
+            party.condition
+        );
+        assert_eq!(party.within, None);
+    }
+
+    /// `identified_by: User` says the type and nothing more, and a condition
+    /// invented for it would be a demand the spec never made.
+    #[test]
+    fn an_actor_identified_by_a_bare_entity_has_no_condition() {
+        let party = party_of("actor Anyone {\n    identified_by: User\n}", "Anyone");
+        assert_eq!(party.entity.as_deref(), Some("User"));
+        assert!(party.condition.is_none());
+    }
+
+    /// Qualified the same as a context: bare, because it is compared against
+    /// an instance's entity.
+    #[test]
+    fn an_actor_identified_across_a_module_keeps_the_bare_entity() {
+        let party = party_of(
+            "actor Reader {\n    identified_by: other/Member where active = true\n}",
+            "Reader",
+        );
+        assert_eq!(party.entity.as_deref(), Some("Member"));
+    }
+
+    #[test]
+    fn an_actor_keeps_what_it_is_identified_within() {
+        let party = party_of(
+            "actor Owner {\n    within: Workspace\n    identified_by: Seat where workspace = within\n}",
+            "Owner",
+        );
+        assert_eq!(party.entity.as_deref(), Some("Seat"));
+        assert_eq!(party.within.as_deref(), Some("Workspace"));
+    }
 
     fn boundary_of(source: &str) -> crate::Boundary {
         program_of(source)

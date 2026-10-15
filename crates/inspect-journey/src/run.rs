@@ -214,11 +214,19 @@ impl Walker<'_> {
     fn walk_clause(&mut self, clause: &Clause) -> Outcome {
         let about = about(clause);
         match clause {
-            Clause::Does { trigger, arguments, creating, negated, line, .. } => self.act(
-                &Act { trigger, arguments, creating: creating.as_ref(), negated: *negated },
-                *line,
-                about,
-            ),
+            Clause::Does { actor, trigger, arguments, surface, creating, negated, line } => self
+                .act(
+                    &Act {
+                        actor,
+                        trigger,
+                        arguments,
+                        surface,
+                        creating: creating.as_ref(),
+                        negated: *negated,
+                    },
+                    *line,
+                    about,
+                ),
             Clause::After { duration, line, .. } => self.advance(duration, *line, about),
             Clause::Then { assertion, line } => self.assert(assertion, *line, about),
             Clause::Sees { actor, subject, surface, contexts, negated, line } => self.observe(
@@ -266,9 +274,16 @@ impl Walker<'_> {
         }
     }
 
-    /// Fire an act and keep what it caught.
+    /// An act, once the surface it is on has been asked whether it faces
+    /// whoever does it (see `facing`).
     fn act(&mut self, act: &Act<'_>, line: usize, about: String) -> Outcome {
-        let Act { trigger, arguments, creating, negated } = *act;
+        self.forget();
+        self.at_the_surface(act, line, about)
+    }
+
+    /// Fire an act and keep what it caught.
+    pub(crate) fn fire_act(&mut self, act: &Act<'_>, line: usize, about: String) -> Outcome {
+        let Act { trigger, arguments, creating, negated, .. } = *act;
         let module = trigger_module(self.spec, trigger);
 
         // Positional, as the spec writes the act and a person reads it back:
@@ -279,7 +294,6 @@ impl Walker<'_> {
             event = event.passing(self.value_of(argument));
         }
 
-        self.forget();
         let outcome = self.fire(&event);
 
         // `bruno cannot do MemberAsksToChat(…)`: the journey asserting a
@@ -431,12 +445,14 @@ impl Walker<'_> {
 }
 
 /// An act, gathered so the walk does not take six arguments.
-struct Act<'a> {
-    trigger: &'a str,
-    arguments: &'a [Term],
-    creating: Option<&'a crate::journey::Cast>,
+pub(crate) struct Act<'a> {
+    pub(crate) actor: &'a str,
+    pub(crate) trigger: &'a str,
+    pub(crate) arguments: &'a [Term],
+    pub(crate) surface: &'a str,
+    pub(crate) creating: Option<&'a crate::journey::Cast>,
     /// Whether the journey said this *cannot* happen.
-    negated: bool,
+    pub(crate) negated: bool,
 }
 
 /// Whether this rule has already run for this instance.

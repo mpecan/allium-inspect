@@ -709,7 +709,6 @@ fn every_form_the_language_has_is_either_evaluated_or_named() {
     let unmodelled = [
         Expr::Lambda { span: NOWHERE, param: Box::new(ident("x")), body: Box::new(ident("x")) },
         Expr::Pipe { span: NOWHERE, left: Box::new(ident("a")), right: Box::new(ident("b")) },
-        Expr::Within { span: NOWHERE },
     ];
     for node in unmodelled {
         assert_eq!(value_of(&node, &env), Value::Unknown);
@@ -718,6 +717,27 @@ fn every_form_the_language_has_is_either_evaluated_or_named() {
         assert!(said[0].ends_with("is not simulated"), "{}", said[0]);
         assert!(said[0].len() > "is not simulated".len() + 4, "{}", said[0]);
     }
+}
+
+/// `within` in an actor's condition is the context the actor is identified
+/// within (issue #13). It was reported as "a `within` deadline is not
+/// simulated", which is neither what it is nor something a reader can act on.
+#[test]
+fn within_is_whatever_the_caller_bound_it_to() {
+    let world = library();
+    let node = Expr::Within { span: NOWHERE };
+    let bound = env(&world, "lending").bind(inspect_sim::eval::WITHIN, Value::Bool(true));
+    assert_eq!(value_of(&node, &bound), Value::Bool(true));
+    assert!(reasons(&node, &bound).is_empty());
+}
+
+#[test]
+fn within_bound_to_nothing_says_so() {
+    let world = library();
+    let env = env(&world, "lending");
+    let node = Expr::Within { span: NOWHERE };
+    assert_eq!(value_of(&node, &env), Value::Unknown);
+    assert_eq!(reasons(&node, &env), ["nothing is bound to `within`"]);
 }
 
 #[test]

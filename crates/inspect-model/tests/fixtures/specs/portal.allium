@@ -1,0 +1,17 @@
+-- allium: 3
+-- portal.allium
+--
+-- A surface facing an actor declared in another module (issue #13).
+
+use "./admins.allium" as admins
+
+rule Wave {
+    when: Wave(u)
+    ensures: u.flag = true
+}
+
+surface RemotePanel {
+    facing admin: admins/SiteAdmin
+    provides:
+        Wave(admin)
+}

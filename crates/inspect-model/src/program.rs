@@ -114,6 +114,8 @@ pub struct Program {
     invariants: BTreeMap<String, Expr>,
     /// Each surface's boundary, by node id.
     boundaries: BTreeMap<String, Boundary>,
+    /// Each actor's identity, by node id.
+    actors: BTreeMap<String, Party>,
     /// What a spec computes rather than stores.
     derived: Derivations,
 }
@@ -168,6 +170,25 @@ pub struct Boundary {
     pub exposes: Option<Expr>,
 }
 
+/// Who an actor is, as an expression rather than as text.
+///
+/// The graph keeps `identified_by` as the author's words for a panel. This is
+/// what a walk needs to answer whether *this* person is one: `actor SiteAdmin
+/// { identified_by: User where is_admin = true }` is a demand on a user's
+/// fields, and a surface facing a `SiteAdmin` is closed to a user who does not
+/// meet it.
+#[derive(Debug, Clone, Default)]
+pub struct Party {
+    /// The entity an actor is an instance of, unqualified — compared against an
+    /// instance's entity, which is bare.
+    pub entity: Option<String>,
+    /// The `where` of `identified_by`, when it narrows.
+    pub condition: Option<Expr>,
+    /// `within: Workspace` — the context the actor is identified within, which
+    /// the condition reads as `within`.
+    pub within: Option<String>,
+}
+
 /// `context request: ContactRequest where status = pending`.
 #[derive(Debug, Clone)]
 pub struct Context {
@@ -211,6 +232,17 @@ impl Program {
     #[must_use]
     pub fn boundary(&self, id: &str) -> Option<&Boundary> {
         self.boundaries.get(id)
+    }
+
+    /// Record who the actor with `id` is.
+    pub fn add_actor(&mut self, id: impl Into<String>, party: Party) {
+        self.actors.insert(id.into(), party);
+    }
+
+    /// Who the actor with `id` is.
+    #[must_use]
+    pub fn actor(&self, id: &str) -> Option<&Party> {
+        self.actors.get(id)
     }
 
     /// Record `expr` as how `field` on `entity` is computed.

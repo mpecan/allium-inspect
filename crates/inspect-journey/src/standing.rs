@@ -17,7 +17,11 @@ use std::collections::BTreeMap;
 use inspect_model::Boundary;
 use inspect_sim::{Value, eval::span_of, value::EntityId};
 
-use crate::{assert::Sight, run::Walker};
+use crate::{
+    assert::Sight,
+    facing::{At as Place, Facing},
+    run::Walker,
+};
 
 /// What an `exposes` clause can refer to, from where this actor stands.
 pub(crate) struct Standing {
@@ -149,6 +153,20 @@ impl Walker<'_> {
             .and_then(|surface| surface.actor_binding.clone())
         {
             standing.bindings.entry(binding).or_insert_with(|| Value::Ref(looking.clone()));
+        }
+
+        // And whether it faces them at all. A surface facing site admins shows
+        // a user who is not one nothing; one nobody can tell whether it faces
+        // them is gated like a context nobody named — a *no* about something
+        // it does not expose still stands, and a *yes* is not a yes.
+        let placed: Vec<(String, EntityId)> =
+            at.iter().map(|stood| (stood.context.entity.clone(), stood.id.clone())).collect();
+        match self.faces(sight.surface, sight.actor, &Place::Looking(&placed)) {
+            Facing::Faced => {}
+            Facing::Closed(why) => return Err(Unstood::Closed(why)),
+            Facing::Undecided(why) => {
+                standing.gated.get_or_insert(why);
+            }
         }
 
         for stood in &at {

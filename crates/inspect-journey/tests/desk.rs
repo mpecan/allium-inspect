@@ -195,10 +195,13 @@ fn two_contexts_are_bound_one_from_in_and_one_from_the_actor() {
     assert!(unheld(&result).is_empty(), "{:#?}", unheld(&result));
 }
 
-/// Both named, when the actor is neither.
+/// Both named, when neither is the actor.
+///
+/// Bea is looking, and is a `Member` because `HoldDesk` faces a `Reader` —
+/// somebody who is not one is somebody nothing can say the desk is for.
 #[test]
 fn in_names_several_contexts_at_once() {
-    let result = walked(&journey("        hold sees ada.name on HoldDesk in ada, hold"));
+    let result = walked(&journey("        bea sees ada.name on HoldDesk in ada, hold"));
     assert!(unheld(&result).is_empty(), "{:#?}", unheld(&result));
 }
 

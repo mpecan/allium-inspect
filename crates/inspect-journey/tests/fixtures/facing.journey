@@ -1,0 +1,26 @@
+-- Who a surface faces (issue #13), as filed: a user who is not an admin acts
+-- on a surface that faces site admins, and the rule behind it has no
+-- `requires` of its own. The surface's `facing` is the whole of the block.
+
+journey NonAdminIsRefused {
+    cast:
+        bob: User
+    given:
+        bob.is_admin = false
+        bob.flag = false
+    1. a non-admin acts on an admin-only surface
+        bob cannot do Flip(bob) on AdminPanel
+        then bob.flag = false
+}
+
+-- The same, with the actor declared in the module the surface is not.
+journey NonAdminIsRefusedAcrossAModule {
+    cast:
+        bob: admins/User
+    given:
+        bob.is_admin = false
+        bob.flag = false
+    1. a non-admin acts on another module's admin-only surface
+        bob cannot do Wave(bob) on RemotePanel
+        then bob.flag = false
+}
