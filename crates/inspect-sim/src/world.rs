@@ -219,6 +219,16 @@ impl World {
             .unwrap_or(Value::Unknown)
     }
 
+    /// Whether anything put a value for `name` in this world — a default the
+    /// seed could read, or a write — looked up the way [`World::config`] is.
+    ///
+    /// The difference between a parameter nobody set and one somebody set to
+    /// something undecided, which read the same and are not the same reason.
+    #[must_use]
+    pub fn has_config(&self, module: &str, name: &str) -> bool {
+        self.config.contains_key(&format!("{module}.{name}")) || self.config.contains_key(name)
+    }
+
     /// Set a configuration parameter for `module`.
     pub fn set_config(&mut self, module: &str, name: &str, value: Value) {
         self.config.insert(format!("{module}.{name}"), value);
@@ -391,6 +401,17 @@ mod tests {
 
         world.config.insert("bare".to_owned(), Value::Int(7));
         assert_eq!(world.config("lending", "bare"), Value::Int(7));
+    }
+
+    #[test]
+    fn a_parameter_set_to_unknown_is_set_and_one_never_written_is_not() {
+        let mut world = World::new();
+        world.set_config("lending", "loan_limit", Value::Unknown);
+        world.config.insert("bare".to_owned(), Value::Unknown);
+        assert!(world.has_config("lending", "loan_limit"));
+        assert!(world.has_config("lending", "bare"));
+        assert!(!world.has_config("catalogue", "loan_limit"));
+        assert!(!world.has_config("lending", "absent"));
     }
 
     #[test]

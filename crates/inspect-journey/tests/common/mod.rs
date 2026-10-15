@@ -64,6 +64,10 @@ pub const CHAINS: &[&str] = &["chains", "relay"];
 /// emits once per member, and the rule chained from that emission.
 pub const FANOUT: &[&str] = &["fanout"];
 
+/// The switches fixture, alone: behaviour that is off until configuration
+/// turns it on.
+pub const SWITCHES: &[&str] = &["switches"];
+
 /// `modules`, replayed from their recordings, with each module's source.
 pub fn library(modules: &[&str]) -> (SpecGraph, Program, Sources) {
     let root = fixtures();

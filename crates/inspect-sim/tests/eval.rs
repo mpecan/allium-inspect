@@ -323,7 +323,75 @@ fn config_is_a_namespace_rather_than_an_entity() {
 fn a_config_parameter_nobody_set_is_undecided() {
     let world = library();
     let env = env(&world, "lending");
-    assert_eq!(value_of(&field(ident("config"), "absent"), &env), Value::Unknown);
+    let node = field(ident("config"), "absent");
+    assert_eq!(value_of(&node, &env), Value::Unknown);
+    // With a reason naming the parameter. A config read was the one path that
+    // came back unknown with nothing attached, so a rule guarded by a
+    // parameter with no default said only "something could not be evaluated"
+    // — which is indistinguishable from a bug (issue #11).
+    let why = reasons(&node, &env);
+    assert!(why.iter().any(|reason| reason.contains("`config.absent`")), "{why:?}");
+    assert!(why.iter().any(|reason| reason.contains("nothing set it")), "{why:?}");
+}
+
+#[test]
+fn a_config_parameter_set_to_something_undecided_says_that_instead() {
+    // It has a default and somebody wrote over it, so "no default, and nothing
+    // set it" would be false on both counts.
+    let mut world = library();
+    world.set_config("lending", "loan_limit", Value::Unknown);
+    let env = env(&world, "lending");
+    let node = field(ident("config"), "loan_limit");
+    assert_eq!(value_of(&node, &env), Value::Unknown);
+    let why = reasons(&node, &env);
+    assert!(why.iter().any(|reason| reason.contains("itself undecided")), "{why:?}");
+    assert!(!why.iter().any(|reason| reason.contains("nothing set it")), "{why:?}");
+}
+
+#[test]
+fn a_config_parameter_nobody_set_is_anchored_by_byte_offset() {
+    // An em-dash in a comment above the rule: a span counted in characters
+    // would land two bytes short and slice something else.
+    const SOURCE: &str = "-- allium: 3
+-- a switch \u{2014} with nothing said about it
+
+config {
+    sync_mode: String
+}
+
+rule Sync {
+    when: Sync(repo)
+    requires: config.sync_mode = \"push\"
+    ensures: repo.synced = true
+}
+";
+    let module = allium_parser::parse(SOURCE).module;
+    let requires = module
+        .declarations
+        .iter()
+        .filter_map(|declaration| match declaration {
+            allium_parser::ast::Decl::Block(block) => Some(block),
+            _ => None,
+        })
+        .flat_map(|block| block.items.iter())
+        .find_map(|item| match &item.kind {
+            allium_parser::ast::BlockItemKind::Clause { keyword, value }
+                if keyword == "requires" =>
+            {
+                Some(value.clone())
+            }
+            _ => None,
+        })
+        .expect("a requires clause");
+    let world = World::new();
+    let env = Env::new(&world, "switches", SOURCE);
+    let evaluation = eval(&requires, &env);
+    assert_eq!(evaluation.truth(), Truth::Unknown);
+    let note = evaluation.unresolved.first().expect("a reason");
+    let span = note.span.expect("a span");
+    assert!(!SOURCE[..span.start].is_ascii(), "the em-dash is before the rule");
+    assert_eq!(span.slice(SOURCE), Some("config.sync_mode"));
+    assert_eq!(note.expression.as_deref(), Some("config.sync_mode"));
 }
 
 // --- comparison ----------------------------------------------------------

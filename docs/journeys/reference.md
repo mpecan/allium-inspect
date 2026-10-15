@@ -40,7 +40,8 @@ journey ACopyGoesOut {
 ```
 
 Blocks may be left out. A journey with no `cast` and no `given` starts from a
-world seeded with the spec's own configuration defaults and nothing else.
+world seeded with the spec's own configuration defaults and nothing else. A
+journey can change a default — see [configuration](#configuration--running-with-a-switch-turned-on).
 
 **Indentation is meaningful in exactly one way**: a line indented *deeper* than
 the clause above it continues that clause. That is how a long act wraps.
@@ -128,6 +129,61 @@ given:
 
 What tells the two forms apart is an `=` before the first brace, not the brace:
 `note: Message { body: "a = b" }` is still an instance.
+
+### Configuration — running with a switch turned on
+
+A walk starts from the spec's `config` defaults. Much of a real system is off
+until somebody turns it on, so a journey can set a parameter wherever it can set
+a field — in `given`, in a file's `world`, and in a `stipulate`:
+
+```
+given:
+    config.loan_limit = 1
+    lending/config.loan_period = 7.days
+```
+
+`config.<name>` is the parameter whichever module declares it. When two modules
+each declare one by that name, the bare form is refused rather than guessed
+between, and the module goes in front the way it does on a type:
+`lending/config.loan_limit`. A parameter with no default can be set the same
+way, and until it is, a rule that reads it is undecided and names it.
+
+**It is reported as a stipulation**, unlike a field set in `given`. A field is
+the starting position; a parameter is a world the spec's own defaults say is not
+the one it describes, and a step holding on the strength of that is a step
+holding invisibly unless the report says so:
+
+```text
+Config In Given  —  1 of 1 steps hold
+    stipulated  config.lfs_enabled = true
+   1. use LFS on an instance that enabled it           holds
+```
+
+A line in the file's `world` is listed once, as `from the file` — under a
+journey that continues from another as well, since the line is still the
+file's. One a journey this one continues from set in its own `given` is listed
+`through` it. The line is listed as the author wrote it — `config.lfs_enabled =
+r.lfs_used`, not the `unknown` that evaluated to. A world line and a journey
+line about the same parameter are an override however each spells it:
+`switches/config.lfs_enabled` overrides `config.lfs_enabled`.
+
+What is written is checked against what the spec declares, and nothing is
+written when it does not fit:
+
+- a name no `config` block declares is **unspecified** — the spec has not got
+  that switch — and the default stays in force;
+- a value that is not of the parameter's declared type (`config.loan_limit =
+  true`) is **undecided**, naming the type. `Boolean`, `Integer`, `Decimal`,
+  `String`, `Duration` and `Timestamp` are checked; any other type is taken as
+  written.
+
+`then config.loan_limit = 1` reads a parameter back, resolved the way a write
+is: a name no block declares reads **unspecified**, and a bare name two modules
+declare reads **undecided**, each with the reason a write of it would give.
+
+Parameter names are checked by `walk`, which has the spec's `config` blocks to
+check them against, and not by `check`: a `given` naming a switch the spec does
+not have passes the static half and is reported when the journey is walked.
 
 ## `world` — what a whole file starts from
 
@@ -230,9 +286,10 @@ journey AndBringsItBack {
 
 The named journey is walked to its end and this one starts in the world it
 left — its cast, its instances, everything a step of it caught. This journey's
-own `cast` and `given` go on top. Its file's `world` is **not** laid out again:
-the journey it follows already started from one, and a second over the top would
-make a second `ada`.
+own `cast` and `given` go on top. Its file's `world` is **not** laid out again
+when a journey earlier in the chain already started from it: a second over the
+top would make a second `ada`, and put back every field and switch the earlier
+journey changed. Its lines are still listed `from the file`.
 
 Chains carry as far as they are written, and across files: a name is unique
 across the whole set, and a life does not stop at a file boundary. Written down,
@@ -608,7 +665,9 @@ stipulate may_invite(chat, ada) = true
 
 Sets a value directly, mid-journey, the way `given` does at the start. Use it
 when reaching a state honestly would take ten steps that are not what this
-journey is about.
+journey is about. A configuration parameter is set the same way —
+`stipulate config.loan_limit = 1` — and checked the same way as
+[in `given`](#configuration--running-with-a-switch-turned-on).
 
 **A call, as well as a path.** A specification names functions it never
 defines — a policy nobody has decided yet — and no simulator can work one out,

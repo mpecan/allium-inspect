@@ -23,6 +23,15 @@ use crate::{
 impl Walker<'_> {
     /// Evaluate one assertion against the world the last step left.
     pub(crate) fn assert(&self, assertion: &Assertion, line: usize, about: String) -> Outcome {
+        // A parameter the spec does not declare, or declares twice, is read the
+        // way it would be written: with the resolver's answer and its reason.
+        // Reading it as a bare unknown said only "is unknown" about a switch
+        // the spec does not have, where a `given` of it said which.
+        if let Some(crate::config::Unwritten { verdict, reason }) =
+            self.unreadable_config(assertion)
+        {
+            return Outcome { line, verdict, about, detail: Some(reason) };
+        }
         let (truth, detail) = match assertion {
             Assertion::Compare { left, operator, right } => {
                 let found = self.read(left);

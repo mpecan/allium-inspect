@@ -72,6 +72,7 @@ pub fn walk(
         inherited: Vec::new(),
         after: None,
         standing_on: None,
+        worlds: Vec::new(),
         cast: Vec::new(),
         fired: Vec::new(),
         undecided: Vec::new(),
@@ -129,6 +130,8 @@ pub(crate) struct Walker<'a> {
     pub(crate) after: Option<Ground>,
     /// Which journey's steps are running, when it is not this one's.
     pub(crate) standing_on: Option<String>,
+    /// Every file world this walk has laid out, so a chain lays each out once.
+    pub(crate) worlds: Vec<crate::journey::Shared>,
     /// Everybody the journey has named, in the order they were bound.
     pub(crate) cast: Vec<CastMember>,
     /// Rules that ran since the last clause, for `then … fires`.
@@ -243,12 +246,9 @@ impl Walker<'_> {
                                 detail: None,
                             }
                         }
-                        Err(reason) => Outcome {
-                            line: *line,
-                            verdict: Verdict::Undecided,
-                            about,
-                            detail: Some(reason),
-                        },
+                        Err(crate::config::Unwritten { verdict, reason }) => {
+                            Outcome { line: *line, verdict, about, detail: Some(reason) }
+                        }
                     },
                     // A call writes nowhere: there is no field to set, which is
                     // the whole reason it needs saying. It is remembered and

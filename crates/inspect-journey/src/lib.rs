@@ -17,6 +17,7 @@
 mod assert;
 pub mod check;
 mod clauses;
+mod config;
 mod drive;
 pub mod evidence;
 mod guard;

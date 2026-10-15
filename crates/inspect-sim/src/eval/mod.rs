@@ -468,7 +468,27 @@ fn member(whole: &Expr, object: &Expr, field: &Ident, env: &Env<'_>) -> Evaluati
 
     // `config.loan_limit` is not a field of anything: `config` is a namespace.
     if is_ident_named(object, "config") {
-        return Evaluation::known(env.world.config(env.module, field));
+        // A parameter with no default this simulator can read, and that
+        // nobody set, is undecided — and says which parameter. Bare, it read
+        // as "something could not be evaluated" at the rule it guarded. One
+        // that *was* set, to something itself undecided, says that instead:
+        // it has a default and somebody wrote over it, so the first reason
+        // would be false on both counts.
+        return match env.world.config(env.module, field) {
+            Value::Unknown => Evaluation::unknown(
+                if env.world.has_config(env.module, field) {
+                    format!("`config.{field}` was set to a value that is itself undecided")
+                } else {
+                    format!(
+                        "`config.{field}` has no value: the spec gives it no default this \
+                         simulator can read, and nothing set it"
+                    )
+                },
+                whole,
+                env.source,
+            ),
+            value => Evaluation::known(value),
+        };
     }
 
     let base = eval(object, env);
