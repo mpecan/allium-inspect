@@ -871,6 +871,55 @@ reproduces exactly. Advancing it also runs whatever the new time made true: a
 state-condition rule is not fired by anybody, and a journey that says a fortnight
 passed has already said that whatever became true in it happened.
 
+**A `null` deadline is not due.** `when: task: Task.stopped_at + config.ttl <=
+now` asks whether a deadline has passed, and a task whose `stopped_at` is `null`
+has not stopped — there is no deadline yet, so the answer is no and the rule does
+not run. No guard is needed in the trigger (the language has nowhere to write
+one). This holds for a state rule's own `when`, in the shape that asks *has it
+passed*:
+
+- the deadline on the earlier side and the clock on the later — `d <= now`,
+  `d < now`, `now >= d`, `now > d`, the clock moved or not (`now - 1.day`);
+- the deadline `null`, or `null` moved by durations the world knows —
+  `stopped_at`, `stopped_at + config.ttl`, `config.ttl + stopped_at`,
+  `sent_at + a + b`.
+
+The comparison is the whole `when`: allium rejects an `and` or an `or` in a
+state trigger (`allium.rule.invalidTrigger`), and a conjunct belongs in
+`requires`.
+
+The deadline has to be written in the trigger. A derived field that computes
+one — `expires_at: stopped_at + config.ttl`, then `when: t: Task.expires_at <=
+now` — evaluates to an unknown rather than a `null`, and stays undecided.
+
+`then <Rule> does not fire` about such a rule is answered — and about any
+state rule: when the clock settled the world in that step and none of the
+listings it read was unsure about the rule, every one of them said *no*, and
+the line holds. If any was unsure, or the step did not move the clock (an act
+settles nothing), it is still undecided.
+
+Everywhere else a `null` is read as it always is. `null + 1.hour` in a
+`requires`, an invariant or a `then` is not a timestamp, and is undecided with
+that reason. So is the opposite question in a trigger — `when: offer:
+Offer.opens_at > now`, *is it still ahead* — because a `null` answers it neither
+way, and reading "no deadline" as "never ahead" or "always ahead" would be the
+tool choosing a meaning the spec did not write. The walk says which:
+
+```text
+1. a day passes over an offer with no opening       undecided
+     after 1.day
+       while the clock moved, what it set off: `Withdraw` could not be decided: a null cannot be ordered against a timestamp — in `Offer.opens_at > now`
+```
+
+That line is about any temporal rule the clock leaves undecided over the world it
+settled on, not only a `null`: a loan whose `window` nobody set is not known to
+be overdue three weeks on, and `after 21.days` says so rather than holding.
+Each such rule is woken on the instance it could not settle before it is
+reported, so one whose `requires` already refuses — a loan already returned —
+is not. A *state* rule that is not temporal is not reported on the clock's line:
+time does not decide it, and a `then <Rule> fires` about it, when a listing
+could not decide it, still says it could not be told.
+
 ### `then` — assert something
 
 ```

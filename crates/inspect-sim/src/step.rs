@@ -30,7 +30,7 @@ use ts_rs::TS;
 use crate::{
     apply::Against,
     apply::{Application, Effect},
-    binding, creation,
+    binding, creation, due,
     eval::{Env, Unresolved, eval},
     per_member,
     truth::Truth,
@@ -131,6 +131,10 @@ pub struct Enabled {
     /// to put a reason, which made it the one place the simulator could go
     /// quiet without breaking its own rule.
     pub undecided: Vec<Unresolved>,
+    /// The instances behind `undecided`, each once, in the order they were
+    /// read — so anything that goes on to ask *why* asks only those, rather
+    /// than every instance the condition already said no about.
+    pub unsettled_over: Vec<Value>,
 }
 
 /// Everything one step produced.
@@ -354,7 +358,7 @@ fn run_rule(
     // expiry was a week away, and write `lapsed` over a hold nothing lapsed.
     if let Some((binding, condition)) = state_condition(detail, ast) {
         let evaluated = match bindings.get(binding) {
-            Some(Value::Ref(id)) => eval(
+            Some(Value::Ref(id)) => due::trigger(
                 condition,
                 &about(
                     Env::new(world, module, source).deriving(program.derivations()),
@@ -504,6 +508,7 @@ pub fn enabled(
         let entity = detail.trigger.as_str();
         let mut over = Vec::new();
         let mut undecided = Vec::new();
+        let mut unsettled_over = Vec::new();
 
         for instance in world.instances_of(entity) {
             let scope = about(
@@ -512,14 +517,17 @@ pub fn enabled(
                 binding,
                 &instance.id,
             );
-            let evaluated = eval(condition, &scope);
+            let evaluated = due::trigger(condition, &scope);
             match evaluated.truth() {
                 Truth::True => over.push(Value::Ref(instance.id.clone())),
                 // A condition nobody could settle is not a condition that said
                 // no, and the browser offers these as the steps a person may
                 // take next — so an instance missing from that list for a
                 // reason nothing recorded is a rule silently not offered.
-                Truth::Unknown => undecided.extend(evaluated.unresolved),
+                Truth::Unknown => {
+                    undecided.extend(evaluated.unresolved);
+                    unsettled_over.push(Value::Ref(instance.id.clone()));
+                }
                 Truth::False => {}
             }
         }
@@ -534,6 +542,7 @@ pub fn enabled(
                 over,
                 binding: binding.to_owned(),
                 undecided,
+                unsettled_over,
             });
         }
     }

@@ -84,6 +84,7 @@ pub fn walk(
         answered: Vec::new(),
         refused_in_the_world: Vec::new(),
         cut_off: None,
+        listed: None,
         firings: 0,
         moved: false,
         notes: Vec::new(),
@@ -186,6 +187,11 @@ pub(crate) struct Walker<'a> {
     /// A cascade since it that was cut off before it settled, and where. Kept
     /// apart from `undecided`: it names triggers still waiting, not a rule.
     pub(crate) cut_off: Option<String>,
+    /// Since it, whether the clock settled the world to the end — and if so,
+    /// every state rule some round's listing could not decide for an instance.
+    /// A rule settled to the end and not in here was decided *false* wherever
+    /// it was asked, so `then … does not fire` about it has an answer.
+    pub(crate) listed: Option<std::collections::BTreeSet<String>>,
     /// Events fired since it, the act's own included, against the budget that
     /// stops a cascade that grows faster than the round bound can catch.
     pub(crate) firings: usize,

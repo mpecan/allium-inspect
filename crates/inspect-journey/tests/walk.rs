@@ -60,6 +60,10 @@ fn a_copy_goes_out_and_comes_back() {
         .collect();
     assert!(bad.is_empty(), "nothing should be refused or unspecified: {bad:#?}");
     assert_eq!(result.steps.len(), 3);
+    // Which steps are undecided, pinned: only the fortnight, because nobody
+    // gave the loan a `window` and so whether it fell due is not known.
+    let verdicts: Vec<Verdict> = result.steps.iter().map(|step| step.verdict()).collect();
+    assert_eq!(verdicts, [Verdict::Specified, Verdict::Undecided, Verdict::Specified]);
 }
 
 #[test]
@@ -112,7 +116,16 @@ fn the_second_journey_asks_for_something_this_spec_does_not_deliver() {
     let fires = &overdue.outcomes[1];
     assert_eq!(fires.about, "then LoanFallsOverdue fires");
     assert_eq!(fires.verdict, Verdict::Undecided, "{fires:?}");
-    assert!(fires.detail.as_ref().expect("a reason").contains("never became true"), "{fires:?}");
+    // Which rule, and which part of its trigger nobody set: the clock moving
+    // wakes it on the loan to ask (issue #20), so the reason is the
+    // simulator's own rather than "never became true".
+    let detail = fires.detail.as_ref().expect("a reason");
+    assert!(detail.contains("`LoanFallsOverdue` could not be decided"), "{fires:?}");
+    assert!(detail.contains("has no `window` set"), "{fires:?}");
+    // And the clock line itself says so, rather than holding.
+    let clock = &overdue.outcomes[0];
+    assert_eq!(clock.about, "after 21.days");
+    assert_eq!(clock.verdict, Verdict::Undecided, "{clock:?}");
 }
 
 #[test]
@@ -1342,7 +1355,7 @@ fn a_false_that_follows_something_undecided_is_not_a_refusal() {
     assert_eq!(consequence.about, "then loan.status = overdue");
     assert_eq!(consequence.verdict, Verdict::Undecided, "{consequence:?}");
     assert!(
-        consequence.detail.as_ref().expect("a reason").contains("earlier in this step"),
+        consequence.detail.as_ref().expect("a reason").contains("this world is not settled"),
         "{consequence:?}"
     );
     assert_eq!(overdue.verdict(), Verdict::Undecided);
@@ -2454,4 +2467,56 @@ fn a_call_with_the_wrong_number_of_arguments_is_not_the_one_exposed() {
 
     let seen = &result.steps[0].outcomes[0];
     assert_eq!(seen.verdict, Verdict::Unexposed, "{seen:?}");
+}
+
+/// The clock settled the world and every listing said *no* about a state
+/// rule: `does not fire` has an answer, and it is the spec's (issue #20).
+#[test]
+fn a_state_rule_the_clock_decided_against_does_not_fire_decided() {
+    let walk = walked(
+        "journey ACopyOnTheShelfIsNotLost {\n    cast:\n        copy: Copy\n    given:\n        \
+         copy.status = available\n    1. a day passes\n        after 1.day\n        then \
+         ReportLostCopy does not fire\n}\n",
+    );
+    let line = &walk.steps[0].outcomes[1];
+    assert_eq!(line.about, "then ReportLostCopy does not fire");
+    assert_eq!(line.verdict, Verdict::Specified, "{line:?}");
+}
+
+/// The same, but a listing could not decide it: the copy's status was never
+/// set. Not read as a no — and not on the clock's line either, because time
+/// does not decide a rule that is not temporal.
+#[test]
+fn a_state_rule_a_listing_could_not_decide_does_not_fire_undecided() {
+    let walk = walked(
+        "journey ACopyNobodyDescribed {\n    cast:\n        copy: Copy\n    1. a day passes\n        \
+         after 1.day\n        then ReportLostCopy does not fire\n}\n",
+    );
+    let clock = &walk.steps[0].outcomes[0];
+    assert_eq!(clock.verdict, Verdict::Specified, "{clock:?}");
+    let line = &walk.steps[0].outcomes[1];
+    assert_eq!(line.about, "then ReportLostCopy does not fire");
+    assert_eq!(line.verdict, Verdict::Undecided, "{line:?}");
+}
+
+/// What the clock's listings decided belongs to that step. An act after it
+/// settles nothing, so a state rule it may have made true is not answered by
+/// a listing read before the copy was lost.
+#[test]
+fn a_listing_the_clock_read_does_not_answer_for_a_later_act() {
+    let walk = walked(
+        "journey ALossAfterAQuietDay {\n    cast:\n        ada: Member\n        copy: Copy\n    \
+         given:\n        ada.is_at_limit = false\n        copy.status = available\n    1. a quiet \
+         day\n        after 1.day\n    2. she borrows it and loses it\n        ada does \
+         MemberBorrows(ada, copy) on MemberShelf\n            creating loan: Loan\n        ada \
+         does MemberReportsLoss(loan) on MemberShelf\n        then copy.status = lost\n        \
+         then ReportLostCopy does not fire\n}\n",
+    );
+    let all = outcomes(&walk);
+    let (verdict, _, detail) = all
+        .iter()
+        .find(|(_, about, _)| about == "then ReportLostCopy does not fire")
+        .expect("the line");
+    assert_eq!(*verdict, Verdict::Undecided, "{all:#?}");
+    assert!(detail.as_ref().expect("a reason").contains("not visible from here"), "{all:#?}");
 }

@@ -247,6 +247,7 @@ pub(crate) fn reacting(
             over,
             binding: binding.to_owned(),
             undecided: Vec::new(),
+            unsettled_over: Vec::new(),
         });
     }
     found

@@ -16,8 +16,10 @@
 
 use std::collections::BTreeSet;
 
-use inspect_model::NodeKind;
-use inspect_sim::{StepOutcome, Truth, Value, enabled, step::step, world::Event};
+use inspect_sim::{StepOutcome, Value, enabled, step::step, world::Event};
+
+mod fires;
+mod left;
 
 use crate::{
     check,
@@ -117,6 +119,7 @@ impl Walker<'_> {
         self.created.clear();
         self.landed.clear();
         self.cut_off = None;
+        self.listed = None;
         self.firings = 0;
     }
 
@@ -180,6 +183,8 @@ impl Walker<'_> {
         // rules on `Hold` share one; remembering the trigger took the second
         // rule on a hold for the first one running again, and it never ran.
         let mut ran: Vec<(String, Value)> = Vec::new();
+        // Every state rule some round could not decide for some instance.
+        let mut unsure = BTreeSet::new();
         for _ in 0..ROUNDS {
             // A cascade cut off partway is already said, by `unsettled`, and
             // nothing run on the world it left would be the spec's either.
@@ -193,7 +198,21 @@ impl Walker<'_> {
             // The event to fire, the instance it is about, and the rules it
             // was fired for.
             let mut waiting: Vec<(Event, Value, Vec<String>)> = Vec::new();
-            for rule in enabled(self.spec, self.program, self.sources, &self.world) {
+            let listed = enabled(self.spec, self.program, self.sources, &self.world);
+            let mut undecided = Vec::new();
+            for rule in listed {
+                if !rule.undecided.is_empty() {
+                    unsure.insert(rule.name.clone());
+                }
+                // Only a rule the clock decides. A state rule over something a
+                // journey never set is undecided before time passes and after,
+                // and is said where it is asked about — `then … fires` — not
+                // on every step that moves the clock past it.
+                if rule.source == inspect_model::graph::TriggerSource::Temporal
+                    && !rule.undecided.is_empty()
+                {
+                    undecided.push(rule.clone());
+                }
                 for over in rule.over {
                     // A rule already run for that same instance is where the
                     // fixpoint comes from. Without it a rule whose effect keeps
@@ -229,6 +248,8 @@ impl Walker<'_> {
                 }
             }
             if waiting.is_empty() {
+                self.listed = Some(unsure);
+                self.undecided_over_what_is_left(undecided);
                 return Settled::Yes;
             }
             for (event, over, woken) in waiting {
@@ -247,92 +268,6 @@ impl Walker<'_> {
             }
         }
         Settled::No { rounds: ROUNDS }
-    }
-}
-
-impl Walker<'_> {
-    /// `then <Rule> fires`, or `does not fire`, against what the last step ran.
-    pub(crate) fn fires(&self, rule: &str, negated: bool) -> (Truth, Option<String>) {
-        let ran = self.fired.iter().any(|name| name == rule);
-        // "did not run" and "could not be told whether it should" are
-        // different answers, and only one of them is about the spec.
-        if !ran && let Some(it) = self.undecided.iter().find(|it| it.rule == rule) {
-            return (Truth::Unknown, Some(format!("`{rule}` could not be decided: {}", it.why)));
-        }
-        // Woken and refused: the spec's own reason, in its own words, rather
-        // than a bare "did not run" a reader has to go and explain.
-        //
-        // Unless the step is unsettled. Refused on the firings that happened
-        // says nothing about one that did not: a `for` member nobody could
-        // decide about, or a cascade cut off, may have woken it again with
-        // something it would have taken.
-        if !ran && let Some(it) = self.refused.iter().find(|it| it.rule == rule) {
-            let refused = format!("`{rule}` refused: {}", it.why);
-            return match self.unsettled() {
-                Some(why) => (
-                    Truth::Unknown,
-                    Some(format!(
-                        "{refused} — but whether it would have run on what was not settled is \
-                         not known: {why}"
-                    )),
-                ),
-                None => (Truth::from_bool(negated), Some(refused)),
-            };
-        }
-        if !ran && self.waits_on_the_world(rule) {
-            // Nobody fires a state-condition rule; it becomes true or it does
-            // not. The simulator lists the ones that became true and says
-            // nothing about the rest, so a rule whose condition is *false* and
-            // one whose condition could not be *decided* look identical from
-            // here — and reporting the second as a flat no is the failure this
-            // whole design refuses.
-            return (
-                Truth::Unknown,
-                Some(format!(
-                    "`{rule}` never became true, and whether its condition is false or could \
-                     not be decided is not visible from here"
-                )),
-            );
-        }
-        // Not run, while something this step ran left part of what it ensures
-        // unapplied or could not be decided at all. Whatever it did not emit
-        // or write is exactly what might have woken this rule, so "did not
-        // run" is a fact about this world and not about the spec — and `does
-        // not fire` holding on it would be the simulator guessing.
-        if !ran && let Some(why) = self.unsettled() {
-            return (
-                Truth::Unknown,
-                Some(format!(
-                    "`{rule}` did not run, but whether it would have is not settled — {why}"
-                )),
-            );
-        }
-        // Said either way. A refused `does not fire` with nothing under it
-        // reads, in a report, like a line that held.
-        (
-            Truth::from_bool(ran != negated),
-            Some(if ran { format!("`{rule}` ran") } else { format!("`{rule}` did not run") }),
-        )
-    }
-
-    /// Whether a rule waits on the world rather than on somebody acting.
-    ///
-    /// Not a creation rule, although the model files one as a state rule: a
-    /// creation is followed whenever a step makes one, so one that did not run
-    /// was either never woken — nothing of its kind was made — or refused, and
-    /// both of those are visible from here.
-    fn waits_on_the_world(&self, rule: &str) -> bool {
-        use inspect_model::graph::TriggerSource;
-        self.spec.nodes_of(NodeKind::Rule).find(|node| node.name == rule).is_some_and(|node| {
-            let creation = self
-                .program
-                .rule(node.id.as_str())
-                .is_some_and(|ast| inspect_sim::creation::creation_of(ast.when.as_ref()).is_some());
-            !creation
-                && node.detail.as_rule().is_some_and(|detail| {
-                    matches!(detail.source, TriggerSource::State | TriggerSource::Temporal)
-                })
-        })
     }
 }
 
