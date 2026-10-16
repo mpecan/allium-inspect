@@ -2,9 +2,10 @@
 -- `Matched` once per active member, and `Queue` takes each one. A fan-out over
 -- a collection with no members matched nothing; the walk used to report
 -- `Queue` undecided anyway, because the iteration was never applied. The
--- ones about a hook nobody said was active, a bell nobody hung hooks on, an
--- argument named like a hook's own field and a precondition inside a loop are
--- what stays undecided, and say why.
+-- ones about a hook nobody said was active, a bell nobody hung hooks on and an
+-- argument named like a hook's own field are what stays undecided, and say
+-- why. A precondition inside a loop is read for each member the filter keeps:
+-- decided when every member is known, undecided when one may be missing.
 
 journey NoHooksExist {
     cast:
@@ -114,11 +115,112 @@ journey WhatMarkDidNotNeedDoesNotUnsettleIt {
 journey APreconditionInsideTheLoopIsNotTheArgument {
     cast:
         h: Hook
+        idle: Hook
     given:
         h.active = true
         h.swept = false
+        idle.active = false
     1. check a hook, whose loop is named like the argument
-        h does Check(h) on Panel
+        h cannot do Check(h) on Panel
+}
+
+journey APreconditionInsideTheLoopOverNoHooks {
+    cast:
+        c: Clock
+    given:
+        c.done = false
+    1. muster with no hooks in the world
+        c does Muster(c) on Console
+        then c.done = true
+}
+
+journey EveryArmedHookIsActive {
+    cast:
+        c: Clock
+        live: Hook
+        idle: Hook
+    given:
+        c.done = false
+        live.armed = true
+        live.active = true
+        live.swept = false
+        idle.armed = false
+        idle.active = false
+        idle.swept = false
+    1. muster: the only armed hook is active, and the idle one is not kept
+        c does Muster(c) on Console
+        then c.done = true
+        then live.swept = true
+        then idle.swept = false
+}
+
+journey AnArmedHookIsNotActive {
+    cast:
+        c: Clock
+        live: Hook
+        dead: Hook
+    given:
+        c.done = false
+        live.armed = true
+        live.active = true
+        live.swept = false
+        dead.armed = true
+        dead.active = false
+    1. muster: one armed hook is not active, so the whole rule refuses
+        c cannot do Muster(c) on Console
+        then c.done = false
+        then live.swept = false
+}
+
+journey AnArmedHookNobodySaidWasActive {
+    cast:
+        c: Clock
+        h: Hook
+    given:
+        c.done = false
+        h.armed = true
+    1. muster: an armed hook whose `active` nobody set
+        c does Muster(c) on Console
+}
+
+journey ARackWithItsHookHung {
+    cast:
+        r: Rack
+        h: Hook
+    given:
+        r.hung = false
+        h.rack = r
+        h.active = true
+        h.swept = false
+    1. hang a rack whose one hook is active
+        r does Hang(r) on Workshop
+        then r.hung = true
+        then h.swept = true
+}
+
+journey ARackThatMayBeMissingAHook {
+    cast:
+        r: Rack
+        h: Hook
+    given:
+        r.hung = false
+        h.active = true
+    1. hang a rack whose hook may or may not be on it
+        r does Hang(r) on Workshop
+}
+
+journey ARackThatMayBeMissingAHookHoldsAnInactiveOne {
+    cast:
+        r: Rack
+        on: Hook
+        loose: Hook
+    given:
+        r.hung = false
+        on.rack = r
+        on.active = false
+        loose.active = true
+    1. hang a rack holding an inactive hook, whatever else is on it
+        r cannot do Hang(r) on Workshop
 }
 
 journey SweepWritesEachMember {
@@ -147,4 +249,31 @@ journey ABellNobodyHungHooksOn {
     1. ring a bell whose hooks the journey never said
         b does Ring(b) on Belfry
         then b.rung = true
+}
+
+journey ABellWhoseHookIsActive {
+    cast:
+        b: Bell
+        h: Hook
+    given:
+        b.rung = false
+        b.hooks = {h}
+        h.active = true
+        h.swept = false
+    1. toll a bell whose one hook is active
+        b does Toll(b) on Belfry
+        then b.rung = true
+        then h.swept = true
+}
+
+journey ABellWhoseHookIsNotActive {
+    cast:
+        b: Bell
+        h: Hook
+    given:
+        b.rung = false
+        b.hooks = {h}
+        h.active = false
+    1. toll a bell whose one hook is inactive
+        b cannot do Toll(b) on Belfry
 }

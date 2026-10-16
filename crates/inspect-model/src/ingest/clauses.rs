@@ -10,12 +10,12 @@
 //! Keyed by node id, which is how [`crate::Program`] is asked for them and how
 //! the graph pass refers to the same rule.
 
-use allium_parser::ast::{BlockItemKind, BlockKind, Decl, Expr, ForBinding, Module as Ast};
+use allium_parser::ast::{BlockItemKind, BlockKind, Decl, Expr, Module as Ast};
 
 use crate::{
     NodeKind, SpecGraph,
     graph::NodeId,
-    program::{Boundary, Context, Function, Party, Program, RuleAst},
+    program::{Boundary, Context, Function, Party, PerMember, Program, RuleAst},
 };
 
 #[cfg(test)]
@@ -256,26 +256,25 @@ fn rule(block: &allium_parser::ast::BlockDecl) -> RuleAst {
             // inside carried an undecided argument, and every rule chained
             // from it was undecided, even over a collection with nothing in it.
             //
-            // A `requires` inside is still among the rule's preconditions, and
-            // marked as per-member so the simulator reads it as undecided
-            // whatever it says. Whether a per-member precondition refuses the
-            // rule or only skips the member is a reading the language does not
-            // settle, and taking either would be the simulator guessing.
+            // A `requires` inside is still among the rule's preconditions,
+            // marked with the loop it was written in, so the simulator reads
+            // it for each member the filter keeps — a precondition of the
+            // whole rule, quantified over the loop, and not a guard that
+            // skips the member: that is what `where` and `if` are for.
             BlockItemKind::ForBlock { binding, collection, filter, items } => {
                 let mut body = Vec::new();
+                let mut lets = Vec::new();
                 for inner in items {
                     match &inner.kind {
                         BlockItemKind::Clause { keyword, value } => match keyword.as_str() {
                             "requires" => {
-                                let named = match binding {
-                                    ForBinding::Single(name) => name.name.clone(),
-                                    ForBinding::Destructured(parts, _) => parts
-                                        .iter()
-                                        .map(|part| part.name.as_str())
-                                        .collect::<Vec<_>>()
-                                        .join(", "),
+                                let within = PerMember {
+                                    binding: binding.clone(),
+                                    collection: collection.clone(),
+                                    filter: filter.clone(),
+                                    lets: lets.clone(),
                                 };
-                                ast.per_member.insert(ast.requires.len(), named);
+                                ast.per_member.insert(ast.requires.len(), within);
                                 ast.requires.push(value.clone());
                             }
                             "ensures" => body.push(value.clone()),
@@ -283,11 +282,14 @@ fn rule(block: &allium_parser::ast::BlockDecl) -> RuleAst {
                         },
                         // `let pending = user.tasks where …` inside the loop is
                         // about the member, so it is bound per member too.
-                        BlockItemKind::Let { name, value } => body.push(Expr::LetExpr {
-                            span: inner.span,
-                            name: name.clone(),
-                            value: Box::new(value.clone()),
-                        }),
+                        BlockItemKind::Let { name, value } => {
+                            lets.push((name.name.clone(), value.clone()));
+                            body.push(Expr::LetExpr {
+                                span: inner.span,
+                                name: name.clone(),
+                                value: Box::new(value.clone()),
+                            });
+                        }
                         _ => {}
                     }
                 }
@@ -308,6 +310,7 @@ fn rule(block: &allium_parser::ast::BlockDecl) -> RuleAst {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use allium_parser::ast::ForBinding;
 
     /// The program a spec's text produces.
     ///
@@ -856,8 +859,9 @@ invariant OpenLoansAreWithinTheLimit {
         // `for d in member.devices:` wraps the body rather than replacing it.
         // Dropping the inner clauses leaves a rule that iterates over nothing
         // and is reported as trivially succeeding. A `requires` inside is
-        // still among the rule's preconditions, marked as per-member; see
-        // `rule` for why it is not read per member.
+        // still among the rule's preconditions, marked with the loop it is
+        // read over: its name, its collection, its filter, and the `let`s
+        // written above it inside the loop.
         let ast = rule_of(
             "
 rule BorrowCopy {
@@ -872,12 +876,49 @@ rule BorrowCopy {
         );
         assert_eq!(ast.requires.len(), 2, "{:#?}", ast.requires);
         assert_eq!(
-            ast.per_member,
-            std::collections::BTreeMap::from([(1, "d".to_owned())]),
-            "only the one inside the loop, by its index, with the loop's name"
+            ast.per_member.keys().copied().collect::<Vec<_>>(),
+            [1],
+            "only the one inside the loop, by its index"
         );
+        let within = &ast.per_member[&1];
+        assert!(matches!(&within.binding, ForBinding::Single(name) if name.name == "d"));
+        assert!(
+            matches!(&within.collection, Expr::MemberAccess { field, .. } if field.name == "devices"),
+            "{:#?}",
+            within.collection
+        );
+        assert!(within.filter.is_none());
+        assert!(within.lets.is_empty());
         assert_eq!(ast.ensures.len(), 1, "{:#?}", ast.ensures);
         assert!(matches!(ast.ensures[0], Expr::For { .. }), "{:#?}", ast.ensures);
+    }
+
+    /// A `requires` inside a loop is read once per member, so it keeps what
+    /// that needs: the filter, and the `let`s the loop wrote above it — and
+    /// only those, since one written below it is not yet bound.
+    #[test]
+    fn a_precondition_inside_a_loop_keeps_the_filter_and_the_lets_written_above_it() {
+        let ast = rule_of(
+            "
+rule BorrowCopy {
+    when: Hang(r)
+    for h in r.hooks where h.armed = true:
+        let live = h.active
+        requires: live = true
+        let late = h.swept
+        requires: late = false
+        ensures: h.swept = true
+}
+",
+        );
+        assert_eq!(ast.per_member.keys().copied().collect::<Vec<_>>(), [0, 1]);
+        let first = &ast.per_member[&0];
+        assert!(first.filter.is_some(), "the filter is kept");
+        let names = |at: usize| -> Vec<String> {
+            ast.per_member[&at].lets.iter().map(|(name, _)| name.clone()).collect()
+        };
+        assert_eq!(names(0), ["live"]);
+        assert_eq!(names(1), ["live", "late"]);
     }
 
     /// Issue #6: the clauses inside a rule-level `for` used to be hoisted out

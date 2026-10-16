@@ -17,7 +17,7 @@
 
 use std::collections::BTreeMap;
 
-use allium_parser::ast::{CallArg, Expr};
+use allium_parser::ast::{CallArg, Expr, ForBinding};
 
 /// The parsed clauses of one rule.
 ///
@@ -52,14 +52,13 @@ pub struct RuleAst {
     /// top to bottom against the file.
     pub requires: Vec<Expr>,
     /// The `requires` written inside a rule-level `for`, by their index in
-    /// `requires`, each with the loop's name.
+    /// `requires`, each with the loop it was written in.
     ///
-    /// Whether one member failing a per-member precondition refuses the rule
-    /// or only skips that member is a reading the language does not settle,
-    /// so these are undecided whatever they say. Without the mark they were
-    /// read as the rule's own, and a trigger argument sharing the loop's name
-    /// decided them about the argument instead.
-    pub per_member: BTreeMap<usize, String>,
+    /// Such a clause is the rule's precondition for every member the loop's
+    /// filter keeps, so the simulator reads it once per member rather than
+    /// once about whatever a trigger argument sharing the loop's name holds.
+    /// See [`PerMember`].
+    pub per_member: BTreeMap<usize, PerMember>,
     /// One entry per `ensures` clause, in declaration order.
     ///
     /// A rule-level `for x in collection [where filter]:` is one entry here,
@@ -70,6 +69,25 @@ pub struct RuleAst {
     /// a later clause emitting `MessageSent(message: message)` depends on the
     /// earlier one having run.
     pub ensures: Vec<Expr>,
+}
+
+/// The loop a `requires` written inside a rule-level `for` ranges over.
+///
+/// What the simulator needs to read the precondition once per member: the
+/// name the member is bound to, the collection and filter as the spec wrote
+/// them (so a reason can quote them by their own spans), and the `let`s the
+/// loop wrote before the clause, which are about the member too.
+#[derive(Debug, Clone)]
+pub struct PerMember {
+    /// `h` in `for h in Hooks where …`.
+    pub binding: ForBinding,
+    /// `Hooks`.
+    pub collection: Expr,
+    /// The `where`, when there is one.
+    pub filter: Option<Expr>,
+    /// `let live = h.active`, written inside the loop above the clause, in
+    /// order.
+    pub lets: Vec<(String, Expr)>,
 }
 
 impl RuleAst {

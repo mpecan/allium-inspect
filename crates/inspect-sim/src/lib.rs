@@ -20,6 +20,7 @@ pub mod apply;
 mod binding;
 pub mod creation;
 pub mod eval;
+mod per_member;
 pub mod seed;
 pub mod step;
 pub mod truth;

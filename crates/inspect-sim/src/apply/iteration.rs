@@ -5,12 +5,14 @@
 //! — and because `apply` is long enough without it.
 
 use allium_parser::ast::{Expr, ForBinding};
+use inspect_model::SpecGraph;
 
 use super::{Application, Applied};
 use crate::{
-    eval::{Evaluation, Unresolved, element_scope, eval, span_of},
+    eval::{Env, Evaluation, Unresolved, element_scope, eval, span_of},
     truth::Truth,
     value::Value,
+    world::World,
 };
 
 impl Application<'_> {
@@ -34,20 +36,19 @@ impl Application<'_> {
         filter: Option<&Expr>,
         body: &Expr,
     ) -> Applied {
-        let binding = match binding {
-            ForBinding::Single(ident) => ident.name.clone(),
-            ForBinding::Destructured(parts, _) => {
-                parts.first().map_or_else(|| "it".to_owned(), |ident| ident.name.clone())
-            }
-        };
+        if let Some(why) = destructured(
+            binding,
+            collection,
+            self.against.source,
+            "the clauses inside it were not applied",
+        ) {
+            let mut applied = Applied::default();
+            applied.left_undone(why);
+            return applied;
+        }
+        let binding = bound_name(binding);
         let body = body.clone();
-        let header = match span_of(collection)
-            .and_then(|span| span.slice(self.against.source))
-            .filter(|text| !text.is_empty())
-        {
-            Some(text) => format!("`for {binding} in {text}`"),
-            None => format!("`for {binding} in`"),
-        };
+        let header = header(&binding, collection, self.against.source);
 
         let evaluated = self.evaluate(collection);
         let items = match evaluated.value {
@@ -140,40 +141,106 @@ impl Application<'_> {
         applied
     }
 
-    /// Whether `filter` keeps `item`, read with the member's fields bare and
-    /// the loop's name bound to it.
-    ///
-    /// A field the member declares and does not hold is no longer whatever
-    /// the rule bound under the same name. `when: Raised(active)` beside
-    /// `for w in Hooks where active = true` reads the *hook's* `active`, and
-    /// a hook nobody gave one is undecided — reading the trigger's instead
-    /// would decide the filter about the wrong thing, and apply the body to a
-    /// member nobody said it kept.
+    /// Whether `filter` keeps `item`; see [`keeps`].
     fn kept(&self, binding: &str, item: &Value, filter: &Expr) -> Evaluation {
-        let mut outer = self.scope();
-        for field in self.unheld(item) {
-            outer.bindings.remove(&field);
-        }
-        let mut scope = element_scope(&outer, item);
-        scope.bindings.insert(binding.to_owned(), item.clone());
-        eval(filter, &scope)
+        keeps(self.scope(), self.against.spec, binding, item, filter)
     }
+}
 
-    /// The fields `item`'s entity declares that `item` does not hold.
-    fn unheld(&self, item: &Value) -> Vec<String> {
-        let Value::Ref(id) = item else { return Vec::new() };
-        let Some(instance) = self.world.instance(id) else { return Vec::new() };
-        let declared = super::entity_node(self.against.spec, &instance.module, &instance.entity)
-            .and_then(|node| node.detail.as_entity());
-        declared
-            .map(|entity| {
-                entity
-                    .fields
-                    .iter()
-                    .filter(|field| !instance.fields.contains_key(&field.name))
-                    .map(|field| field.name.clone())
-                    .collect()
-            })
-            .unwrap_or_default()
+/// The name a `for` binds each member to: the first, when it destructures —
+/// though a destructured loop is refused before this is asked; see
+/// [`destructured`].
+pub(crate) fn bound_name(binding: &ForBinding) -> String {
+    match binding {
+        ForBinding::Single(ident) => ident.name.clone(),
+        ForBinding::Destructured(parts, _) => {
+            parts.first().map_or_else(|| "it".to_owned(), |ident| ident.name.clone())
+        }
     }
+}
+
+/// Why a loop that destructures its members was not read: `for (a, b) in …`.
+///
+/// The simulator binds a member to one name. Binding it to the first of the
+/// written names and leaving the rest unbound would let a trigger argument or
+/// a rule-level `let` spelled like the second answer for it, and decide the
+/// clause about the wrong thing — so a destructured loop is not read at all,
+/// and this says so, quoting the binding as written. `None` for a loop that
+/// names its member once.
+pub(crate) fn destructured(
+    binding: &ForBinding,
+    collection: &Expr,
+    source: &str,
+    consequence: &str,
+) -> Option<Unresolved> {
+    let ForBinding::Destructured(parts, span) = binding else { return None };
+    let written = source.get(span.start..span.end).filter(|text| !text.is_empty()).map_or_else(
+        || {
+            let names: Vec<&str> = parts.iter().map(|part| part.name.as_str()).collect();
+            format!("({})", names.join(", "))
+        },
+        str::to_owned,
+    );
+    let header = header(&written, collection, source);
+    Some(Unresolved {
+        reason: format!(
+            "{header} takes each member apart into names, which this simulator does not do, so \
+             {consequence}"
+        ),
+        expression: Some(written),
+        span: Some(inspect_model::Span::new(span.start, span.end)),
+    })
+}
+
+/// `` `for h in r.hooks` ``, quoting the collection as the spec wrote it.
+pub(crate) fn header(binding: &str, collection: &Expr, source: &str) -> String {
+    match span_of(collection).and_then(|span| span.slice(source)).filter(|text| !text.is_empty()) {
+        Some(text) => format!("`for {binding} in {text}`"),
+        None => format!("`for {binding} in`"),
+    }
+}
+
+/// Whether `filter` keeps `item`, read in `outer` with the member's fields bare
+/// and the loop's name bound to it.
+///
+/// A field the member declares and does not hold is no longer whatever the
+/// rule bound under the same name. `when: Raised(active)` beside
+/// `for w in Hooks where active = true` reads the *hook's* `active`, and a hook
+/// nobody gave one is undecided — reading the trigger's instead would decide
+/// the filter about the wrong thing, and apply the body to a member nobody said
+/// it kept.
+///
+/// Shared by the fan-out of a loop's postconditions and the reading of its
+/// preconditions, so the two cannot disagree about which members a loop has.
+pub(crate) fn keeps(
+    mut outer: Env<'_>,
+    spec: &SpecGraph,
+    binding: &str,
+    item: &Value,
+    filter: &Expr,
+) -> Evaluation {
+    for field in unheld(spec, outer.world, item) {
+        outer.bindings.remove(&field);
+    }
+    let mut scope = element_scope(&outer, item);
+    scope.bindings.insert(binding.to_owned(), item.clone());
+    eval(filter, &scope)
+}
+
+/// The fields `item`'s entity declares that `item` does not hold.
+fn unheld(spec: &SpecGraph, world: &World, item: &Value) -> Vec<String> {
+    let Value::Ref(id) = item else { return Vec::new() };
+    let Some(instance) = world.instance(id) else { return Vec::new() };
+    let declared = super::entity_node(spec, &instance.module, &instance.entity)
+        .and_then(|node| node.detail.as_entity());
+    declared
+        .map(|entity| {
+            entity
+                .fields
+                .iter()
+                .filter(|field| !instance.fields.contains_key(&field.name))
+                .map(|field| field.name.clone())
+                .collect()
+        })
+        .unwrap_or_default()
 }

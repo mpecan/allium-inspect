@@ -169,15 +169,85 @@ fn notes_about_what_a_decided_postcondition_did_not_need_leave_the_step_holding(
 }
 
 /// A `requires` inside a rule's `for` is not read as the rule's own, even when
-/// the trigger's argument shares the loop's name.
+/// the trigger's argument shares the loop's name: the argument is active, and
+/// the rule refuses anyway, because another hook it ranges over is not.
 #[test]
 fn a_precondition_inside_a_loop_is_not_read_about_an_argument_sharing_its_name() {
-    let walk = walked("APreconditionInsideTheLoopIsNotTheArgument");
+    all_held(&walked("APreconditionInsideTheLoopIsNotTheArgument"));
+}
+
+/// A precondition inside a loop over no members blocks nothing: there is no
+/// member for it to be false about, and that is decided.
+#[test]
+fn a_precondition_inside_a_loop_over_no_members_blocks_nothing() {
+    all_held(&walked("APreconditionInsideTheLoopOverNoHooks"));
+}
+
+/// Every member the filter keeps passes, so the rule fires, and the member
+/// the filter leaves out is not asked — an idle hook that is not armed does
+/// not refuse it.
+#[test]
+fn a_precondition_inside_a_loop_every_kept_member_passes_lets_the_rule_fire() {
+    all_held(&walked("EveryArmedHookIsActive"));
+}
+
+/// One kept member failing refuses the whole rule — nothing it ensures is
+/// applied, not even to the member that passed — and the refusal quotes the
+/// clause inside the loop.
+#[test]
+fn a_precondition_inside_a_loop_one_kept_member_fails_refuses_the_rule() {
+    let walk = walked("AnArmedHookIsNotActive");
+    all_held(&walk);
+    let detail = walk.steps[0].outcomes[0].detail.clone().unwrap_or_default();
+    assert!(detail.contains("h.active = true"), "quotes the clause it refused on: {detail}");
+}
+
+/// A kept member nobody said was active is undecided, and the reason names
+/// the loop and the member before the field it could not read.
+#[test]
+fn a_precondition_inside_a_loop_a_member_cannot_be_decided_about_is_undecided_and_names_the_loop() {
+    let walk = walked("AnArmedHookNobodySaidWasActive");
     let step = &walk.steps[0];
     assert_eq!(step.verdict(), Verdict::Undecided, "{:#?}", outcomes(&walk));
     let detail = step.outcomes[0].detail.clone().expect("the act says why");
-    assert!(detail.contains("`Check` could not be decided"), "{detail}");
-    assert!(detail.contains("inside `for w in"), "{detail}");
+    assert!(detail.contains("`Muster` could not be decided"), "{detail}");
+    assert!(detail.contains("`for h in Hooks`"), "names the loop: {detail}");
+    assert!(detail.contains("Hook#"), "names the member: {detail}");
+}
+
+/// Over a relationship every member of which is known, a `let` inside the
+/// loop is bound per member and the precondition reading it is decided.
+#[test]
+fn a_precondition_inside_a_loop_over_a_complete_relationship_is_decided() {
+    all_held(&walked("ARackWithItsHookHung"));
+}
+
+/// A hook whose `rack` nobody set may be on the rack. Every hook the rack is
+/// known to hold passes, which does not settle it: the one it may be missing
+/// was never asked. Undecided, naming the loop.
+#[test]
+fn a_precondition_inside_a_loop_over_a_collection_that_may_be_missing_members_is_undecided() {
+    let walk = walked("ARackThatMayBeMissingAHook");
+    let step = &walk.steps[0];
+    assert_eq!(step.verdict(), Verdict::Undecided, "{:#?}", outcomes(&walk));
+    let detail = step.outcomes[0].detail.clone().expect("the act says why");
+    assert!(detail.contains("`Hang` could not be decided"), "{detail}");
+    assert!(detail.contains("`for h in r.hooks` may be missing members"), "{detail}");
+}
+
+/// A loop over a plain `Set` field the journey stated is decided both ways:
+/// its one member active fires `Toll`, and inactive refuses it.
+#[test]
+fn a_precondition_inside_a_loop_over_a_stated_set_is_decided_both_ways() {
+    all_held(&walked("ABellWhoseHookIsActive"));
+    all_held(&walked("ABellWhoseHookIsNotActive"));
+}
+
+/// The same collection, holding a member that fails: refused, whatever the
+/// member it may be missing would have said — `false` and undecided is false.
+#[test]
+fn a_precondition_inside_a_loop_failing_for_a_known_member_refuses_however_incomplete() {
+    all_held(&walked("ARackThatMayBeMissingAHookHoldsAnInactiveOne"));
 }
 
 /// What the clock set off and could not decide is said the way an act's is:

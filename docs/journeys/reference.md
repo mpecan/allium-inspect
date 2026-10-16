@@ -484,9 +484,57 @@ c does Poke(c) on Console
 ```
 
 The same goes for a collection nobody settled, `for h in b.hooks` with `b.hooks`
-never stated. A `requires` written inside the loop is undecided whatever it
-says, naming the loop: whether a member failing it should refuse the whole
-rule or only skip that member is not something this tool decides for the spec.
+never stated.
+
+**A `requires` inside the loop is the rule's, for every member the filter
+keeps.** The reading this tool takes: a `requires` is a precondition of the
+rule wherever it is written, and inside a `for` it is quantified over the loop.
+One kept member failing it refuses the whole rule, and nothing it ensures is
+applied — not to that member, not to the others, not the clauses after the
+loop. It is not a guard that skips the member: the loop's `where` and an `if`
+inside it are how a spec says that, and nothing in the grammar or in `allium`'s
+checks gives `requires` a second meaning inside a loop. Its analysis reads the
+clauses inside a `for` as the rule's clauses too.
+
+```allium
+rule Muster {
+    when: Muster(c)
+    for h in Hooks where h.armed = true:
+        requires: h.active = true
+        ensures: h.swept = true
+    ensures: c.done = true
+}
+```
+
+It is decided the way `all` is over the same members, which are the ones the
+loop's `ensures` are applied to:
+
+- no hook, or no armed one: it holds — there is nothing for it to be false
+  about — and `Muster` fires;
+- every armed hook active: it holds, and an idle hook the filter leaves out is
+  not asked;
+- one armed hook inactive: `Muster` refuses, quoting `h.active = true`, whatever
+  else is undecided;
+- an armed hook nobody said was active: undecided, naming the loop and the
+  member — `` `for h in Hooks` could not decide this precondition for Hook#1 ``;
+- a hook whose `armed` nobody stated counts only if it fails: active, it passes
+  whether the filter keeps it or not;
+- a collection that may be missing members — `for h in r.hooks` over
+  `hooks: Hook with rack = this`, with a hook whose `rack` nobody set — is
+  undecided when every hook it holds passes, because the one it may be missing
+  was never asked, and it says so: `` `for h in r.hooks` may be missing members
+  it could not decide on ``. A hook it does hold failing still refuses.
+
+A `let` written inside the loop above the clause is bound per member, so
+`let live = h.active` then `requires: live = true` reads each hook's own.
+The clause is shown as the spec wrote it, sliced from its own span.
+
+A loop that takes its members apart, `for (h, ok) in Hooks`, is not read at
+all: the simulator binds a member to one name, and leaving `ok` unbound would
+let a trigger argument or a rule-level `let ok` answer for it. A `requires`
+inside one is undecided and nothing it ensures is applied, each quoting the
+binding as written — `` `for (h, ok) in Hooks` takes each member apart into
+names, which this simulator does not do ``.
 
 **A rule that fired and left part of what it ensures unapplied leaves the step
 undecided**, `for` or not. Six things count, and only these: a member of a
