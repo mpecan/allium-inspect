@@ -68,6 +68,9 @@ fn raced(walk: &Walk, about: &str, (due, remover): (&str, &str)) {
     let said = line(walk, about);
     assert_eq!(said.verdict, Verdict::Undecided, "{said:#?}");
     let detail = said.detail.as_deref().unwrap_or_default();
+    // Said as the rule's own answer, under its own name: not a bare race
+    // reason the line found only because the step was left unsettled.
+    assert!(detail.starts_with(&format!("`{due}` could not be decided: ")), "{detail}");
     assert!(
         detail.contains(&format!("`{due}` was due on"))
             && detail.contains(&format!("`{remover}` removed it"))
