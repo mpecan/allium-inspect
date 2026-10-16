@@ -6,11 +6,15 @@
 //! 1. **Which rules wait for this trigger.** Across every module, because a
 //!    trigger emitted in one is routinely consumed in another — that crossing is
 //!    the main thing this tool exists to make visible.
-//! 2. **Do their preconditions hold?** Reported clause by clause. Only a
-//!    definite `false` refuses the rule; an undecided one leaves the outcome
-//!    indeterminate and says which clause could not be settled.
+//! 2. **Do their preconditions hold?** Reported clause by clause, each rule
+//!    read in the world as the trigger found it — never as a sibling woken by
+//!    the same firing left it (see `siblings`). Only a definite `false` refuses
+//!    the rule; an undecided one leaves the outcome indeterminate and says
+//!    which clause could not be settled.
 //! 3. **What do the postconditions change?** Applied in declaration order,
-//!    because a creation binds a name the next clause uses.
+//!    because a creation binds a name the next clause uses, and read in the
+//!    world the trigger found as well. Two siblings that write one field
+//!    differently leave it undecided, naming both.
 //! 4. **Do the invariants still hold?** Checked after, over the world that
 //!    resulted. An invariant that was already broken before the step is
 //!    reported as such rather than blamed on the rule.
@@ -29,11 +33,12 @@ use ts_rs::TS;
 
 use crate::{
     apply::Against,
-    apply::{Application, Effect},
+    apply::Effect,
     binding, creation, due,
     eval::{Env, Unresolved, eval},
     gone::{self, Removed},
     per_member,
+    siblings::Written,
     truth::Truth,
     value::Value,
     world::{Event, World},
@@ -196,6 +201,7 @@ pub fn step(
     // What the rules before each one removed, and the world they were all
     // woken in: a state rule woken about one of those is answered by `gone`.
     let mut removed = Removed::new(world);
+    let mut written = Written::new();
 
     for node in spec.nodes_of(NodeKind::Rule) {
         let Some(detail) = node.detail.as_rule() else { continue };
@@ -204,7 +210,7 @@ pub fn step(
             continue;
         }
         let source = sources.get(&node.module).map(String::as_str).unwrap_or_default();
-        let outcome = run_rule(
+        let mut outcome = run_rule(
             node.id.as_str(),
             &node.name,
             &node.module,
@@ -212,9 +218,10 @@ pub fn step(
             program,
             spec,
             source,
-            &mut next,
+            (world, &mut next),
             (event, &removed),
         );
+        written.settle(&event.trigger, &mut outcome, &mut next);
         removed.note(&outcome);
         for effect in &outcome.effects {
             if let Effect::Emitted { trigger, .. } = effect {
@@ -264,7 +271,9 @@ fn run_rule(
     program: &Program,
     spec: &SpecGraph,
     source: &str,
-    world: &mut World,
+    // Read in the world the trigger found; written into the one the step is
+    // building. One firing's rules are not a sequence (issue #24).
+    (world, next): (&World, &mut World),
     (event, removed): (&Event, &Removed),
 ) -> RuleOutcome {
     let empty = inspect_model::RuleAst::default();
@@ -368,7 +377,7 @@ fn run_rule(
         // way nothing else it says is read about an absent instance.
         if let Some(gone) = removed.when_verdict(
             (name, bindings.get(binding)),
-            world,
+            next,
             (&when_text, ast.when.as_ref()),
             |before, id| {
                 let scope = Env::new(before, module, source).deriving(program.derivations());
@@ -447,21 +456,18 @@ fn run_rule(
         }
     };
 
-    let mut effects = Vec::new();
-    let mut unapplied = Vec::new();
-    if disposition == Disposition::Fired {
-        let mut application = Application::new(
+    let applied = if disposition == Disposition::Fired {
+        crate::siblings::apply(
             Against { spec, module, source, derived: program.derivations() },
-            world,
+            (world, next),
             bindings,
-        );
-        for clause in &ast.ensures {
-            let applied = application.apply(clause);
-            effects.extend(applied.effects);
-            unresolved.extend(applied.unresolved);
-            unapplied.extend(applied.unapplied);
-        }
-    }
+            &ast.ensures,
+        )
+    } else {
+        crate::Applied::default()
+    };
+    let crate::Applied { effects, unresolved: noted, unapplied } = applied;
+    unresolved.extend(noted);
 
     RuleOutcome {
         rule: id.to_owned(),

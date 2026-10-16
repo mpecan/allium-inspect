@@ -857,6 +857,66 @@ The reading this takes of the language, where the reference is silent:
   answers is a question about the instance. The spec-level warning still
   reports such an emission, and the walk still reports the listener.
 
+### Rules woken by one firing are not a sequence
+
+Every rule one firing wakes reads its `let`s, its `when` and its `requires` in
+the world **as the trigger found it** — not as another rule woken by the same
+firing left it. Rules listening for one trigger are alternatives to each other,
+each guarded by its own `requires`, or independent reactions to it; nothing in
+the language says one sees what the other did.
+
+```allium
+rule CreateIfMissing {
+    when: Put(name)
+    requires: not exists Box{name: name}
+    ensures: Box.created(name: name)
+}
+rule ReplaceIfPresent {
+    when: Put(name)
+    let old = Box{name: name}
+    requires: exists old
+    ensures: not exists old
+    ensures: Box.created(name: name)
+}
+```
+
+`Put("y")` on a world with no box called `y` runs `CreateIfMissing` and refuses
+`ReplaceIfPresent`, whichever is declared or named first: the box the creation
+makes is not there yet for the replacement to find. Likewise two reactions to
+one act — `Stamp` setting `lamp.touched = true` and `Tally` requiring
+`lamp.touched = false` — both run, the second not refused by what the first
+wrote.
+
+What they ensure is read in that same world. `lamp.shade = lamp.colour` in a
+rule woken beside one that sets `lamp.colour = "red"` copies the colour the
+lamp had when the trigger fired, whichever rule is declared or named first,
+and a state change the lifecycle refuses is refused from the value the trigger
+found — so it is that rule's own refusal, and the other's write stands.
+
+What they ensure then lands in one world, in the walk's own order. The only
+thing that order could still decide is which of two values written to one
+field stands, and it is not allowed to. Two rules that set the same field to
+different values leave it **undecided**, and the act says which two:
+
+```text
+b does Paint(l) on Shelf
+  `PaintRed` fired, but part of what it ensures was not applied: `PaintBlue` and `PaintRed` were both woken by `Paint`: `PaintBlue` set `Lamp#1.colour` to "blue" and `PaintRed` set it to "red"; the specification does not say which of the two runs first, so which value stands is undecided
+then l.colour = "red"
+  l.colour is unknown
+```
+
+It stays undecided for the rest of the walk, and whatever a third rule woken
+by the same firing writes to it: agreeing with one of the two does not settle
+the question between them. A later step that reads it is undecided, and says
+the field "was set to a value nothing settled". Writes that agree, writes to
+different fields, and a removal beside an assignment to what it removed come
+out the same in either order, and stand. Settle a clash in the spec — a
+`requires` on one rule that rules the other out — and the walk can decide it.
+
+A rule that **should** see another's work is a rule that listens for what the
+other emits, not for the same trigger: `ensures: Boxed(box)` and `when:
+Boxed(box)`.
+
 ### `cannot do` — the spec refuses, and that is the point
 
 ```

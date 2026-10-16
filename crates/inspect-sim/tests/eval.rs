@@ -1223,7 +1223,10 @@ fn a_relationship_that_is_null_does_not_exist() {
 fn a_field_deliberately_set_to_unknown_is_not_reported_as_unset() {
     // "`Copy#1` has no `status` set" would be wrong: it has one, and nobody
     // could work out what it is. The distinction is the difference between
-    // "fill this in" and "this simulator cannot compute it".
+    // "fill this in" and "this simulator cannot compute it". Still said,
+    // though: an unknown with no reason is indistinguishable from a bug, and
+    // two rules woken by one trigger that disagreed about a field leave it
+    // exactly so (issue #24).
     let mut world = World::new().at(1_000);
     let copy = world.create("Copy", "catalogue");
     world.set_field(&copy, "status", Value::Unknown);
@@ -1231,7 +1234,7 @@ fn a_field_deliberately_set_to_unknown_is_not_reported_as_unset() {
 
     let status = field(ident("copy"), "status");
     assert_eq!(value_of(&status, &env), Value::Unknown);
-    assert!(reasons(&status, &env).is_empty(), "{:?}", reasons(&status, &env));
+    assert_eq!(reasons(&status, &env), vec!["`Copy#1.status` was set to a value nothing settled"]);
 
     let missing = field(ident("copy"), "shelfmark");
     assert_eq!(reasons(&missing, &env), vec!["`Copy#1` has no `shelfmark` set"]);

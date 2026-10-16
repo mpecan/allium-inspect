@@ -268,6 +268,7 @@ fn the_fixtures_own_journeys_report_no_word() {
         ("pinboard", common::PINBOARD),
         ("reservations", LENDING),
         ("runs", common::RUNS),
+        ("siblings", common::SIBLINGS),
         ("switches", common::SWITCHES),
         ("undecided", LENDING),
         ("watches", common::WATCHES),

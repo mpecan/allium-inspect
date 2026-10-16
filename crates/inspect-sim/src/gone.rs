@@ -2,9 +2,10 @@
 //!
 //! A state rule's trigger is its entity, so the one event that fires
 //! `Cleanup` — `when: d: Delivery.is_expired`, `ensures: not exists d` —
-//! reaches every other rule on `Delivery` too, `TimesOut` among them. Rules in
-//! a step run in order over the world as the earlier ones left it, so by the
-//! time `TimesOut` reads `d.status = sending` the delivery is gone.
+//! reaches every other rule on `Delivery` too, `TimesOut` among them. Every
+//! rule a firing wakes reads the world the trigger found (see `siblings`), but
+//! their postconditions land in one world, in a fixed order, so by the time
+//! `TimesOut` runs the delivery it would write to is gone.
 //!
 //! Whether a rule like that applies turns on whether it was due when the
 //! step began, in the world the event woke it in:

@@ -1,0 +1,209 @@
+-- allium: 3
+-- Issue #24: rules woken by one trigger are alternatives to each other, or
+-- independent reactions to it, not a sequence. Each reads its preconditions in
+-- the world as it was when the trigger fired. `CreateIfMissing` and
+-- `ReplaceIfPresent` are the two halves of one choice, so exactly one of them
+-- runs, whichever is declared first. `PaintRed` and `PaintBlue` both run on
+-- `Paint` and write the same field differently: which colour stands is a
+-- question the spec does not answer. `Stamp` and `Tally` both run on `Touch`
+-- and write different things, so both stand. `Stamp` sorts before `Tally`, and
+-- that is the order the bug shows in: the writer runs first.
+--
+-- What each sibling ensures is read in that same world, too: `Shade` copies
+-- the colour the lamp had when `Dye` fired, not the one `DyeRed` wrote. A field
+-- three siblings write is undecided after the second disagrees, however the
+-- third agrees with the first (`RepaintA`/`B`/`C`, then `Admire`). A lifecycle
+-- refusal that happens from the value the trigger found is the rule's own
+-- (`KnockOpen`/`KnockToLose`); two permitted moves to different states clash
+-- (`SlamOpen`/`SlamShut`). A removal and an assignment to the removed instance
+-- come out the same in either order (`Bin`/`Label`, `MarkTossed`/`TossOut`).
+-- State rules (`ALapse`/`BFlag`) and creation reactions (`AScrap`/`BLabel`)
+-- read the world the trigger found as well.
+
+entity Box {
+    name: String
+}
+
+rule CreateIfMissing {
+    when: Put(name)
+    requires: not exists Box{name: name}
+    ensures: Box.created(name: name)
+}
+
+rule ReplaceIfPresent {
+    when: Put(name)
+    let old = Box{name: name}
+    requires: exists old
+    ensures: not exists old
+    ensures: Box.created(name: name)
+}
+
+entity Lamp {
+    colour: String
+    touched: Boolean
+    touches: Integer
+    shade: String
+    tossed: Boolean
+}
+
+rule PaintRed {
+    when: Paint(lamp)
+    ensures: lamp.colour = "red"
+}
+
+rule PaintBlue {
+    when: Paint(lamp)
+    ensures: lamp.colour = "blue"
+}
+
+rule Stamp {
+    when: Touch(lamp)
+    ensures: lamp.touched = true
+}
+
+rule Tally {
+    when: Touch(lamp)
+    requires: lamp.touched = false
+    ensures: lamp.touches = lamp.touches + 1
+}
+
+rule DyeRed {
+    when: Dye(lamp)
+    ensures: lamp.colour = "red"
+}
+
+rule Shade {
+    when: Dye(lamp)
+    ensures: lamp.shade = lamp.colour
+}
+
+rule RepaintA {
+    when: Repaint(lamp)
+    ensures: lamp.colour = "red"
+}
+
+rule RepaintB {
+    when: Repaint(lamp)
+    ensures: lamp.colour = "blue"
+}
+
+rule RepaintC {
+    when: Repaint(lamp)
+    ensures: lamp.colour = "red"
+}
+
+rule Admire {
+    when: Admire(lamp)
+    requires: lamp.colour = "red"
+    ensures: lamp.shade = "admired"
+}
+
+rule Bin {
+    when: Junk(lamp)
+    ensures: not exists lamp
+}
+
+rule Label {
+    when: Junk(lamp)
+    ensures: lamp.tossed = true
+}
+
+rule MarkTossed {
+    when: Toss(lamp)
+    ensures: lamp.tossed = true
+}
+
+rule TossOut {
+    when: Toss(lamp)
+    ensures: not exists lamp
+}
+
+entity Door {
+    status: draft | open | closed | lost
+    transitions status {
+        draft -> open
+        draft -> closed
+        open -> closed
+        terminal: closed, lost
+    }
+}
+
+rule KnockOpen {
+    when: Knock(door)
+    ensures: door.status = open
+}
+
+rule KnockToLose {
+    when: Knock(door)
+    ensures: door.status = lost
+}
+
+rule SlamOpen {
+    when: Slam(door)
+    ensures: door.status = open
+}
+
+rule SlamShut {
+    when: Slam(door)
+    ensures: door.status = closed
+}
+
+entity Hold {
+    status: active | lapsed
+    ends_at: Timestamp
+    flagged: Boolean
+    is_due: ends_at <= now
+    is_due_active: status = active and ends_at <= now
+}
+
+rule ALapse {
+    when: h: Hold.is_due
+    ensures: h.status = lapsed
+}
+
+rule BFlag {
+    when: due: Hold.is_due_active
+    ensures: due.flagged = true
+}
+
+entity Crate {
+    name: String
+    labelled: Boolean
+}
+
+rule Pack {
+    when: Pack(name)
+    ensures: Crate.created(name: name, labelled: false)
+}
+
+rule AScrap {
+    when: junk: Crate.created
+    requires: junk.name = "junk"
+    ensures: not exists junk
+}
+
+rule BLabel {
+    when: c: Crate.created
+    requires: c.labelled = false
+    ensures: c.labelled = true
+}
+
+actor Anyone {
+    identified_by: Box
+}
+
+surface Shelf {
+    facing who: Box
+    provides:
+        Put(name)
+        Paint(lamp)
+        Touch(lamp)
+        Dye(lamp)
+        Repaint(lamp)
+        Admire(lamp)
+        Junk(lamp)
+        Toss(lamp)
+        Knock(door)
+        Slam(door)
+        Pack(name)
+}

@@ -109,6 +109,10 @@ pub const RUNS: &[&str] = &["runs"];
 /// box about the instance just made (issue #18).
 pub const AUDIENCE: &[&str] = &["audience"];
 
+/// The siblings fixture, alone: rules woken by one trigger, each reading the
+/// world as the trigger found it (issue #24).
+pub const SIBLINGS: &[&str] = &["siblings"];
+
 /// `modules`, replayed from their recordings, with each module's source.
 pub fn library(modules: &[&str]) -> (SpecGraph, Program, Sources) {
     let root = fixtures();

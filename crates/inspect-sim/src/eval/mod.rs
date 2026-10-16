@@ -574,14 +574,24 @@ fn member(whole: &Expr, object: &Expr, field: &Ident, env: &Env<'_>) -> Evaluati
         Value::Ref(id) => match env.world.instance(id) {
             Some(instance) => {
                 let read = field_of(instance, field, env);
+                let silent = read.unresolved.is_empty();
                 unresolved.extend(read.unresolved);
                 // A field nobody set and nobody computes is undecided, and
                 // saying *which* field on which instance is the difference
                 // between a panel a reader can act on and one that says only
                 // "unknown".
-                if read.value.is_unknown() && !instance.fields.contains_key(field) {
+                //
+                // One that *was* stored as undecided — two rules woken by one
+                // trigger disagreed about it, or a rule wrote something it
+                // could not settle — says so, rather than nothing at all.
+                let stored = instance.fields.contains_key(field);
+                if read.value.is_unknown() && (!stored || silent) {
                     unresolved.push(Unresolved {
-                        reason: unset_field(id, field),
+                        reason: if stored {
+                            format!("`{id}.{field}` was set to a value nothing settled")
+                        } else {
+                            unset_field(id, field)
+                        },
                         expression: span_of(whole)
                             .and_then(|span| span.slice(env.source))
                             .map(str::to_owned),

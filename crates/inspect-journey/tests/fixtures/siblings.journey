@@ -1,0 +1,154 @@
+-- Issue #24: rules woken by one trigger each read the world as it was when the
+-- trigger fired, so one rule does not run on what a sibling created a moment
+-- earlier. Two siblings that write the same field differently leave which
+-- value stands to the spec, which does not say: undecided, naming both.
+
+journey FirstPut {
+    cast:
+        b: Box
+    given:
+        b.name = "x"
+    1. put a new name
+        b does Put("y") on Shelf
+            creating n: Box
+        then CreateIfMissing fires
+        then ReplaceIfPresent does not fire
+}
+
+journey SecondPut {
+    cast:
+        b: Box
+    given:
+        b.name = "x"
+    1. put the same name again
+        b does Put("x") on Shelf
+            creating n: Box
+        then ReplaceIfPresent fires
+        then CreateIfMissing does not fire
+        then b does not exist
+}
+
+journey TwoPaintersOneLamp {
+    cast:
+        b: Box
+        l: Lamp
+    given:
+        l.colour = "white"
+    1. paint it
+        b does Paint(l) on Shelf
+        then PaintRed fires
+        then PaintBlue fires
+        then l.colour = "red"
+}
+
+journey TouchedOnce {
+    cast:
+        b: Box
+        l: Lamp
+    given:
+        l.touched = false
+        l.touches = 0
+    1. touch it
+        b does Touch(l) on Shelf
+        then Stamp fires
+        then Tally fires
+        then l.touched = true
+        then l.touches = 1
+}
+
+journey ShadeFollows {
+    cast:
+        b: Box
+        l: Lamp
+    given:
+        l.colour = "white"
+        l.shade = "white"
+    1. dye it
+        b does Dye(l) on Shelf
+        then DyeRed fires
+        then Shade fires
+        then l.colour = "red"
+        then l.shade = "white"
+}
+
+journey ThreePaintersThenAdmire {
+    cast:
+        b: Box
+        l: Lamp
+    given:
+        l.colour = "white"
+    1. repaint it
+        b does Repaint(l) on Shelf
+    2. admire it
+        b does Admire(l) on Shelf
+        then Admire fires
+}
+
+journey BinnedAndLabelled {
+    cast:
+        b: Box
+        l: Lamp
+    1. junk it
+        b does Junk(l) on Shelf
+        then Bin fires
+        then Label fires
+        then l does not exist
+}
+
+journey MarkedAndTossed {
+    cast:
+        b: Box
+        l: Lamp
+    1. toss it
+        b does Toss(l) on Shelf
+        then MarkTossed fires
+        then TossOut fires
+        then l does not exist
+}
+
+journey KnockedOpen {
+    cast:
+        b: Box
+        d: Door
+    given:
+        d.status = draft
+    1. knock
+        b does Knock(d) on Shelf
+        then KnockOpen fires
+        then d.status = open
+}
+
+journey SlammedBothWays {
+    cast:
+        b: Box
+        d: Door
+    given:
+        d.status = draft
+    1. slam
+        b does Slam(d) on Shelf
+        then d.status = open
+}
+
+journey BothStateRulesRun {
+    cast:
+        h: Hold
+    given:
+        h.status = active
+        h.ends_at = now
+        h.flagged = false
+    1. wait
+        after 1.hour
+        then ALapse fires
+        then BFlag fires
+        then h.flagged = true
+}
+
+journey BothReactionsRun {
+    cast:
+        b: Box
+    1. pack the junk
+        b does Pack("junk") on Shelf
+            creating c: Crate
+        then AScrap fires
+        then BLabel fires
+}
