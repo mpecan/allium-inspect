@@ -390,7 +390,7 @@ impl Walker<'_> {
             earlier.steps.iter().map(|step| self.walk_step(step, &checked)).collect();
         self.standing_on = was;
 
-        let held = steps.iter().filter(|step| step.verdict() == check::Verdict::Specified).count();
+        let held = steps.iter().filter(|step| step.verdict().holds()).count();
         let verdict = crate::run::worst(steps.iter().map(Walked::verdict));
         // The nearest ground wins the line, and a break anywhere below it is
         // already in that verdict — a journey whose predecessor stood on
@@ -470,6 +470,7 @@ fn emissions(outcome: &StepOutcome) -> Vec<Event> {
                     module: module.clone(),
                     arguments: arguments.clone(),
                     positional: positional.clone(),
+                    emitted: true,
                 });
             }
         }

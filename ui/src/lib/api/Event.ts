@@ -10,13 +10,22 @@ export type Event = {
  */
 trigger: string, 
 /**
- * Where the trigger is declared.
+ * Where the trigger is declared, or, for an emission, the module whose
+ * rule emitted it.
  *
- * A label, not a filter: rules are matched on the trigger's name alone,
- * because a module that `use`s another reacts to triggers that module
- * declares. Narrowing to this module would silence exactly those rules.
+ * A label for a firing nobody emitted: an act wakes every rule waiting on
+ * its name, because which module's trigger a person meant is not
+ * something to guess. For an emission it is also a filter, read by
+ * [`inspect_model::listening::hears`]: a rule hears its own module and the
+ * modules it `use`s — or, written `when: chains/Published(…)`, only the
+ * module that names — and not an unrelated module's trigger of the same
+ * name.
  */
 module: string, 
+/**
+ * Whether a rule's `ensures` emitted this, rather than somebody firing it.
+ */
+emitted: boolean, 
 /**
  * Argument bindings, by parameter name.
  */

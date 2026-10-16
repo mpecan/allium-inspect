@@ -25,6 +25,7 @@ mod guard;
 pub mod journey;
 pub mod outcome;
 pub mod parse;
+mod reach;
 pub mod report;
 pub mod run;
 mod shapes;

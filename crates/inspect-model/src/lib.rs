@@ -20,9 +20,11 @@
 
 #![forbid(unsafe_code)]
 
+pub mod binding;
 pub mod diagnostic;
 pub mod graph;
 pub mod ingest;
+pub mod listening;
 pub mod program;
 pub mod runner;
 pub mod span;

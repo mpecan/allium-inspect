@@ -35,8 +35,10 @@ impl Application<'_> {
             }
         }
 
-        // Otherwise a bare name: a trigger emission.
-        match bare_name(function) {
+        // Otherwise a bare name: a trigger emission. Asked of the same function
+        // ingestion reports an unbindable emission by, so the two agree on
+        // what an emission is.
+        match inspect_model::listening::emitted(function) {
             Some(trigger) => {
                 let (arguments, positional) = self.emission_arguments(args);
                 Applied::effect(Effect::Emitted {

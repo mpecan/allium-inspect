@@ -17,7 +17,7 @@ export type Emission = Extract<Effect, { kind: "emitted" }>;
 
 /** A trigger fired from the form, its values in the trigger's parameter order. */
 export function chosenEvent(trigger: string, module: string, values: Value[]): Event {
-  return { trigger, module, arguments: {}, positional: [...values] };
+  return { trigger, module, emitted: false, arguments: {}, positional: [...values] };
 }
 
 /**
@@ -30,6 +30,9 @@ export function followedEvent(emission: Emission): Event {
   return {
     trigger: emission.trigger,
     module: emission.module,
+    // An emission is heard by the rules that hear the module it came from,
+    // not by an unrelated module's rule of the same name — the walk's match.
+    emitted: true,
     arguments: { ...emission.arguments },
     positional: [...emission.positional],
   };

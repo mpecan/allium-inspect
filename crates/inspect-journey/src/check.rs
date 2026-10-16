@@ -168,10 +168,14 @@ fn check_step(
 ) {
     for clause in &step.clauses {
         match clause {
-            Clause::Does { actor, trigger, arguments, surface, creating, line, .. } => {
+            Clause::Does { actor, trigger, arguments, surface, creating, negated, line } => {
                 check_actor(actor, *line, known, notes);
                 check_act(trigger, surface, *line, graph, notes);
                 check_arity(trigger, arguments.len(), *line, graph, notes);
+                // An act the journey says is refused sets nothing off.
+                if !negated {
+                    crate::reach::check(trigger, *line, graph, program, notes);
+                }
                 crate::states::check(
                     &crate::states::Act { trigger, arguments, line: *line },
                     |name| known.knows(name),

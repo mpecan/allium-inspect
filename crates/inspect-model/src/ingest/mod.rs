@@ -174,6 +174,7 @@ pub fn ingest<R: AlliumRunner, S: SourceReader>(
     }
 
     let mut into = Ingestion::empty(runner.version()?);
+    let mut sources = std::collections::BTreeMap::new();
 
     for path in paths {
         let module = module_name(path);
@@ -214,9 +215,18 @@ pub fn ingest<R: AlliumRunner, S: SourceReader>(
         // Last for this module, because it needs every node of it to have the
         // span the parse pass gave it.
         analyse::attribute(&mut into.graph, &module, &source);
+        sources.insert(module, source);
     }
 
     link::link(&mut into.graph);
+
+    // After linking, because an emission in one module wakes a listener in
+    // another, and only the whole set has both.
+    let unbound: Vec<_> = crate::listening::unbindable(&into.graph, &into.program)
+        .iter()
+        .map(|it| it.diagnostic(&into.graph, &sources))
+        .collect();
+    into.graph.diagnostics.extend(unbound);
     Ok(into)
 }
 

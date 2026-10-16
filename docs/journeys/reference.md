@@ -632,6 +632,59 @@ The fix is in the spec: name the argument the way the listener does
 listener's parameter. A precondition that is definitely false still refuses
 the rule, because that is decided whatever the missing name would have been.
 
+#### Said before anything runs
+
+Which parameters an emission binds depends only on its *shape* — the names it
+passed and how many arguments it passed by position — so it does not need a
+journey to find out. Two places say it up front, from the same rules the walk
+binds by (one function answers all three, so they cannot disagree):
+
+- **The spec, in the browser and at the terminal.** Every `ensures:` emission
+  that leaves some listener's parameter unbound is a warning at the emission,
+  on the emitting rule, coded `inspect.trigger.unbound` — not `allium.*`,
+  because allium did not say it. Every pair is reported, whether or not a
+  journey reaches it:
+
+  ```text
+  `Publish` emits `Published(item: doc)` without binding `doc` for `MarkSeen`, which listens for `Published(doc)`: it was handed `item` by name, and a named argument binds only the parameter it names
+  ```
+
+- **`check`, on the act that sets it off.** An act whose trigger wakes a rule
+  that emits — or wakes a rule woken by one that emits, however far down — is
+  given a **remark** for each such listener parameter, with the same words and
+  the file and line of the emission. A remark and not a verdict: whether the
+  emission is reached in a world is the walk's question (it may sit in a branch
+  no world takes), so a step whose only note is a remark still counts toward
+  "N of M steps hold". The walk does not stop at a remark; it runs the act
+  and, when the emission is reached, reports the listener **undecided** as
+  above. An act the journey says is refused
+  (`cannot do`) sets nothing off and gets no remark.
+
+The reading this takes of the language, where the reference is silent:
+
+- **What an emission is.** A call to a bare name in an `ensures:` — at the top
+  of the clause, in a block, in either branch of an `if`, in the body of a
+  `for`, or as the value of a `let`. `Entity.created(…)` is a creation, and a
+  call inside a value (`x.n = f(y)`) is evaluated rather than emitted. A
+  qualified emission, `other/Published(…)`, is not applied by the walk at all
+  (it reports it as a form it does not model), so it is not checked here.
+- **Which rules it wakes.** A rule whose `when:` calls that trigger name and
+  *hears* the module the emission is written in: an unqualified `when:
+  Published(doc)` hears its own module and every module it `use`s, and a
+  qualified `when: chains/Published(doc)` hears only the module it imported
+  `as chains`. Two modules that do not import each other and each have a
+  `Closed` have two triggers that share a word, and neither's emission wakes
+  the other's listener — in the walk, in the browser's *follow*, and here
+  alike. A trigger nobody emitted — an act, or one fired from the browser's
+  form — still wakes every rule waiting on its name, because which module's
+  trigger a person meant is not something to guess.
+- **A listener's own `let`** of a parameter's name is bound before its `when`
+  is read, so a parameter it gives itself is not reported.
+- **Not followed:** what a rule *reacting to a creation* emits. `check` follows
+  an act through emissions only; which module's `Order.created` a reaction
+  answers is a question about the instance. The spec-level warning still
+  reports such an emission, and the walk still reports the listener.
+
 ### `cannot do` — the spec refuses, and that is the point
 
 ```
@@ -877,6 +930,9 @@ Six verdicts, and telling them apart is the whole point.
 | **unexposed** | it happens, and nobody is shown it | ⊘ |
 | **undecided** | this tool could not tell | ◈ |
 | **remark** | worth a look | · |
+
+A step marked **remark** is counted with the ones that hold in "N of M steps
+hold": it is worth reading and is not a reason to stop.
 
 The three that are not "holds" are three different pieces of work. "The spec
 forbids this", "the spec has never heard of this" and "this tool could not tell"

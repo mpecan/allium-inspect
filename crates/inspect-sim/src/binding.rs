@@ -27,20 +27,39 @@
 //! should have written was told *no* — the specification refusing, when
 //! nothing had been decided at all. Now its `when` is undecided, saying which
 //! name it waited for and what the firing carried instead.
+//!
+//! Which parameter is bound from where is decided by
+//! [`inspect_model::binding::plan`], on the firing's shape alone; this module
+//! only carries the values. Ingestion asks the same function of every
+//! emission in the spec, so the warning it gives up front and what a walk
+//! reports can never disagree.
 
 use std::collections::BTreeMap;
 
-use inspect_model::graph::RuleClause;
+use inspect_model::{
+    binding::{self, Bound, Carried},
+    graph::RuleClause,
+};
 
 use crate::{eval::Unresolved, value::Value, world::Event};
+
+/// The shape of `event`, which is all binding reads of it.
+fn carried(event: &Event) -> Carried<'_> {
+    Carried {
+        trigger: &event.trigger,
+        named: event.arguments.keys().map(String::as_str).collect(),
+        positional: event.positional.len(),
+    }
+}
 
 /// The bindings `event` gives a rule whose `when` names `parameters`, in order
 /// and with which are optional.
 ///
-/// Every named argument under its own name, then each positional one under the
-/// parameter in its place. A parameter handed a value both ways is left
-/// unbound: `X(d, doc: e)` against `when: X(doc, other)` says two things about
-/// `doc`, and which one the author meant is not the simulator's to pick.
+/// Every named argument under its own name, then each parameter from wherever
+/// [`binding::plan`] says it comes from. A parameter handed a value both ways
+/// is left unbound: `X(d, doc: e)` against `when: X(doc, other)` says two
+/// things about `doc`, and which one the author meant is not the simulator's
+/// to pick.
 ///
 /// An optional parameter still unbound is `null`, which is what `?` means —
 /// unless the firing named an argument this rule has no parameter for. Then
@@ -49,21 +68,19 @@ use crate::{eval::Unresolved, value::Value, world::Event};
 /// why.
 pub(crate) fn bind(event: &Event, parameters: &[(String, bool)]) -> BTreeMap<String, Value> {
     let mut bindings = event.arguments.clone();
-    for ((name, _), value) in parameters.iter().zip(&event.positional) {
-        if name.is_empty() {
-            continue;
-        }
-        if event.arguments.contains_key(name) {
-            bindings.remove(name);
-        } else {
-            bindings.insert(name.clone(), value.clone());
-        }
-    }
-    if unmatched(event, parameters).is_empty() {
-        for (name, _) in parameters.iter().filter(|(name, optional)| *optional && !name.is_empty())
-        {
-            if doubly_handed(event, parameters, name).is_none() {
-                bindings.entry(name.clone()).or_insert(Value::Null);
+    for (name, bound) in binding::plan(&carried(event), parameters) {
+        match bound {
+            Bound::Named => {}
+            Bound::Positional(at) => {
+                if let Some(value) = event.positional.get(at) {
+                    bindings.insert(name.to_owned(), value.clone());
+                }
+            }
+            Bound::Null => {
+                bindings.insert(name.to_owned(), Value::Null);
+            }
+            Bound::Unbound(_) => {
+                bindings.remove(name);
             }
         }
     }
@@ -80,80 +97,16 @@ pub(crate) fn unbound(
     bindings: &BTreeMap<String, Value>,
     when: Option<&RuleClause>,
 ) -> Vec<Unresolved> {
+    let carried = carried(event);
     parameters
         .iter()
         .filter(|(name, _)| !name.is_empty() && !bindings.contains_key(name))
         .map(|(name, _)| Unresolved {
-            reason: reason(event, parameters, name),
+            reason: binding::reason(&carried, parameters, name),
             expression: when.map(|clause| clause.text.clone()),
             span: when.and_then(|clause| clause.span),
         })
         .collect()
-}
-
-/// The named arguments `event` carries that no parameter of this rule has.
-fn unmatched(event: &Event, parameters: &[(String, bool)]) -> Vec<String> {
-    event
-        .arguments
-        .keys()
-        .filter(|carried| !parameters.iter().any(|(parameter, _)| parameter == *carried))
-        .map(|carried| format!("`{carried}`"))
-        .collect()
-}
-
-/// Where `name` was handed a value by position as well as by name, if it was.
-fn doubly_handed(event: &Event, parameters: &[(String, bool)], name: &str) -> Option<usize> {
-    if !event.arguments.contains_key(name) {
-        return None;
-    }
-    parameters.iter().take(event.positional.len()).position(|(parameter, _)| parameter == name)
-}
-
-/// `1st`, `2nd`, `3rd`, `4th`… for a zero-based place.
-fn ordinal(at: usize) -> String {
-    let n = at + 1;
-    let suffix = match (n % 10, n % 100) {
-        (_, 11..=13) => "th",
-        (1, _) => "st",
-        (2, _) => "nd",
-        (3, _) => "rd",
-        _ => "th",
-    };
-    format!("{n}{suffix}")
-}
-
-/// What a firing carried instead of `name`, in the reader's terms.
-///
-/// The named arguments no parameter of this rule has are the usual cause —
-/// `item` against `doc` — and are what a reader has to see to fix it.
-fn reason(event: &Event, parameters: &[(String, bool)], name: &str) -> String {
-    let trigger = &event.trigger;
-    let unmatched = unmatched(event, parameters);
-    let said = if let Some(at) = doubly_handed(event, parameters, name) {
-        format!(
-            "it was handed `{name}` by name and again as its {} argument by position, and which \
-             was meant is not for the simulator to choose",
-            ordinal(at)
-        )
-    } else if !unmatched.is_empty() {
-        format!(
-            "it was handed {} by name, and a named argument binds only the parameter it names",
-            unmatched.join(", ")
-        )
-    } else if event.arguments.is_empty() && event.positional.is_empty() {
-        "it carried no arguments".to_owned()
-    } else if event.positional.is_empty() {
-        let named: Vec<String> =
-            event.arguments.keys().map(|carried| format!("`{carried}`")).collect();
-        format!("it named only {}", named.join(", "))
-    } else {
-        let count = event.positional.len();
-        format!(
-            "it carried {count} argument{} by position, and none in that place",
-            if count == 1 { "" } else { "s" }
-        )
-    };
-    format!("nothing this firing of `{trigger}` carried binds `{name}`: {said}")
 }
 
 #[cfg(test)]
@@ -294,15 +247,6 @@ mod tests {
         let bound = bind(&event, &parameters);
         assert_eq!(bound.get("cause"), Some(&Value::Null));
         assert!(unbound(&event, &parameters, &bound, None).is_empty());
-    }
-
-    #[test]
-    fn places_are_counted_the_way_a_reader_counts_them() {
-        let said: Vec<String> = [0, 1, 2, 3, 10, 11, 12, 20, 21, 101, 111].map(ordinal).into();
-        assert_eq!(
-            said,
-            ["1st", "2nd", "3rd", "4th", "11th", "12th", "13th", "21st", "22nd", "102nd", "112th"]
-        );
     }
 
     /// `?` is `null` when nothing was passed, and the value when one was.

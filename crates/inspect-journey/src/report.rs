@@ -43,6 +43,18 @@ impl Verdict {
     pub fn is_failure(self) -> bool {
         matches!(self, Verdict::Refused | Verdict::Unspecified | Verdict::Unexposed)
     }
+
+    /// Whether a step or a journey with this verdict is counted as holding.
+    ///
+    /// A remark among them: it is worth reading and not a reason to stop, and
+    /// `check`'s remark on an act that sets off an emission some listener
+    /// cannot bind is conditional — *if* the emission is reached. Counted as
+    /// not holding, a step every line of which the spec supports read "0 of 1
+    /// steps hold", harsher than the walk of the same journey.
+    #[must_use]
+    pub fn holds(self) -> bool {
+        matches!(self, Verdict::Specified | Verdict::Remark)
+    }
 }
 
 /// Whether a set of walks passes at this strictness.
@@ -59,7 +71,7 @@ pub fn passes(walks: &[Walk], strictness: Strictness) -> bool {
 pub fn render(walks: &[Walk]) -> String {
     let mut out = String::new();
     for walk in walks {
-        let holds = walk.steps.iter().filter(|step| step.verdict() == Verdict::Specified).count();
+        let holds = walk.steps.iter().filter(|step| step.verdict().holds()).count();
         // The readable name in the heading, because a column of PascalCase is
         // work nobody should be doing. The identifier is one line down, on the
         // journeys that carry a `from the file` ledger, and in the JSON — and
@@ -322,6 +334,25 @@ mod tests {
         assert!(!Verdict::Undecided.is_failure());
         assert!(!Verdict::Specified.is_failure());
         assert!(!Verdict::Remark.is_failure());
+    }
+
+    /// A remark is counted as holding and nothing worse is: a step whose only
+    /// note is a remark reads as holding in the summary, and is still marked
+    /// `remark` on its own line so it is not skimmed past.
+    #[test]
+    fn a_step_with_only_a_remark_holds_and_says_remark() {
+        let held = [Verdict::Specified, Verdict::Remark];
+        let not = [Verdict::Undecided, Verdict::Refused, Verdict::Unspecified, Verdict::Unexposed];
+        assert!(held.into_iter().all(Verdict::holds));
+        assert!(!not.into_iter().any(Verdict::holds));
+
+        let steps = vec![
+            step(1, "she acts", vec![outcome(Verdict::Remark, "she acts", Some("worth a look"))]),
+            step(2, "she waits", vec![outcome(Verdict::Undecided, "she waits", None)]),
+        ];
+        let out = render(&[walk("J", steps, Vec::new())]);
+        assert!(out.contains("J  —  1 of 2 steps hold"), "{out}");
+        assert!(out.contains("remark"), "{out}");
     }
 
     #[test]

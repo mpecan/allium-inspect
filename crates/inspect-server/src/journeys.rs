@@ -12,8 +12,7 @@
 use std::{collections::BTreeMap, path::PathBuf};
 
 use inspect_journey::{
-    Axis, Resolution, StepId, Verdict, Walk, journey::Journey, parse, resolve as stand, step_texts,
-    walk,
+    Axis, Resolution, StepId, Walk, journey::Journey, parse, resolve as stand, step_texts, walk,
 };
 use inspect_model::{Program, SpecGraph};
 
@@ -89,7 +88,7 @@ impl JourneyReport {
             .collect();
         let walks = files.iter().flat_map(|file| file.walks.iter());
         let total = walks.clone().count();
-        let holding = walks.filter(|walk| walk.verdict() == Verdict::Specified).count();
+        let holding = walks.filter(|walk| walk.verdict().holds()).count();
 
         // Sliced from the same text the walks were read from, so a step's
         // standing and its verdict are always about the same version of it.

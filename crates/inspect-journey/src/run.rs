@@ -179,9 +179,15 @@ impl Walker<'_> {
             // A line the spec cannot support is not run. Firing an act at a
             // surface nobody specified would produce a second, confusing
             // failure about a world rather than the one that matters.
+            //
+            // A remark is not that: it is worth reading and is no reason to
+            // stop, and the walk has the better answer to what one says — an
+            // act setting off an emission a listener cannot bind is run, and
+            // the listener is reported undecided if the emission is reached.
             let blocking: Vec<&check::Note> = notes
                 .iter()
-                .filter(|note| note.line == clause.line() && note.verdict != Verdict::Specified)
+                .filter(|note| note.line == clause.line())
+                .filter(|note| !matches!(note.verdict, Verdict::Specified | Verdict::Remark))
                 .collect();
             if !blocking.is_empty() {
                 // All of them, not the first. One line can name a surface the
