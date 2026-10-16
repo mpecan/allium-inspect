@@ -574,7 +574,6 @@ fn member(whole: &Expr, object: &Expr, field: &Ident, env: &Env<'_>) -> Evaluati
         Value::Ref(id) => match env.world.instance(id) {
             Some(instance) => {
                 let read = field_of(instance, field, env);
-                let silent = read.unresolved.is_empty();
                 unresolved.extend(read.unresolved);
                 // A field nobody set and nobody computes is undecided, and
                 // saying *which* field on which instance is the difference
@@ -583,9 +582,11 @@ fn member(whole: &Expr, object: &Expr, field: &Ident, env: &Env<'_>) -> Evaluati
                 //
                 // One that *was* stored as undecided — two rules woken by one
                 // trigger disagreed about it, or a rule wrote something it
-                // could not settle — says so, rather than nothing at all.
+                // could not settle — says so, rather than nothing at all. A
+                // stored value is read as it is (`field_of`), so it never
+                // arrives with a reason of its own to defer to.
                 let stored = instance.fields.contains_key(field);
-                if read.value.is_unknown() && (!stored || silent) {
+                if read.value.is_unknown() {
                     unresolved.push(Unresolved {
                         reason: if stored {
                             format!("`{id}.{field}` was set to a value nothing settled")
