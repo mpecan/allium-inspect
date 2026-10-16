@@ -5,8 +5,15 @@ set -euo pipefail
 #
 # This does NOT measure coverage. It asserts only that coverage *was* measured
 # recently and passed: `just coverage-check` writes a receipt naming the commit
-# it measured and the percentage it found, and this fails once HEAD has drifted
-# more than INSPECT_COVERAGE_MAX_COMMITS Rust-touching commits past it.
+# it measured, the percentage it found and a fingerprint of the Rust sources at
+# that commit, and this fails once HEAD has drifted more than
+# INSPECT_COVERAGE_MAX_COMMITS Rust-touching commits past it.
+#
+# When the named commit is not in HEAD's history — a squash-merge leaves the
+# branch commit it names behind — drift is counted from the oldest commit in
+# HEAD's first-parent history with the same Rust fingerprint, and the output
+# says so. No such commit, or no fingerprint to search by, still fails. See
+# resolve_measured_commit in common.sh.
 #
 # Why not run the measurement itself here: it needs a separately instrumented
 # build of the whole workspace, which is minutes on top of a `check` that aims
@@ -31,11 +38,14 @@ require_int "$MAX_COMMITS" "INSPECT_COVERAGE_MAX_COMMITS"
 FLOOR="$(receipt_line "$FLOOR_FILE")"
 require_int "$FLOOR" "coverage floor in $FLOOR_FILE"
 
-read -r sha pct measured_at <<<"$(receipt_line "$RECEIPT")"
-[ -n "${sha:-}" ] && [ -n "${pct:-}" ] && [ -n "${measured_at:-}" ] ||
+# The fingerprint is optional so a receipt written before it existed is still
+# read — and, with no fingerprint to search by, still fails on a missing commit.
+read -r sha pct measured_at fingerprint extra <<<"$(receipt_line "$RECEIPT")"
+[ -n "${sha:-}" ] && [ -n "${pct:-}" ] && [ -n "${measured_at:-}" ] && [ -z "${extra:-}" ] ||
     fail "coverage receipt $RECEIPT is malformed — run 'just coverage-check'"
 require_int "$pct" "coverage receipt percentage"
 require_sha "$sha" "coverage receipt commit"
+[ -z "${fingerprint:-}" ] || require_fingerprint "$fingerprint" "coverage receipt Rust fingerprint"
 
 # A receipt is a claim that coverage was measured *and passed*. Re-checked here
 # because the receipt is a file: a bad merge or a truncated write can leave a
@@ -45,14 +55,13 @@ require_sha "$sha" "coverage receipt commit"
 [ "$pct" -ge "$FLOOR" ] ||
     fail "coverage receipt records ${pct}%, below the current ${FLOOR}% floor — run 'just coverage-check'"
 
-git cat-file -e "$sha^{commit}" 2>/dev/null ||
-    fail "coverage receipt names commit $sha, which is not in this repository"
+resolve_measured_commit "$sha" "${fingerprint:-}" "coverage receipt" "just coverage-check"
 
-drift="$(rust_commits_since "$sha")"
+drift="$(rust_commits_since "$measured_from")"
 if [ "$drift" -gt "$MAX_COMMITS" ]; then
     fail "coverage was last measured $drift Rust-touching commits ago (limit $MAX_COMMITS)
-       Receipt: ${pct}% at ${sha:0:12} on $measured_at
+       Receipt: ${pct}% at ${sha:0:12}$measured_note on $measured_at
        Run 'just coverage-check' to measure and refresh it."
 fi
 
-echo "Coverage freshness: ${pct}% at ${sha:0:12}, $drift/$MAX_COMMITS Rust commits of drift"
+echo "Coverage freshness: ${pct}% at ${sha:0:12}$measured_note, $drift/$MAX_COMMITS Rust commits of drift"

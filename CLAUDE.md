@@ -242,6 +242,30 @@ the hot path: `coverage-check` writes a receipt, and the sub-second
 So `check` says *coverage was measured recently and cleared the floor*, not
 *coverage passes now*; the drift bound is what keeps that gap small.
 
+**Receipts certify sources, not commits.** Both receipts record a fingerprint
+of the Rust sources they measured (`rust_fingerprint` in `scripts/common.sh`,
+over the same `*.rs` pathspec the drift counters use) beside the commit where
+those sources were found. PRs are squash-merged, so on main that commit is
+usually gone; the gates then count drift from the oldest commit within
+`INSPECT_RECEIPT_SEARCH_DEPTH` (100) Rust-touching first-parent commits that has
+the same fingerprint, and say "same Rust sources as". A commit that is present
+but not in HEAD's history counts as gone, a fingerprint that is not the Rust at
+its own commit fails as inconsistent, a shallow clone is not searched, and no
+match or a receipt with no fingerprint still fails.
+
+The consequence to plan for: **the drift budget does not carry across a
+squash-merge.** On the branch the receipt's commit exists and up to 10 (coverage)
+or 20 (mutation) Rust commits of drift pass; on main only an exact match of the
+sources survives. So the receipts must be refreshed *after the last Rust change*
+before merging — a review fix after them turns main red. While HEAD's Rust
+differs from a receipt's, the gate prints a `NOTE` saying so.
+
+`just mutants` with no Rust changed since a 0-survivor receipt has nothing to
+mutate, and re-stamps the receipt onto HEAD if nothing else the run depended on
+changed either (`MUTATION_INPUTS` in `scripts/run-mutants.sh`: the crates, the
+Cargo files, the specs and journey docs the tests read). A re-stamped receipt
+keeps the time the mutants ran and says which commit it was re-stamped from.
+
 **Mutation is a decision, not a step.** It is the strongest signal here —
 coverage says a line ran, mutation asks whether any assertion would notice it
 changing — and it costs about twenty minutes for a full pass. Run it when the

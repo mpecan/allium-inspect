@@ -60,10 +60,17 @@ sha="$(head_commit)"
     fail "coverage cleared the floor, but this branch has no commit to record it against.
        Commit first, then re-run — a receipt that names no commit can never go stale."
 
+fingerprint="$(rust_fingerprint "$sha")" || fail "could not read the Rust sources at $sha"
+require_fingerprint "$fingerprint" "Rust fingerprint of $sha"
+
 {
     echo "# Coverage receipt — written by 'just coverage-check'. Do not hand-edit."
     echo "# Read by scripts/check-coverage-freshness.sh, which runs inside 'just check'."
-    echo "# Fields: <commit> <percent> <measured-at>"
-    echo "$sha $pct $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "# Fields: <commit> <percent> <measured-at> <rust-fingerprint>"
+    echo "# What is certified is the Rust sources <rust-fingerprint> names (see"
+    echo "# rust_fingerprint in scripts/common.sh); <commit> is where to find them. After"
+    echo "# a squash-merge drops <commit>, the gate finds the commit on main with the same"
+    echo "# sources. Receipts without a fingerprint are still read."
+    echo "$sha $pct $(date -u +%Y-%m-%dT%H:%M:%SZ) $fingerprint"
 } > "$RECEIPT"
 echo "Receipt written: $RECEIPT"

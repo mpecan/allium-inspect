@@ -43,20 +43,22 @@ require_int "$MAX_COMMITS" "INSPECT_MUTATION_MAX_COMMITS"
 [ -f "$RECEIPT" ] ||
     fail "mutation receipt not found: $RECEIPT — run 'just mutants' to establish the baseline"
 
-read -r sha score survivors measured_at <<<"$(receipt_line "$RECEIPT")"
-[ -n "${sha:-}" ] && [ -n "${score:-}" ] && [ -n "${survivors:-}" ] && [ -n "${measured_at:-}" ] ||
-    fail "mutation receipt $RECEIPT is malformed — run 'just mutants'"
-require_sha "$sha" "mutation receipt commit"
-require_int "$survivors" "mutation receipt survivor count"
+# The fingerprint is optional so a receipt written before it existed is still
+# read — and, with no fingerprint to search by, still fails on a missing commit.
+read_mutation_receipt "$RECEIPT"
+sha="$receipt_sha" score="$receipt_score" survivors="$receipt_survivors"
+measured_at="$receipt_measured_at"
 
-git cat-file -e "$sha^{commit}" 2>/dev/null ||
-    fail "mutation receipt names commit $sha, which is not in this repository"
+# The named commit, or — after a squash-merge dropped it — the oldest commit in
+# HEAD's first-parent history with the same Rust sources. Both counters below
+# measure from whichever it is.
+resolve_measured_commit "$sha" "$receipt_fp" "mutation receipt" "just mutants"
 
-lines="$(rust_lines_changed_since "$sha")"
-commits="$(rust_commits_since "$sha")"
+lines="$(rust_lines_changed_since "$measured_from")"
+commits="$(rust_commits_since "$measured_from")"
 require_int "$lines" "computed line delta"
 
-summary="last run: $score caught, $survivors survivors at ${sha:0:12} on $measured_at"
+summary="last run: $score caught, $survivors survivors at ${sha:0:12}$measured_note on $measured_at"
 
 if [ "$lines" -gt "$FAIL_LINES" ]; then
     fail "$lines Rust lines have changed since the last mutation run (limit $FAIL_LINES)
@@ -72,9 +74,9 @@ if [ "$commits" -gt "$MAX_COMMITS" ]; then
 fi
 
 if [ "$lines" -gt "$WARN_LINES" ]; then
-    echo "WARN:  mutation debt: $lines Rust lines changed since ${sha:0:12} (blocks at $FAIL_LINES)"
+    echo "WARN:  mutation debt: $lines Rust lines changed since ${sha:0:12}$measured_note (blocks at $FAIL_LINES)"
     echo "       $summary — 'just mutants' clears it."
     exit 0
 fi
 
-echo "Mutation debt: $lines/$FAIL_LINES lines, $commits/$MAX_COMMITS commits since ${sha:0:12}"
+echo "Mutation debt: $lines/$FAIL_LINES lines, $commits/$MAX_COMMITS commits since ${sha:0:12}$measured_note"
