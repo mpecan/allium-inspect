@@ -425,6 +425,7 @@ impl Walker<'_> {
             return self.blocked(&outcome, line, about);
         }
 
+        let mut missing = None;
         if let Some(caught) = creating {
             match self.first_made(caught) {
                 Some(id) => {
@@ -447,19 +448,10 @@ impl Walker<'_> {
                     // creates nothing, and reporting only the empty hands sent
                     // a reader looking at their own journey for a mistake that
                     // was three lines up in the specification.
-                    let missing = format!(
+                    missing = Some(format!(
                         "nothing of kind `{}` was created for `{}`",
                         caught.type_expr, caught.name
-                    );
-                    return Outcome {
-                        line,
-                        verdict: verdict_of(&outcome),
-                        about,
-                        detail: Some(match refusal(&outcome, |note| self.said_of_the_cast(note)) {
-                            Some(why) => format!("{missing} — {why}"),
-                            None => missing,
-                        }),
-                    };
+                    ));
                 }
             }
         }
@@ -471,17 +463,23 @@ impl Walker<'_> {
         // the spec answering, either way, when nothing had been decided.
         // Undecided here, the same as the clock moving into a rule nobody
         // could decide, and every refusal after it in this step with it.
-        if verdict == Verdict::Specified
+        //
+        // With a `creating` that caught nothing it is usually the cause: `for
+        // x in config.chosen` over a parameter nothing settled made nothing,
+        // and read as the rule refusing nothing that was a held line with an
+        // empty name behind it (issue #25).
+        let (verdict, why) = if verdict == Verdict::Specified
             && let Some(why) = self.unsettled()
         {
-            return Outcome { line, verdict: Verdict::Undecided, about, detail: Some(why) };
-        }
-        Outcome {
-            line,
-            verdict,
-            about,
-            detail: refusal(&outcome, |note| self.said_of_the_cast(note)),
-        }
+            (Verdict::Undecided, Some(why))
+        } else {
+            (verdict, refusal(&outcome, |note| self.said_of_the_cast(note)))
+        };
+        let detail = match (missing, why) {
+            (Some(missing), Some(why)) => Some(format!("{missing} — {why}")),
+            (missing, why) => missing.or(why),
+        };
+        Outcome { line, verdict, about, detail }
     }
 
     /// What a `cannot do` came to: the verdicts, mirrored.

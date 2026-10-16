@@ -183,6 +183,28 @@ impl Value {
         }
     }
 
+    /// A set of `items`, each member held once.
+    ///
+    /// `{a, b, a}` is the set `{a, b}`, and [`Value::equals`] counts members,
+    /// so whatever builds a set from what a spec wrote builds it here — the
+    /// seed reading a default and the evaluator reading the same words in a
+    /// rule. Built two ways, `config.apps = {a, b, a}` came out false against
+    /// a default written `{a, b, a}` (issue #25).
+    ///
+    /// Only a member *definitely* equal to an earlier one is dropped: two
+    /// undecided members may or may not be the same thing, and dropping one
+    /// would decide that they were.
+    #[must_use]
+    pub fn set_of(items: impl IntoIterator<Item = Value>) -> Value {
+        let mut members: Vec<Value> = Vec::new();
+        for item in items {
+            if !members.iter().any(|member| member.equals(&item) == Truth::True) {
+                members.push(item);
+            }
+        }
+        Value::Set(members)
+    }
+
     /// Whether two values are equal, in three-valued logic.
     ///
     /// Anything compared with [`Value::Unknown`] is undecided — including
@@ -207,16 +229,25 @@ impl Value {
             // can be paired off by pairs that are definitely equal, unequal if
             // they cannot be even counting every undecided pair as equal, and
             // undecided between the two.
+            //
+            // Counting members is only an answer when every member is known.
+            // `{x, y}` with both undecided may be one member twice, so its
+            // size says nothing; read as two against `{a}`, it was told no,
+            // and `config.apps = {a, b, a}` was refused against a default the
+            // spec wrote the same way (issue #25). With an undecided member
+            // anywhere the two are unequal only if some member has nothing on
+            // the other side it could be.
             (Value::Set(left), Value::Set(right)) => {
-                if left.len() != right.len() {
-                    return Truth::False;
-                }
                 let pairs: Vec<Vec<Truth>> =
                     left.iter().map(|a| right.iter().map(|b| a.equals(b)).collect()).collect();
-                if paired(&pairs, |truth| truth == Truth::True) {
+                if left.len() == right.len() && paired(&pairs, |truth| truth == Truth::True) {
                     Truth::True
-                } else if paired(&pairs, |truth| truth != Truth::False) {
-                    Truth::Unknown
+                } else if self.holds_unknown() || other.holds_unknown() {
+                    let stranded_left =
+                        pairs.iter().any(|row| row.iter().all(|truth| *truth == Truth::False));
+                    let stranded_right = (0..right.len())
+                        .any(|column| pairs.iter().all(|row| row[column] == Truth::False));
+                    if stranded_left || stranded_right { Truth::False } else { Truth::Unknown }
                 } else {
                     Truth::False
                 }
@@ -494,6 +525,20 @@ mod tests {
     }
 
     #[test]
+    fn a_set_holds_each_member_once_and_every_undecided_one() {
+        assert_eq!(
+            Value::set_of([Value::Int(1), Value::Int(2), Value::Int(1), Value::Float(2.0)]),
+            Value::Set(vec![Value::Int(1), Value::Int(2)])
+        );
+        // Two undecided members may be one thing or two; neither is dropped.
+        assert_eq!(
+            Value::set_of([Value::Unknown, Value::Unknown, Value::Int(1)]),
+            Value::Set(vec![Value::Unknown, Value::Unknown, Value::Int(1)])
+        );
+        assert_eq!(Value::set_of([]), Value::Set(Vec::new()));
+    }
+
+    #[test]
     fn collections_compare_element_by_element() {
         let one = Value::Set(vec![Value::Int(1), Value::Int(2)]);
         assert_eq!(one.equals(&Value::Set(vec![Value::Int(1), Value::Int(2)])), Truth::True);
@@ -521,6 +566,17 @@ mod tests {
         assert_eq!(open.equals(&text(&["b", "a"])), Truth::Unknown);
         let closed = Value::Set(vec![Value::Unknown, Value::Str("c".to_owned())]);
         assert_eq!(closed.equals(&text(&["a", "b"])), Truth::False);
+        // Sizes are not counted past an undecided member: two of them may be
+        // one member written twice, and an empty side strands every member of
+        // the other.
+        let two_open = Value::Set(vec![Value::Unknown, Value::Unknown]);
+        assert_eq!(two_open.equals(&text(&["a"])), Truth::Unknown);
+        assert_eq!(text(&["a"]).equals(&two_open), Truth::Unknown);
+        let three = Value::Set(vec![Value::Unknown, Value::Unknown, Value::Str("c".to_owned())]);
+        assert_eq!(three.equals(&text(&["a", "b"])), Truth::False);
+        assert_eq!(text(&["a", "b"]).equals(&three), Truth::False);
+        assert_eq!(text(&[]).equals(&Value::Set(vec![Value::Unknown])), Truth::False);
+        assert_eq!(Value::Set(vec![Value::Unknown]).equals(&text(&[])), Truth::False);
         // A pairing found only by moving an earlier choice.
         let left = Value::Set(vec![Value::Unknown, Value::Str("a".to_owned())]);
         assert_eq!(left.equals(&text(&["a", "b"])), Truth::Unknown);

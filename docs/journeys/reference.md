@@ -255,6 +255,62 @@ between, and the module goes in front the way it does on a type:
 `lending/config.loan_limit`. A parameter with no default can be set the same
 way, and until it is, a rule that reads it is undecided and names it.
 
+**Which defaults are in force.** A default is read from the text the spec wrote,
+and these are read:
+
+- a literal — `5`, `1.5`, `21.days`, `"draft"`, `true`, `null`;
+- a value of the enumeration the parameter's type names — `favourite: App = c`;
+- a set or list of either — `apps: Set<App> = {a, b}`, `labels: Set<String> =
+  {"alpha", "beta"}`, `sizes: List<Integer> = [3, 1]`, and `{}`.
+
+A collection's members are separated as `allium parse` separates them: by a
+comma, a line break or a space, with a `--` note running to the end of its line
+and a comma allowed after the last member. So the shape a long default takes
+is read:
+
+```allium
+config {
+    units: Set<Unit> = {
+        code, -- the repository's files
+        issues
+        pulls, -- and a comma after the last
+    }
+}
+```
+
+A set holds each member once, as the language says: `{a, b, a}` is `{a, b}`,
+in a default, in a rule and in a journey alike, so a `requires: config.apps =
+{a, b, a}` written the way the default was holds against it.
+
+So a journey does not restate a collection default to get past it; `then
+config.apps = {a, b}` holds from the start, and a rule iterating `config.apps`
+makes one of whatever it makes per member. The undecided reason a `then`
+gives about a parameter is the same one the rule reading it gives, whether the
+line compares it or asks what is `in` it.
+
+A default that is an expression — `other + 1`, `core/config.base`, or a bare word
+that names another parameter, as `{a, favourite}` does — is not evaluated, and
+neither is a set with even one member like that: the set without it would be a
+smaller set read back as known. The parameter is left unset, so it is
+undecided, and the walk says which one:
+
+```text
+A Default Built From Another  —  0 of 2 steps hold
+   1. choose                                           undecided
+        bx does Choose(bx) on Panel
+          nothing of kind `Thing` was created for `t` — `Choose` fired, but part of what it ensures was not applied: `for x in config.chosen`: `config.chosen` was never settled, so the clauses inside it were not applied
+        then t.app = a
+          t.app is unknown
+   2. read it back                                     undecided
+        then config.chosen = {a, c}
+          config.chosen is unknown — `config.chosen` has no value: the spec gives it no default this simulator can read, and nothing set it
+```
+
+A bare word is a value only when the parameter's type is an enumeration that
+declares it and no parameter of the same block has that name; otherwise it is
+left unset rather than picked. Setting the parameter in `given` works for every
+one of these, as it always has.
+
 **It is reported as a stipulation**, unlike a field set in `given`. A field is
 the starting position; a parameter is a world the spec's own defaults say is not
 the one it describes, and a step holding on the strength of that is a step

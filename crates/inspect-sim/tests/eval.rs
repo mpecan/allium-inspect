@@ -1636,6 +1636,63 @@ fn a_bound_name_in_a_set_of_states_is_what_it_is_bound_to() {
     assert_eq!(truth_of(&node, &env), Truth::True, "`pending` is bound, to `granted`");
 }
 
+/// `config.apps = {a, b, a}` beside a default of `{a, b}` — the issue #25
+/// case. The names are states, as they are for `in`, and the repeat is a
+/// repeat: the set written is the set held. Before, the names were bindings
+/// nobody made, and three of them counted against two made it a refusal.
+#[test]
+fn a_set_written_out_beside_a_set_of_states_is_a_set_of_states() {
+    let mut world = library();
+    let held = Value::Set(vec![Value::Enum("a".to_owned()), Value::Enum("b".to_owned())]);
+    world.set_config("lending", "apps", held);
+    let env = env(&world, "lending");
+    let apps = || field(ident("config"), "apps");
+
+    for written in [vec!["a", "b"], vec!["b", "a"], vec!["a", "b", "a"]] {
+        let node = compare(apps(), "Eq", set_of(written.iter().map(|name| ident(name)).collect()));
+        assert_eq!(truth_of(&node, &env), Truth::True, "{written:?}");
+        assert!(reasons(&node, &env).is_empty(), "{written:?}");
+        let mirrored =
+            compare(set_of(written.iter().map(|name| ident(name)).collect()), "Eq", apps());
+        assert_eq!(truth_of(&mirrored, &env), Truth::True, "{written:?}");
+    }
+    let other = compare(apps(), "Eq", set_of(vec![ident("a"), ident("c")]));
+    assert_eq!(truth_of(&other, &env), Truth::False);
+    let unequal = compare(apps(), "NotEq", set_of(vec![ident("a")]));
+    assert_eq!(truth_of(&unequal, &env), Truth::True);
+}
+
+/// A name that is something else stays what it is, the same test a lone name
+/// beside a state gets: bound to a value, it is that value.
+#[test]
+fn a_bound_name_in_a_set_written_beside_states_is_what_it_is_bound_to() {
+    let mut world = library();
+    world.set_config("lending", "apps", Value::Set(vec![Value::Enum("a".to_owned())]));
+    let env = env(&world, "lending").bind("a", Value::Enum("b".to_owned()));
+    let node = compare(field(ident("config"), "apps"), "Eq", set_of(vec![ident("a")]));
+    assert_eq!(truth_of(&node, &env), Truth::False, "`a` is bound, to `b`");
+    // Bound to something undecided, it is a value nobody knows — not the
+    // state its name happens to spell (issue #21's rule, member by member).
+    let env = self::env(&world, "lending").bind("a", Value::Unknown);
+    assert_eq!(truth_of(&node, &env), Truth::Unknown, "`a` is bound, to nothing known");
+}
+
+/// Beside a set holding no state — here an empty one — the names are not
+/// read as states, and the answer stays honest: an empty set is not a set of
+/// one, whatever that one turns out to be.
+#[test]
+fn a_bare_name_in_a_set_beside_no_states_is_still_unbound() {
+    let mut world = library();
+    world.set_config("lending", "none", Value::Set(Vec::new()));
+    world.set_config("lending", "sizes", Value::Set(vec![Value::Int(1)]));
+    let env = env(&world, "lending");
+    let empty = compare(field(ident("config"), "none"), "Eq", set_of(vec![ident("a")]));
+    assert_eq!(truth_of(&empty, &env), Truth::False);
+    let numbers = compare(field(ident("config"), "sizes"), "Eq", set_of(vec![ident("a")]));
+    assert_eq!(truth_of(&numbers, &env), Truth::Unknown);
+    assert_eq!(reasons(&numbers, &env), vec!["nothing is bound to `a`"]);
+}
+
 // --- a derived value that takes an argument --------------------------------------
 
 /// `is_used_by(who): who in filed_on_by`.

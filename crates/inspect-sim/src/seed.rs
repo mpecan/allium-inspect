@@ -7,7 +7,9 @@
 //! choose: which entities exist.
 //!
 //! Defaults are parsed from the text the spec wrote rather than from an
-//! evaluated tree, because that is what `allium model` reports. A default this
+//! evaluated tree, because that is what `allium model` reports. That covers
+//! the literals, the values of an enumeration the parameter's type names, and
+//! a set or list of either — `apps: Set<App> = {a, b}` (issue #25). A default this
 //! module cannot read is left unset rather than guessed at, and reading it back
 //! then comes out as undecided with a note — the same treatment as anything else
 //! the simulator does not know.
@@ -24,7 +26,8 @@ pub fn seed(spec: &SpecGraph) -> World {
         let Some(detail) = as_config(node) else { continue };
         for parameter in &detail.parameters {
             let Some(text) = &parameter.default_expr else { continue };
-            if let Some(value) = literal(text) {
+            let reading = Reading { spec, module: &node.module, block: detail };
+            if let Some(value) = reading.default(text, &parameter.type_expr) {
                 world.set_config(&node.module, &parameter.name, value);
             }
         }
@@ -39,11 +42,142 @@ fn as_config(node: &inspect_model::Node) -> Option<&inspect_model::graph::Config
     }
 }
 
+/// Where a default is read: the spec, for which enumerations exist, and the
+/// block it is written in, for which bare words are its other parameters.
+struct Reading<'a> {
+    spec: &'a SpecGraph,
+    module: &'a str,
+    block: &'a inspect_model::graph::ConfigDetail,
+}
+
+impl Reading<'_> {
+    /// A default written for a parameter declared `type_expr`.
+    ///
+    /// A collection — `{a, b}`, `{"x"}`, `[3, 1]`, `{}` — is read element by
+    /// element, and is read only when every element is: a set with one member
+    /// left out is a smaller set, which is a confident wrong answer rather
+    /// than an undecided one.
+    fn default(&self, text: &str, type_expr: &str) -> Option<Value> {
+        let text = text.trim();
+        let type_expr = type_expr.trim().trim_end_matches('?').trim();
+        let (inside, set) = if let Some(inside) = enclosed(text, '{', '}') {
+            (inside, true)
+        } else if let Some(inside) = enclosed(text, '[', ']') {
+            (inside, false)
+        } else {
+            return self.scalar(text, type_expr);
+        };
+        let element_type = element_type(type_expr)?;
+        let items = elements(inside)?
+            .into_iter()
+            .map(|part| self.scalar(part, element_type))
+            .collect::<Option<Vec<Value>>>()?;
+        // `{a, a}` is the set of one thing, built the way the evaluator builds
+        // the same words in a rule. A list keeps what it was given.
+        Some(if set { Value::set_of(items) } else { Value::Set(items) })
+    }
+
+    /// One value: a literal [`literal`] reads, or a bare word naming a value
+    /// of the enumeration `type_expr` names.
+    ///
+    /// The bare word is the case that needs care, because `second: Integer =
+    /// first` is a bare word too and means the parameter `first`. So a word
+    /// is a value only when the declared type is an enumeration that declares
+    /// it, and no parameter of the same block shares its name — both, or it
+    /// is left unset rather than picked.
+    fn scalar(&self, text: &str, type_expr: &str) -> Option<Value> {
+        let text = text.trim();
+        if let Some(value) = literal(text) {
+            return Some(value);
+        }
+        if !is_word(text) {
+            return None;
+        }
+        let declared = self.spec.enum_values_of(self.module, type_expr);
+        let a_parameter = self.block.parameters.iter().any(|parameter| parameter.name == text);
+        (declared.iter().any(|value| value == text) && !a_parameter)
+            .then(|| Value::Enum(text.to_owned()))
+    }
+}
+
+/// `text` without its `open` and `close`, when it is wrapped in them.
+fn enclosed(text: &str, open: char, close: char) -> Option<&str> {
+    text.strip_prefix(open)?.strip_suffix(close)
+}
+
+/// `App` out of `Set<App>` or `List<App>`. Nothing for a type that is not a
+/// collection: a collection default for a scalar parameter is the spec's
+/// mistake, and `allium check` is the place that says so.
+fn element_type(type_expr: &str) -> Option<&str> {
+    ["Set<", "List<"]
+        .iter()
+        .find_map(|prefix| type_expr.strip_prefix(prefix))
+        .and_then(|rest| rest.strip_suffix('>'))
+        .map(str::trim)
+}
+
+/// The elements of a collection's inside, as `allium parse` separates them.
+///
+/// A comma, a line break or a space ends an element, and a `--` comment runs
+/// to the end of its line: a default written one member to a line, with a
+/// note beside each and a comma after the last, is the shape a long one takes
+/// (issue #25). Inside a string none of those is anything but text — Allium
+/// strings have no escapes, so the next `"` always closes one. Nothing for a
+/// comma with no element before it — `{a,, b}`, `{, a}` — which `allium`
+/// refuses too, or for a string left open.
+///
+/// Anything else an element might be — a nested collection, an expression —
+/// is split wherever it is split and then refused by the element reader, so
+/// the whole default is left unset rather than read short.
+fn elements(inside: &str) -> Option<Vec<&str>> {
+    let mut parts = Vec::new();
+    let (mut quoted, mut start, mut comma_allowed) = (false, None, false);
+    let mut characters = inside.char_indices().peekable();
+    while let Some((at, character)) = characters.next() {
+        if quoted {
+            quoted = character != '"';
+            continue;
+        }
+        let ends = character == ','
+            || character.is_whitespace()
+            || (character == '-' && characters.peek().is_some_and(|(_, next)| *next == '-'));
+        if !ends {
+            quoted = character == '"';
+            start.get_or_insert(at);
+            continue;
+        }
+        if let Some(from) = start.take() {
+            parts.push(&inside[from..at]);
+            comma_allowed = true;
+        }
+        match character {
+            ',' if !comma_allowed => return None,
+            ',' => comma_allowed = false,
+            '-' => while characters.next_if(|(_, next)| *next != '\n').is_some() {},
+            _ => {}
+        }
+    }
+    if let Some(from) = start {
+        parts.push(&inside[from..]);
+    }
+    (!quoted).then_some(parts)
+}
+
+/// An identifier, and nothing else: no dot, no operator, no space.
+fn is_word(text: &str) -> bool {
+    let mut characters = text.chars();
+    characters.next().is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && characters.all(|rest| rest.is_ascii_alphanumeric() || rest == '_')
+}
+
 /// A configuration default, as written.
 ///
-/// Deliberately narrow. These are the four shapes a config block actually uses,
-/// and anything else — an expression, a reference to another parameter — is left
-/// for the user to set, because a wrong default is worse than an absent one.
+/// Deliberately narrow. These are the scalar shapes a config block actually
+/// uses, and anything else — an expression, a reference to another parameter —
+/// is left for the user to set, because a wrong default is worse than an
+/// absent one. A collection, and a bare enumeration value, are read by
+/// [`seed`], which knows the type the parameter was declared with; this does
+/// not, and a journey reads its own terms with it.
 #[must_use]
 pub fn literal(text: &str) -> Option<Value> {
     let text = text.trim();
@@ -95,10 +229,28 @@ fn unit_millis(unit: &str) -> Option<i64> {
 mod tests {
     use inspect_model::{
         Node, NodeDetail, SpecGraph,
-        graph::{ConfigDetail, ConfigParameter},
+        graph::{ConfigDetail, ConfigParameter, EnumDetail},
     };
 
     use super::*;
+
+    fn an_enum(module: &str, name: &str, values: &[&str]) -> Node {
+        Node::new(module, NodeKind::Enum, name).with(NodeDetail::Enum(EnumDetail {
+            values: values.iter().map(|value| (*value).to_owned()).collect(),
+        }))
+    }
+
+    /// One module `m` declaring `enum App { a | b | c }` and `parameters`.
+    fn seeded(parameters: &[(&str, &str, Option<&str>)]) -> World {
+        let mut spec = SpecGraph::new("test");
+        spec.nodes.push(an_enum("m", "App", &["a", "b", "c"]));
+        spec.nodes.push(config("m", parameters));
+        seed(&spec)
+    }
+
+    fn enums(values: &[&str]) -> Value {
+        Value::Set(values.iter().map(|value| Value::Enum((*value).to_owned())).collect())
+    }
 
     fn config(module: &str, parameters: &[(&str, &str, Option<&str>)]) -> Node {
         Node::new(module, NodeKind::Config, "config").with(NodeDetail::Config(ConfigDetail {
@@ -222,6 +374,184 @@ mod tests {
     #[test]
     fn seeding_a_spec_with_no_config_gives_an_empty_world() {
         assert_eq!(seed(&SpecGraph::new("test")), World::new());
+    }
+
+    #[test]
+    fn a_set_of_enumeration_values_is_seeded() {
+        // Issue #25: the reproduction as filed.
+        let world = seeded(&[("apps", "Set<App>", Some("{a, b}"))]);
+        assert_eq!(world.config("m", "apps"), enums(&["a", "b"]));
+    }
+
+    #[test]
+    fn a_set_of_strings_and_a_list_of_integers_are_seeded() {
+        let world = seeded(&[
+            ("labels", "Set<String>", Some(r#"{"alpha", "a, b"}"#)),
+            ("sizes", "List<Integer>", Some("[3, 1, 3]")),
+            ("waits", "Set<Duration>", Some("{1.day, 2.hours}")),
+        ]);
+        assert_eq!(
+            world.config("m", "labels"),
+            Value::Set(vec![Value::Str("alpha".to_owned()), Value::Str("a, b".to_owned())])
+        );
+        // A list keeps what it was given, repeats and order both.
+        assert_eq!(
+            world.config("m", "sizes"),
+            Value::Set(vec![Value::Int(3), Value::Int(1), Value::Int(3)])
+        );
+        assert_eq!(
+            world.config("m", "waits"),
+            Value::Set(vec![Value::Duration(86_400_000), Value::Duration(7_200_000)])
+        );
+    }
+
+    #[test]
+    fn a_set_written_with_a_repeat_holds_it_once() {
+        let world = seeded(&[("apps", "Set<App>", Some("{a, b, a}"))]);
+        assert_eq!(world.config("m", "apps"), enums(&["a", "b"]));
+    }
+
+    #[test]
+    fn an_empty_set_or_list_is_a_default_and_not_an_absence() {
+        let world =
+            seeded(&[("none", "Set<App>", Some("{}")), ("nothing", "List<String>", Some("[ ]"))]);
+        assert_eq!(world.config("m", "none"), Value::Set(Vec::new()));
+        assert_eq!(world.config("m", "nothing"), Value::Set(Vec::new()));
+    }
+
+    #[test]
+    fn an_optional_collection_is_read_the_same() {
+        let world = seeded(&[("apps", "Set<App>?", Some("{c}"))]);
+        assert_eq!(world.config("m", "apps"), enums(&["c"]));
+    }
+
+    #[test]
+    fn a_bare_enumeration_value_is_seeded() {
+        let world = seeded(&[("favourite", "App", Some("c")), ("maybe", "App?", Some("b"))]);
+        assert_eq!(world.config("m", "favourite"), Value::Enum("c".to_owned()));
+        assert_eq!(world.config("m", "maybe"), Value::Enum("b".to_owned()));
+    }
+
+    #[test]
+    fn a_word_the_enumeration_does_not_declare_is_left_unset() {
+        // A typo is not a value: `allium check` says so, and the simulator
+        // says it could not read the default rather than inventing a state.
+        let world =
+            seeded(&[("favourite", "App", Some("z")), ("apps", "Set<App>", Some("{a, z}"))]);
+        assert_eq!(world.config("m", "favourite"), Value::Unknown);
+        assert_eq!(world.config("m", "apps"), Value::Unknown);
+        assert!(!world.has_config("m", "apps"));
+    }
+
+    #[test]
+    fn a_word_for_a_type_that_is_no_enumeration_is_left_unset() {
+        // `second: Integer = first` names the parameter `first`; it is not a
+        // value of anything.
+        let world = seeded(&[
+            ("first", "Integer", Some("1")),
+            ("second", "Integer", Some("first")),
+            ("words", "Set<String>", Some("{first}")),
+        ]);
+        assert_eq!(world.config("m", "second"), Value::Unknown);
+        assert_eq!(world.config("m", "words"), Value::Unknown);
+    }
+
+    #[test]
+    fn a_word_that_is_also_a_parameter_is_left_unset() {
+        // `a` is a value of `App` and the name of a parameter in the same
+        // block. Which one the default means is not this reader's to pick.
+        let world = seeded(&[("a", "App", Some("b")), ("apps", "Set<App>", Some("{a, b}"))]);
+        assert_eq!(world.config("m", "a"), Value::Enum("b".to_owned()));
+        assert_eq!(world.config("m", "apps"), Value::Unknown);
+    }
+
+    #[test]
+    fn a_set_with_one_unreadable_member_is_left_unset_whole() {
+        // Dropping the member would leave a smaller set, read back as known.
+        let world = seeded(&[
+            ("favourite", "App", Some("c")),
+            ("chosen", "Set<App>", Some("{a, favourite}")),
+            ("sums", "Set<Integer>", Some("{1, other + 1}")),
+            ("deep", "Set<Set<App>>", Some("{{a}, {b}}")),
+        ]);
+        assert_eq!(world.config("m", "chosen"), Value::Unknown);
+        assert_eq!(world.config("m", "sums"), Value::Unknown);
+        assert_eq!(world.config("m", "deep"), Value::Unknown);
+    }
+
+    #[test]
+    fn a_collection_written_wrong_is_left_unset() {
+        let world = seeded(&[
+            ("gap", "Set<App>", Some("{a,, b}")),
+            ("leading", "Set<App>", Some("{, a}")),
+            ("alone", "Set<App>", Some("{,}")),
+            ("open", "Set<String>", Some(r#"{"a, b}"#)),
+            ("unbalanced", "Set<App>", Some("{a)}")),
+            ("scalar", "App", Some("{a}")),
+            ("mismatched", "Set<App>", Some("{a]")),
+        ]);
+        for name in ["gap", "leading", "alone", "open", "unbalanced", "scalar", "mismatched"] {
+            assert_eq!(world.config("m", name), Value::Unknown, "{name}");
+        }
+    }
+
+    #[test]
+    fn a_collection_written_a_member_to_a_line_is_read_as_allium_reads_it() {
+        // Each of these is `{a, b}` to `allium parse`: a trailing comma, a
+        // line break or a space between members, a comment beside one. Read
+        // as text split only on commas, all four were left unset.
+        let world = seeded(&[
+            ("trailing", "Set<App>", Some("{a, b,}")),
+            ("lines", "Set<App>", Some("{\n    a\n    b\n}")),
+            ("spaced", "Set<App>", Some("{a b}")),
+            (
+                "noted",
+                "Set<App>",
+                Some("{\n    a, -- the first, with a comma, here\n    b, -- b\n}"),
+            ),
+            ("quoted", "Set<String>", Some("{\"x -- y\", -- note\n \"a b\",}")),
+        ]);
+        for name in ["trailing", "lines", "spaced", "noted"] {
+            assert_eq!(world.config("m", name), enums(&["a", "b"]), "{name}");
+        }
+        assert_eq!(
+            world.config("m", "quoted"),
+            Value::Set(vec![Value::Str("x -- y".to_owned()), Value::Str("a b".to_owned())])
+        );
+    }
+
+    #[test]
+    fn a_set_written_with_a_repeat_agrees_with_the_same_words_in_a_rule() {
+        // `{1, 1.0}` is one member to `Value::equals`; held twice, the set the
+        // seed made and the set a rule spelled alike made had different sizes.
+        let world = seeded(&[("ones", "Set<Integer>", Some("{1, 1.0}"))]);
+        assert_eq!(world.config("m", "ones"), Value::Set(vec![Value::Int(1)]));
+    }
+
+    #[test]
+    fn an_enumeration_is_read_from_the_parameters_own_module() {
+        // Two modules each declare an `App` with different values; `m`'s
+        // default is read against `m`'s.
+        let mut spec = SpecGraph::new("test");
+        spec.nodes.push(an_enum("m", "App", &["a"]));
+        spec.nodes.push(an_enum("n", "App", &["z"]));
+        spec.nodes.push(config("m", &[("apps", "Set<App>", Some("{a}"))]));
+        spec.nodes.push(config("n", &[("apps", "Set<App>", Some("{a}"))]));
+        let world = seed(&spec);
+        assert_eq!(world.config("m", "apps"), enums(&["a"]));
+        assert_eq!(world.config("n", "apps"), Value::Unknown);
+    }
+
+    #[test]
+    fn a_word_is_an_identifier_and_nothing_more() {
+        assert!(is_word("a"));
+        assert!(is_word("_x1"));
+        assert!(is_word("snake_case"));
+        assert!(!is_word(""));
+        assert!(!is_word("1a"));
+        assert!(!is_word("a.b"));
+        assert!(!is_word("a b"));
+        assert!(!is_word("a-b"));
     }
 
     #[test]

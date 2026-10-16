@@ -1,0 +1,112 @@
+-- Issue #25: a config default that is a collection is in force from the
+-- start, the same as a scalar one. Nothing here restates a default.
+
+journey SetDefault {
+    cast:
+        bx: Box
+    1. start
+        bx does Start(bx) on Panel
+            creating t: Thing
+        then t.app = a
+}
+
+journey DefaultsAsWritten {
+    cast:
+        bx: Box
+    1. look
+        bx does Favour(bx) on Panel
+            creating t: Thing
+        then t.app = c
+        then config.apps = {a, b}
+        then config.labels = {"alpha", "beta"}
+        then config.sizes = {3, 1}
+        then config.favourite = c
+        then config.nothing = {}
+        then config.twice = {b, a}
+        then config.twice = {a, b, a}
+        then config.listed = {a, b, c}
+        then c in config.listed
+}
+
+journey StringsFromADefault {
+    cast:
+        bx: Box
+    1. label
+        bx does Label(bx) on Panel
+            creating n: Note
+        then n.label = "alpha"
+}
+
+journey IntegersFromADefault {
+    cast:
+        bx: Box
+    1. size
+        bx does Size(bx) on Panel
+            creating s: Slot
+        then s.size = 3
+}
+
+journey NothingFromAnEmptyDefault {
+    cast:
+        bx: Box
+    1. empty
+        bx does Empty(bx) on Panel
+        then Empty fires
+}
+
+journey ADefaultBuiltFromAnother {
+    cast:
+        bx: Box
+    1. choose
+        bx does Choose(bx) on Panel
+            creating t: Thing
+        then t.app = a
+    2. read it back
+        then config.chosen = {a, c}
+}
+
+journey ADefaultOverridden {
+    cast:
+        bx: Box
+    given:
+        config.apps = {b}
+    1. start
+        bx does Start(bx) on Panel
+            creating t: Thing
+        then t.app = b
+}
+
+journey ARepeatedDefaultAsTheRuleWritesIt {
+    cast:
+        bx: Box
+    1. twice
+        bx does Twice(bx) on Panel
+        then bx.open = true
+}
+
+journey AMembershipInADefaultNothingRead {
+    cast:
+        bx: Box
+    1. read it
+        then a in config.chosen
+}
+
+journey ADefaultSetToSomethingUndecided {
+    cast:
+        bx: Box
+        t: Thing
+    given:
+        config.favourite = t.app
+    1. read it
+        then config.favourite = a
+}
+
+journey ARefusalThatCreatesNothing {
+    cast:
+        bx: Box
+    given:
+        bx.open = false
+    1. shut
+        bx does Shut(bx) on Panel
+            creating t: Thing
+}

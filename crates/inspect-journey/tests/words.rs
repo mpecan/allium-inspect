@@ -253,6 +253,7 @@ fn the_fixtures_own_journeys_report_no_word() {
         ("chains", common::CHAINS),
         ("cleanup", common::CLEANUP),
         ("deadlines", common::DEADLINES),
+        ("defaults", common::DEFAULTS),
         ("facing", common::FACING),
         ("failures", common::FAILURES),
         ("fanout", common::FANOUT),

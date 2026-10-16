@@ -308,7 +308,9 @@ impl Walker<'_> {
     pub(crate) fn value_of(&self, term: &Term) -> Value {
         match term {
             Term::Literal(value) => value.clone(),
-            Term::Set(items) => Value::Set(items.iter().map(|item| self.value_of(item)).collect()),
+            // Built as the spec's own sets are, so `{a, b, a}` in a `then`
+            // is the `{a, b}` the same words make in a rule or a default.
+            Term::Set(items) => Value::set_of(items.iter().map(|item| self.value_of(item))),
             Term::Path(path) => self.read(path),
             // Resolved against the world's clock at the moment it is read, so
             // `now + 1.day` in a `given` means a day after the world started
@@ -341,10 +343,20 @@ impl Walker<'_> {
         // instead read `config.limit` off whichever of `loan_limit` and
         // `limit` came first.
         if config::is_config(path) {
-            let value = config::resolve(self.spec, path).map_or(Value::Unknown, |parameter| {
-                self.world.config(&parameter.module, &parameter.name)
+            let Ok(parameter) = config::resolve(self.spec, path) else {
+                return (Value::Unknown, None);
+            };
+            let value = self.world.config(&parameter.module, &parameter.name);
+            // The evaluator's own words for the same read, so a `then` about a
+            // parameter and a rule guarded by it give one reason (issue #25).
+            let why = value.is_unknown().then(|| {
+                self.world.why_config_is_undecided(
+                    &parameter.module,
+                    &parameter.name,
+                    &path.as_written(),
+                )
             });
-            return (value, None);
+            return (value, why);
         }
         let Some(id) = self.bound.get(&path.root) else {
             if !path.segments.is_empty() {

@@ -113,6 +113,10 @@ pub const AUDIENCE: &[&str] = &["audience"];
 /// world as the trigger found it (issue #24).
 pub const SIBLINGS: &[&str] = &["siblings"];
 
+/// The defaults fixture, alone: config parameters whose defaults are sets,
+/// lists and enumeration values (issue #25).
+pub const DEFAULTS: &[&str] = &["defaults"];
+
 /// `modules`, replayed from their recordings, with each module's source.
 pub fn library(modules: &[&str]) -> (SpecGraph, Program, Sources) {
     let root = fixtures();

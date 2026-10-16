@@ -71,6 +71,14 @@ pub fn compare(
         && env.could_be_a_state(state)
     {
         left = Evaluation::known(Value::Enum(state.to_owned()));
+    } else if right.value.holds_unknown()
+        && let Some(states) = states_written(right_node, &left.value, env)
+    {
+        right = states;
+    } else if left.value.holds_unknown()
+        && let Some(states) = states_written(left_node, &right.value, env)
+    {
+        left = states;
     }
 
     let mut unresolved = left.unresolved;
@@ -94,6 +102,41 @@ pub fn compare(
     };
 
     Evaluation { value: truth_value(truth), unresolved }
+}
+
+/// `config.apps = {a, b}`: the same judgement, one member at a time, for a
+/// collection written out beside a collection holding states.
+///
+/// Each member is read as the state it spells under the same test as a lone
+/// name, and a set is built as every set from a spec's words is, by
+/// [`Value::set_of`]. Without it every member was a binding nobody made, and
+/// a rule guarded by a set-valued parameter could never be decided.
+fn states_written(node: &Expr, beside: &Value, env: &Env<'_>) -> Option<Evaluation> {
+    let Value::Set(members) = beside else { return None };
+    if !members.iter().any(|member| matches!(member, Value::Enum(_))) {
+        return None;
+    }
+    let (elements, ordered) = match node {
+        Expr::SetLiteral { elements, .. } => (elements, false),
+        Expr::ListLiteral { elements, .. } => (elements, true),
+        _ => return None,
+    };
+    let mut items = Vec::with_capacity(elements.len());
+    let mut unresolved = Vec::new();
+    for element in elements {
+        let evaluated = eval(element, env);
+        match bare_name(element) {
+            Some(state) if evaluated.value.is_unknown() && env.could_be_a_state(state) => {
+                items.push(Value::Enum(state.to_owned()));
+            }
+            _ => {
+                unresolved.extend(evaluated.unresolved);
+                items.push(evaluated.value);
+            }
+        }
+    }
+    let value = if ordered { Value::Set(items) } else { Value::set_of(items) };
+    Some(Evaluation { value, unresolved })
 }
 
 /// Why two values could not be ordered, quoting the pair.

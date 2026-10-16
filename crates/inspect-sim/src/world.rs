@@ -247,6 +247,26 @@ impl World {
         self.config.contains_key(&format!("{module}.{name}")) || self.config.contains_key(name)
     }
 
+    /// Why the parameter `name`, written `written`, reads as undecided — for
+    /// when [`World::config`] has come back [`Value::Unknown`].
+    ///
+    /// One sentence for the evaluator reading it in a rule and a journey
+    /// reading it in a `then`, so the two give one reason. A parameter nobody
+    /// set and one somebody set to something undecided read the same and are
+    /// not the same reason: the first has no default this simulator can read,
+    /// and saying so of the second would be false on both counts.
+    #[must_use]
+    pub fn why_config_is_undecided(&self, module: &str, name: &str, written: &str) -> String {
+        if self.has_config(module, name) {
+            format!("`{written}` was set to a value that is itself undecided")
+        } else {
+            format!(
+                "`{written}` has no value: the spec gives it no default this simulator can \
+                 read, and nothing set it"
+            )
+        }
+    }
+
     /// Say what a call comes back as, replacing anything said before about
     /// the same call with the same arguments.
     ///

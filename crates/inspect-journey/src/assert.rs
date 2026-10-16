@@ -47,12 +47,17 @@ impl Walker<'_> {
             }
             Assertion::Within { needle, haystack } => {
                 let wanted = self.value_of(needle);
-                let inside = self.read(haystack);
+                let (inside, why) = self.read_explained(haystack);
                 let truth = match &inside {
                     Value::Set(items) => Truth::any(items.iter().map(|item| item.equals(&wanted))),
                     _ => Truth::Unknown,
                 };
-                (truth, Some(format!("{} is {}", haystack.as_written(), inside.render())))
+                let read = format!("{} is {}", haystack.as_written(), inside.render());
+                let detail = match why {
+                    Some(why) => format!("{read} — {why}"),
+                    None => read,
+                };
+                (truth, Some(detail))
             }
             Assertion::Fires { rule, negated } => self.fires(rule, *negated),
             Assertion::Exists { path, negated } => {

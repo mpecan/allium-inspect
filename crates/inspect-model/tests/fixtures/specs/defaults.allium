@@ -1,0 +1,113 @@
+-- allium: 3
+-- Issue #25: a config parameter whose default is a collection. The spec
+-- states `apps` is `{a, b}` unless somebody says otherwise, so a world starts
+-- with it in force and `Start` makes one thing per app without the journey
+-- restating the default. The same for strings, integers in a list, a scalar
+-- enumeration value, and the empty set.
+--
+-- `twice` repeats a member, and `Twice` requires it spelled the same way: the
+-- set a default holds and the set a rule writes are built alike. `listed` is
+-- written as a long default is, one member to a line with a note beside it
+-- and a comma after the last.
+--
+-- `chosen` is a set built from another parameter. Reading it would mean
+-- evaluating `favourite`, which the seed does not do, so it is left unset and
+-- a rule that iterates it says which parameter it could not read.
+
+enum App { a | b | c }
+
+entity Thing {
+    app: App
+}
+
+entity Note {
+    label: String
+}
+
+entity Slot {
+    size: Integer
+}
+
+entity Box {
+    open: Boolean
+}
+
+config {
+    apps: Set<App> = {a, b}
+    labels: Set<String> = {"alpha", "beta"}
+    sizes: List<Integer> = [3, 1]
+    favourite: App = c
+    nothing: Set<App> = {}
+    chosen: Set<App> = {a, favourite}
+    twice: Set<App> = {a, b, a}
+    listed: Set<App> = {
+        a, -- the first, with a comma, here
+        b
+        c, -- and a comma after the last
+    }
+}
+
+rule Start {
+    when: Start(box)
+    ensures:
+        for x in config.apps:
+            Thing.created(app: x)
+}
+
+rule Label {
+    when: Label(box)
+    ensures:
+        for l in config.labels:
+            Note.created(label: l)
+}
+
+rule Size {
+    when: Size(box)
+    ensures:
+        for s in config.sizes:
+            Slot.created(size: s)
+}
+
+rule Favour {
+    when: Favour(box)
+    ensures: Thing.created(app: config.favourite)
+}
+
+rule Empty {
+    when: Empty(box)
+    ensures:
+        for x in config.nothing:
+            Thing.created(app: x)
+}
+
+rule Choose {
+    when: Choose(box)
+    ensures:
+        for x in config.chosen:
+            Thing.created(app: x)
+}
+
+rule Twice {
+    when: Twice(box)
+    requires: config.twice = {a, b, a}
+    ensures: box.open = true
+}
+
+rule Shut {
+    when: Shut(box)
+    requires: box.open
+    ensures: Thing.created(app: a)
+}
+
+surface Panel {
+    facing box: Box
+    provides:
+        Start(box)
+        Label(box)
+        Size(box)
+        Favour(box)
+        Empty(box)
+        Choose(box)
+        Twice(box)
+        Shut(box)
+}

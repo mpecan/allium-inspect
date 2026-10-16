@@ -324,9 +324,8 @@ pub fn eval(expr: &Expr, env: &Env<'_>) -> Evaluation {
             // names as indistinguishable from a bug.
             None => Evaluation::unknown("`this` is not bound here", expr, env.source),
         },
-        Expr::SetLiteral { elements, .. } | Expr::ListLiteral { elements, .. } => {
-            literals::set_literal(elements, env)
-        }
+        Expr::SetLiteral { elements, .. } => literals::set_literal(elements, false, env),
+        Expr::ListLiteral { elements, .. } => literals::set_literal(elements, true, env),
         Expr::Where { source, condition, .. } => filtered(source, condition, env),
         Expr::With { source, predicate, .. } => filtered(source, predicate, env),
         Expr::Conditional { branches, else_body, .. } => {
@@ -522,14 +521,7 @@ fn member(whole: &Expr, object: &Expr, field: &Ident, env: &Env<'_>) -> Evaluati
         // would be false on both counts.
         return match env.world.config(env.module, field) {
             Value::Unknown => Evaluation::unknown(
-                if env.world.has_config(env.module, field) {
-                    format!("`config.{field}` was set to a value that is itself undecided")
-                } else {
-                    format!(
-                        "`config.{field}` has no value: the spec gives it no default this \
-                         simulator can read, and nothing set it"
-                    )
-                },
+                env.world.why_config_is_undecided(env.module, field, &format!("config.{field}")),
                 whole,
                 env.source,
             ),

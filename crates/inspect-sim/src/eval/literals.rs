@@ -75,10 +75,14 @@ fn unit_millis(unit: &str) -> Option<i64> {
 }
 
 /// `{a, b, c}`, and the ordered `[a, b, c]` beside it.
+///
+/// A set holds each member once — `{a, b, a}` is `{a, b}` — and a list keeps
+/// what it was given. [`Value::set_of`] is the one place a set is made from
+/// what a spec wrote, so a default and a rule spelled alike agree.
 #[must_use]
-pub fn set_literal(elements: &[Expr], env: &Env<'_>) -> Evaluation {
+pub fn set_literal(elements: &[Expr], ordered: bool, env: &Env<'_>) -> Evaluation {
     let mut unresolved = Vec::new();
-    let items = elements
+    let items: Vec<Value> = elements
         .iter()
         .map(|item| {
             let evaluated = super::eval(item, env);
@@ -86,7 +90,8 @@ pub fn set_literal(elements: &[Expr], env: &Env<'_>) -> Evaluation {
             evaluated.value
         })
         .collect();
-    Evaluation { value: Value::Set(items), unresolved }
+    let value = if ordered { Value::Set(items) } else { Value::set_of(items) };
+    Evaluation { value, unresolved }
 }
 
 #[cfg(test)]
@@ -94,7 +99,7 @@ mod tests {
     use allium_parser::ast::Ident;
 
     use super::*;
-    use crate::world::World;
+    use crate::{truth::Truth, world::World};
 
     fn env(world: &World) -> Env<'_> {
         Env::new(world, "m", "")
@@ -226,7 +231,7 @@ mod tests {
     fn a_set_literal_evaluates_its_elements() {
         let world = World::new();
         let elements = [literal("1"), literal("2")];
-        let evaluated = set_literal(&elements, &env(&world));
+        let evaluated = set_literal(&elements, false, &env(&world));
         assert_eq!(evaluated.value, Value::Set(vec![Value::Int(1), Value::Int(2)]));
         assert!(evaluated.unresolved.is_empty());
     }
@@ -238,14 +243,29 @@ mod tests {
             span: allium_parser::Span { start: 0, end: 1 },
             name: "absent".to_owned(),
         })];
-        let evaluated = set_literal(&elements, &env(&world));
+        let evaluated = set_literal(&elements, false, &env(&world));
         assert_eq!(evaluated.value, Value::Set(vec![Value::Unknown]));
         assert_eq!(evaluated.unresolved.len(), 1);
     }
 
     #[test]
+    fn a_set_literal_holds_a_repeat_once_and_a_list_keeps_it() {
+        // Issue #25: `{a, b, a}` is the set `{a, b}`, as the seed reads the
+        // same words in a default. `[1, 2, 1]` is three things in order.
+        let world = World::new();
+        let elements = [literal("1"), literal("2"), literal("1")];
+        let set = set_literal(&elements, false, &env(&world)).value;
+        assert_eq!(set, Value::Set(vec![Value::Int(1), Value::Int(2)]));
+        assert_eq!(set.equals(&Value::Set(vec![Value::Int(2), Value::Int(1)])), Truth::True);
+        assert_eq!(
+            set_literal(&elements, true, &env(&world)).value,
+            Value::Set(vec![Value::Int(1), Value::Int(2), Value::Int(1)])
+        );
+    }
+
+    #[test]
     fn an_empty_set_literal_is_an_empty_collection() {
         let world = World::new();
-        assert_eq!(set_literal(&[], &env(&world)).value, Value::Set(Vec::new()));
+        assert_eq!(set_literal(&[], false, &env(&world)).value, Value::Set(Vec::new()));
     }
 }
