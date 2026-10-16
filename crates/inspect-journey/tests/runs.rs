@@ -158,3 +158,31 @@ fn a_rule_guarded_by_an_undecided_staleness_is_undecided_and_says_why() {
     assert_eq!(verdict, Verdict::Undecided, "{why}");
     assert!(why.contains("`Run#1` has no `other` set"), "{why}");
 }
+
+#[test]
+fn a_reason_that_does_not_quote_its_expression_still_says_where() {
+    // The "— in `x`" suffix is dropped only when the reason already quotes
+    // `x`. `is_at_limit`'s reason is about a count, and says nothing of
+    // `open_loans` itself — without the suffix the line would not say which
+    // collection it meant. `is_late`'s names `window`, which is the
+    // expression, so the suffix would only repeat it.
+    let journeys = parse(
+        "journey J {
+    cast:
+        l: Loan
+        m: Member
+    1. look
+        then l.is_late = false
+        then m.is_at_limit = false
+}",
+    )
+    .expect("the journey parses");
+    let (graph, program, sources) = common::library(common::LENDING);
+    let result = walk(&journeys[0], &journeys, &graph, &program, &sources);
+    let (verdict, why) = line(&result, "then m.is_at_limit = false");
+    assert_eq!(verdict, Verdict::Undecided, "{why}");
+    assert!(why.ends_with("— in `open_loans`"), "says which collection: {why}");
+    let (verdict, why) = line(&result, "then l.is_late = false");
+    assert_eq!(verdict, Verdict::Undecided, "{why}");
+    assert_eq!(why, "l.is_late is unknown — `l` has no `window` set");
+}
