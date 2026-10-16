@@ -81,6 +81,8 @@ pub fn walk(
         created: Vec::new(),
         awaiting: None,
         landed: Vec::new(),
+        answered: Vec::new(),
+        refused_in_the_world: Vec::new(),
         cut_off: None,
         firings: 0,
         moved: false,
@@ -173,6 +175,14 @@ pub(crate) struct Walker<'a> {
     pub(crate) awaiting: Option<crate::answers::Awaiting>,
     /// The `where` answers that landed since the last clause, and on what.
     pub(crate) landed: Vec<crate::answers::Landed>,
+    /// Every answer `given` or a file's world put in force, and the line that
+    /// said it — so a later one about the same call can say what it replaced.
+    pub(crate) answered: Vec<crate::answers::FromTheStart>,
+    /// Lines of a file's world that answered a call with something that had
+    /// no value, and so put nothing in force. Kept past the walk that laid the
+    /// world out, because a journey continuing from it does not lay it out
+    /// again and would otherwise list the line `from the file`.
+    pub(crate) refused_in_the_world: Vec<usize>,
     /// A cascade since it that was cut off before it settled, and where. Kept
     /// apart from `undecided`: it names triggers still waiting, not a rule.
     pub(crate) cut_off: Option<String>,
@@ -355,7 +365,7 @@ impl Walker<'_> {
                         let detail = self.too_late(name, arguments);
                         let arguments: Vec<Value> =
                             arguments.iter().map(|term| self.value_of(term)).collect();
-                        self.world.answers.push(Answer { call: name.clone(), arguments, value });
+                        self.world.tell(Answer { call: name.clone(), arguments, value });
                         self.stipulated
                             .push(Stipulation { said: written, through: self.standing_on.clone() });
                         Outcome { line: *line, verdict: Verdict::Specified, about, detail }

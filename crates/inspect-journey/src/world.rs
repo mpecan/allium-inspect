@@ -51,6 +51,10 @@ impl Walker<'_> {
             }
         }
         self.place(&journey.cast, &journey.given, Told::Here);
+        // A world line refused as it was laid out put nothing in force, and
+        // a ledger line for it would be a receipt for nothing.
+        let refused = &self.refused_in_the_world;
+        self.inherited.retain(|line| !refused.contains(&line.line));
     }
 
     /// Lay out one set of names and one set of facts, in that order.
@@ -136,6 +140,16 @@ impl Walker<'_> {
                         Ok(()) => {}
                     }
                 }
+                // Answered once every field is written, below.
+                Given::Answer { .. } => {}
+            }
+        }
+        // Last, so an argument may read a field any line above or below set:
+        // `allowed(note.author)` names whoever `note: Note { author: ada }`
+        // made the author, wherever in `given` that line was written.
+        for given in given {
+            if let Given::Answer { answer, line } = given {
+                self.answer_from_the_start(answer, *line, told == Told::Here);
             }
         }
     }
@@ -448,7 +462,7 @@ fn ledger(
         .cast
         .iter()
         .map(|member| member.name.clone())
-        .chain(journey.given.iter().map(about))
+        .chain(journey.given.iter().filter_map(about))
         .collect();
 
     let entry = |said: String, line: usize, subject: &str| crate::run::Inherited {
@@ -459,8 +473,16 @@ fn ledger(
 
     let cast =
         shared.cast.iter().map(|member| entry(written_cast(member), member.line, &member.name));
-    let given =
-        shared.given.iter().map(|given| entry(written_given(given), given.line(), &about(given)));
+    // An answer is marked as the walk replaces it, in `answer_from_the_start`:
+    // its arguments are values, which the words alone do not settle.
+    let given = shared.given.iter().map(|given| match about(given) {
+        Some(subject) => entry(written_given(given), given.line(), &subject),
+        None => crate::run::Inherited {
+            said: written_given(given),
+            line: given.line(),
+            overridden: false,
+        },
+    });
     cast.chain(given).collect()
 }
 
@@ -470,13 +492,18 @@ fn ledger(
 /// overrides `config.x` in the world: two spellings of one switch. Anything
 /// `resolve` does not take as a parameter, a field path included, is about
 /// the path as written.
-fn about(given: &Given, spec: &SpecGraph) -> String {
+///
+/// Nothing, for an answer: `allowed(n.who)` is about whoever `n.who` is when
+/// the world is laid out, and a journey that moves `n.who` writes the same
+/// words about someone else. The walk marks the answer it actually replaced.
+fn about(given: &Given, spec: &SpecGraph) -> Option<String> {
     match given {
-        Given::Instance { name, .. } => name.clone(),
-        Given::Assign { path, .. } => config::resolve(spec, path).map_or_else(
+        Given::Instance { name, .. } => Some(name.clone()),
+        Given::Assign { path, .. } => Some(config::resolve(spec, path).map_or_else(
             |_| path.as_written(),
             |parameter| format!("{}/config.{}", parameter.module, parameter.name),
-        ),
+        )),
+        Given::Answer { .. } => None,
     }
 }
 
@@ -497,6 +524,9 @@ fn written_given(given: &Given) -> String {
         }
         Given::Assign { path, value, .. } => {
             format!("{} = {}", path.as_written(), value.as_written())
+        }
+        Given::Answer { answer, .. } => {
+            format!("{} = {}", answer.as_written(), answer.value.as_written())
         }
     }
 }

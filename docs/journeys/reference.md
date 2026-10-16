@@ -101,7 +101,7 @@ See [`evidence.md`](evidence.md) for the whole chain.
 
 ## `given` — what is already true
 
-Two forms.
+Three forms.
 
 **An assignment** sets a field on something already cast:
 
@@ -119,8 +119,36 @@ given:
     res: Reservation { member: ada, status: waiting }
 ```
 
-Both are *told*, not shown — nothing ran to make them true. That is the point of
+**An answer** says what a call the specification never defines comes back as,
+from the start — the same answer a [`stipulate`](#stipulate--say-it-rather-than-show-it)
+gives mid-journey, matched the same way:
+
+```
+given:
+    may_reserve(ada, book) = true
+```
+
+All three are *told*, not shown — nothing ran to make them true. That is the point of
 `given`: it is the starting position, and the journey is what happens next.
+
+An answer is listed with the journey's stipulations, because a field set in
+`given` is a position the spec describes and a black box answered is a policy
+it does not: `stipulated  may_reserve(ada, book) = true`. `stipulate` may
+lead a `given` line, as it leads one in a step, and changes nothing about what
+the line says. Answers are put in force after every field in the block is
+written, so `allowed(note.author)` reads the author whichever line set it. An
+argument that still has no value — `allowed(ada.team)` with no `team` set — or
+an answer that has none — `allowed(ada) = ada.team` — is **undecided**, says
+which term, and is not listed, in `given` or in a file's `world`: no call could
+ever be answered by it, and a ledger line for it would be a receipt for nothing.
+A later answer about the same call with the same arguments replaces an earlier
+one, so a `stipulate` in a step changes what `given` said rather than standing
+beside it, and of two such lines in one `given` only the later is listed.
+
+The line is listed as written — `may_reserve(ada, book) = true`, not the ids
+those names resolved to — the way a `world` lists its lines. A `stipulate` in a
+step lists the value it resolved to, because there the clock and the world have
+moved since the journey began.
 
 Values may be a number (`5`, `2_000_000`), a duration (`21.days`), a string
 (`"Ada"`), `true`, `false`, `null`, a set (`{a, b}`), a name the journey cast, or
@@ -137,7 +165,7 @@ given:
     repo.labels = {}
 ```
 
-What tells the two forms apart is an `=` before the first brace, not the brace:
+What tells an assignment from an instance is an `=` before the first brace, not the brace:
 `note: Message { body: "a = b" }` is still an instance.
 
 ### A word the spec does not declare
@@ -280,7 +308,10 @@ world {
 }
 ```
 
-Every journey below it starts there. `cast:` and `given:` and nothing else — a
+Every journey below it starts there — answers to black boxes included, which is
+usually the reason to write one: a permission predicate asked by every rule it
+guards is said once, here, rather than stipulated in the first step of every
+journey that reaches one. `cast:` and `given:` and nothing else — a
 world says who is there and how things stand; a step is something somebody
 *does*, and a world that could act would be a journey nobody named.
 
@@ -322,7 +353,13 @@ This is the one feature that can break the rule everything else here rests on:
 A step holding because of a line in another part of the file **is** passing
 invisibly. So a journey that inherits a world reports every line it inherited,
 where each was written, and which of them it went on to change — above its own
-stipulations, because the world was there first:
+stipulations, because the world was there first. An answer the world gives is
+listed here, `from the file  can(r, code) = true`, and a journey writing an
+answer about the same call with the same arguments overrides it. *The same
+arguments* means the same values once the world is laid out, not the same
+words: a world answering `can(r, r.level)` with `level` at 1 and a journey that
+sets `level` to 2 and answers `can(r, r.level)` again have answered two
+different calls, and the world's line is not marked:
 
 ```text
 TheCopyIsAlreadyGone  —  1 of 1 steps hold
@@ -960,7 +997,9 @@ stipulate ada.is_at_limit = false
 stipulate may_invite(chat, ada) = true
 ```
 
-Sets a value directly, mid-journey, the way `given` does at the start. Use it
+Sets a value directly, mid-journey, the way `given` does at the start (where a
+call [can be answered too](#given--what-is-already-true), and in a file's
+`world`, once for every journey). Use it
 when reaching a state honestly would take ten steps that are not what this
 journey is about. A configuration parameter is set the same way —
 `stipulate config.loan_limit = 1` — and checked the same way as

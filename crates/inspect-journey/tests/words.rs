@@ -254,6 +254,8 @@ fn the_fixtures_own_journeys_report_no_word() {
         ("facing", common::FACING),
         ("fanout", common::FANOUT),
         ("forms", LENDING),
+        ("given_answers", common::GRANTS),
+        ("given_answers_moved", common::GRANTS),
         ("grants", common::GRANTS),
         ("guards", common::GUARDS),
         ("lending", LENDING),

@@ -1235,3 +1235,64 @@ fn a_where_after_a_quoted_answer_is_split_where_it_begins() {
         ]
     );
 }
+
+/// Issue #19: a call in `given` is an answer, not a path to a name nobody
+/// bound. With or without a leading `stipulate`, which means the same there.
+#[test]
+fn a_call_in_given_is_an_answer() {
+    for written in ["allowed(b, code) = true", "stipulate allowed(b, code) = true"] {
+        let source = format!(
+            "journey J {{\n    cast:\n        b: Box\n    given:\n        {written}\n    1. one\n        \
+             then b.done = false\n}}\n"
+        );
+        let journeys = parse(&source).unwrap_or_else(|error| panic!("`{written}`: {error}"));
+        let Some(Given::Answer { answer, line: 5 }) = journeys[0].given.first() else {
+            panic!("`{written}` is an answer: {:#?}", journeys[0].given)
+        };
+        assert_eq!(answer.as_written(), "allowed(b, code)");
+        assert_eq!(answer.value, Term::Literal(Value::Bool(true)));
+    }
+}
+
+/// The file's world takes the same lines, which is the point of it: said once
+/// for every journey that reaches a rule guarded by the call.
+#[test]
+fn a_call_in_the_worlds_given_is_an_answer() {
+    let journeys = parse(
+        "world {\n    cast:\n        b: Box\n    given:\n        allowed(b) = true\n}\n\
+         journey J {\n    1. one\n        then b.done = false\n}\n",
+    )
+    .expect("parses");
+    let world = journeys[0].inherits.as_ref().expect("takes the world");
+    assert!(
+        matches!(world.given.first(), Some(Given::Answer { answer, .. }) if answer.call == "allowed"),
+        "{:#?}",
+        world.given
+    );
+}
+
+/// `stipulate` leading a path in `given` is the path, unchanged.
+#[test]
+fn stipulate_before_a_path_in_given_is_the_assignment() {
+    let journeys = parse(
+        "journey J {\n    cast:\n        b: Box\n    given:\n        stipulate b.done = true\n    \
+         1. one\n        then b.done = true\n}\n",
+    )
+    .expect("parses");
+    assert!(
+        matches!(journeys[0].given.first(), Some(Given::Assign { path, .. }) if path.as_written() == "b.done"),
+        "{:#?}",
+        journeys[0].given
+    );
+}
+
+#[test]
+fn an_unclosed_call_in_given_is_refused_with_the_line() {
+    let error = parse(
+        "journey J {\n    cast:\n        b: Box\n    given:\n        allowed(b = true\n    1. one\n        \
+         then b.done = true\n}\n",
+    )
+    .expect_err("an unclosed call");
+    assert_eq!(error.line, 5);
+    assert!(error.message.contains("opens a call and does not close it"), "{error}");
+}

@@ -57,9 +57,10 @@ pub(super) fn answered(
         // that defines it — where `this` is the instance it is asked of.
         Expr::Ident(called) => {
             if let Some(answer) = env.world.answer(&called.name, &given) {
-                return Evaluation { value: answer.clone(), unresolved };
+                return told(&called.name, answer, unresolved, whole, env);
             }
-            if let Some(answer) = answered_by_spelling(&called.name, &nodes, &evaluated, env) {
+            if let Some(answer) = answered_by_spelling(&called.name, whole, &nodes, &evaluated, env)
+            {
                 return answer;
             }
             match env.bindings.get("this") {
@@ -127,6 +128,7 @@ pub(super) fn answered(
 /// is kept only on an exact match.
 fn answered_by_spelling(
     name: &str,
+    whole: &Expr,
     nodes: &[&Expr],
     evaluated: &[Evaluation],
     env: &Env<'_>,
@@ -150,7 +152,31 @@ fn answered_by_spelling(
         return None;
     }
     let answer = env.world.answer(name, &spelled)?;
-    Some(Evaluation { value: answer.clone(), unresolved })
+    Some(told(name, answer, unresolved, whole, env))
+}
+
+/// What a stipulation said the call comes back as.
+///
+/// An answer that is itself unknown — a journey stipulating `can(r) = x.f`
+/// with `f` unset — settles nothing, and says so: passed through bare, the
+/// rule asking was undecided with no reason, which stipulation 1 calls
+/// indistinguishable from a bug.
+fn told(
+    name: &str,
+    answer: &Value,
+    unresolved: Vec<super::Unresolved>,
+    whole: &Expr,
+    env: &Env<'_>,
+) -> Evaluation {
+    if answer.holds_unknown() {
+        return Evaluation::unknown(
+            format!("the answer stipulated for `{name}` has no value"),
+            whole,
+            env.source,
+        )
+        .carrying(unresolved);
+    }
+    Evaluation { value: answer.clone(), unresolved }
 }
 
 /// Whether nothing in scope could give `word` a meaning of its own.

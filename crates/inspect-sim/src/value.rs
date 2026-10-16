@@ -96,6 +96,19 @@ impl Value {
         matches!(self, Value::Unknown)
     }
 
+    /// Unknown, or a set holding something unknown at any depth.
+    ///
+    /// `{x.f}` with `f` unset is not the set of one known thing, and two of
+    /// them are not equal because both say `Unknown` inside.
+    #[must_use]
+    pub fn holds_unknown(&self) -> bool {
+        match self {
+            Value::Unknown => true,
+            Value::Set(items) => items.iter().any(Value::holds_unknown),
+            _ => false,
+        }
+    }
+
     /// The value as a truth, for a bare expression used as a condition.
     ///
     /// Only a boolean is a condition. A non-empty string is not "truthy" here —

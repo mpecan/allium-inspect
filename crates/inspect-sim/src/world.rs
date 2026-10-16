@@ -211,7 +211,7 @@ impl World {
     /// question nobody actually asked.
     #[must_use]
     pub fn answer(&self, call: &str, arguments: &[Value]) -> Option<&Value> {
-        if arguments.iter().any(Value::is_unknown) {
+        if arguments.iter().any(Value::holds_unknown) {
             return None;
         }
         self.answers
@@ -243,6 +243,25 @@ impl World {
     #[must_use]
     pub fn has_config(&self, module: &str, name: &str) -> bool {
         self.config.contains_key(&format!("{module}.{name}")) || self.config.contains_key(name)
+    }
+
+    /// Say what a call comes back as, replacing anything said before about
+    /// the same call with the same arguments.
+    ///
+    /// Replacing, because the later of two answers is the one meant: a journey
+    /// that writes `allowed(b) = false` over a file's world saying `true`, or
+    /// stipulates again in a later step, has changed its mind. Kept beside the
+    /// first instead, the lookup found the first and the ledger listed the
+    /// second — a receipt for an answer no call was given.
+    pub fn tell(&mut self, answer: Answer) {
+        match self
+            .answers
+            .iter_mut()
+            .find(|said| said.call == answer.call && said.arguments == answer.arguments)
+        {
+            Some(said) => said.value = answer.value,
+            None => self.answers.push(answer),
+        }
     }
 
     /// Set a configuration parameter for `module`.
@@ -300,6 +319,43 @@ mod answer_tests {
     fn an_argument_nothing_settled_matches_nothing() {
         assert_eq!(world().answer("may_invite", &[Value::Int(1), Value::Unknown]), None);
         assert_eq!(world().answer("may_invite", &[Value::Unknown, Value::Unknown]), None);
+    }
+
+    /// The later of two answers about one call is the one in force, and the
+    /// first is gone rather than kept beside it.
+    #[test]
+    fn telling_again_about_the_same_call_replaces_the_answer() {
+        let mut world = world();
+        world.tell(Answer {
+            call: "may_invite".to_owned(),
+            arguments: vec![Value::Int(1), Value::Int(2)],
+            value: Value::Bool(false),
+        });
+        assert_eq!(
+            world.answer("may_invite", &[Value::Int(1), Value::Int(2)]),
+            Some(&Value::Bool(false))
+        );
+        assert_eq!(world.answers.len(), 1);
+    }
+
+    /// About other arguments is another answer, and both stand.
+    #[test]
+    fn telling_about_other_arguments_keeps_both() {
+        let mut world = world();
+        world.tell(Answer {
+            call: "may_invite".to_owned(),
+            arguments: vec![Value::Int(1), Value::Int(9)],
+            value: Value::Bool(false),
+        });
+        assert_eq!(world.answers.len(), 2);
+        assert_eq!(
+            world.answer("may_invite", &[Value::Int(1), Value::Int(2)]),
+            Some(&Value::Bool(true))
+        );
+        assert_eq!(
+            world.answer("may_invite", &[Value::Int(1), Value::Int(9)]),
+            Some(&Value::Bool(false))
+        );
     }
 
     #[test]

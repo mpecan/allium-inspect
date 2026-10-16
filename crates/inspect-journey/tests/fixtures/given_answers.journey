@@ -1,0 +1,98 @@
+-- Issue #19: a call stipulated in `given` or in the file's `world`.
+--
+-- `can(repo, code)` is a black box for policy. A spec set asks it from every
+-- rule it guards, and `world` exists to say the answer once rather than in the
+-- first step of every journey that reaches one. Read as a name, the line was
+-- reported unbound and the answer was never given.
+
+world {
+    cast:
+        r: Repo
+    given:
+        r.flag = false
+        can(r, code) = true
+}
+
+-- The issue's reproduction: the world says it, the journey only acts.
+journey TheWorldAnswers {
+    1. a rule asks what the world answered
+        r does Grant(r) on Settings
+        then r.flag = true
+}
+
+-- The journey's own `given` says otherwise, and its answer is the one in force.
+journey TheJourneyOverrules {
+    given:
+        can(r, code) = false
+    1. the answer the journey gave is the one asked
+        r cannot do Grant(r) on Settings
+        then r.flag = false
+}
+
+-- `stipulate` may lead a `given` line, as it does in a step, and changes
+-- nothing about what the line says.
+journey StipulateInGiven {
+    given:
+        stipulate can(r, code) = false
+    1. the answer is in force from the start
+        r cannot do Grant(r) on Settings
+}
+
+-- A step's stipulation about the same call replaces the starting answer
+-- rather than standing beside it.
+journey AStepChangesItsMind {
+    1. permission withdrawn
+        stipulate can(r, code) = false
+        r cannot do Grant(r) on Settings
+}
+
+-- An argument with no value answers no call the spec could ask, so it is
+-- refused and not listed.
+journey AnArgumentWithNoValue {
+    given:
+        can(r.level, code) = true
+    1. the world's answer still stands
+        r does Grant(r) on Settings
+}
+
+-- Answers are put in force after every field line, so an argument may read a
+-- field a later line sets.
+journey AnArgumentReadsALaterLine {
+    given:
+        can(r, r.level) = true
+        r.level = 3
+    1. the derived permission reads the answer
+        r does Probe(r) on Settings
+        then r.flag = true
+}
+
+-- An answer about other arguments is another answer: the world's still holds.
+journey AnotherRepoIsRefused {
+    cast:
+        s: Repo
+    given:
+        can(s, code) = false
+    1. the world's answer for `r` is the one asked
+        r does Grant(r) on Settings
+        then r.flag = true
+}
+
+-- An answer with no value answers nothing, so it is refused and not listed,
+-- and the world's own answer still stands.
+journey AValueWithNoValue {
+    given:
+        can(r, code) = r.level
+    1. the world's answer still stands
+        r does Grant(r) on Settings
+        then r.flag = true
+}
+
+-- The later of two answers in one block is the one in force, and the earlier
+-- is not left listed beside it.
+journey TwiceInGiven {
+    given:
+        can(r, code) = true
+        can(r, code) = false
+    1. the later answer is asked
+        r cannot do Grant(r) on Settings
+}

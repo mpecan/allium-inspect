@@ -184,6 +184,10 @@ pub(crate) fn given(given: &Given, known: &dyn Knows, graph: &SpecGraph, notes: 
         Given::Assign { path, value, line } => {
             written(path, Written { value, into: None, line: *line }, known, graph, notes);
         }
+        // A call's arguments and answer are matched against what the spec
+        // spells in that call, not against states — as in a step's
+        // `stipulate`.
+        Given::Answer { .. } => {}
     }
 }
 

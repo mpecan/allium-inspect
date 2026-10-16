@@ -140,13 +140,24 @@ pub enum Given {
     Instance { name: String, type_expr: String, fields: Vec<(String, Term)>, line: usize },
     /// `ada.status = active`
     Assign { path: Path, value: Term, line: usize },
+    /// `allowed(b) = true`: what a call the specification never defines
+    /// answers, from the start.
+    ///
+    /// The same answer a `stipulate` gives inside a step, said once for the
+    /// whole journey — or, in a file's `world`, for every journey that takes
+    /// it. A black box for policy is asked by every rule it guards, and
+    /// repeating the answer in the first step of every journey that reaches
+    /// one is the duplication `world` exists to remove.
+    Answer { answer: Where, line: usize },
 }
 
 impl Given {
     #[must_use]
     pub fn line(&self) -> usize {
         match self {
-            Given::Instance { line, .. } | Given::Assign { line, .. } => *line,
+            Given::Instance { line, .. }
+            | Given::Assign { line, .. }
+            | Given::Answer { line, .. } => *line,
         }
     }
 }

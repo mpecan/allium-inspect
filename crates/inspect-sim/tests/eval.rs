@@ -2296,6 +2296,46 @@ fn a_stipulation_naming_the_same_word_answers_a_call_with_an_unbound_argument() 
     }
 }
 
+/// A stipulated answer that is itself unknown settles nothing, and the call
+/// says so: an unknown with no reason is indistinguishable from a bug.
+#[test]
+fn a_stipulated_answer_with_no_value_says_why_the_call_is_undecided() {
+    let mut world = library();
+    world.answers.push(inspect_sim::world::Answer {
+        call: "can".to_owned(),
+        arguments: vec![Value::Ref(EntityId::new("Copy", 1)), Value::Enum("code".to_owned())],
+        value: Value::Unknown,
+    });
+    // `code` read as its spelling, and `how` bound to the state itself: the
+    // two ways a stipulation is matched.
+    let env = env(&world, "lending")
+        .bind("repo", Value::Ref(EntityId::new("Copy", 1)))
+        .bind("how", Value::Enum("code".to_owned()));
+    for word in ["code", "how"] {
+        let evaluated = eval(&can(word), &env);
+        assert_eq!(evaluated.truth(), Truth::Unknown, "{word}");
+        let said: Vec<String> = evaluated.unresolved.into_iter().map(|note| note.reason).collect();
+        assert!(
+            said.iter().any(|why| why == "the answer stipulated for `can` has no value"),
+            "{word}: {said:?}"
+        );
+    }
+}
+
+/// An argument that holds something nobody knows, inside a set, is as
+/// unsettled as one that is unknown outright: `can({x.f}, code)` with `x.f`
+/// unset is not a question about the set of one unknown thing.
+#[test]
+fn an_argument_holding_an_unknown_matches_no_stipulation() {
+    let mut world = library();
+    world.answers.push(inspect_sim::world::Answer {
+        call: "can".to_owned(),
+        arguments: vec![Value::Set(vec![Value::Unknown])],
+        value: Value::Bool(true),
+    });
+    assert_eq!(world.answer("can", &[Value::Set(vec![Value::Unknown])]), None);
+}
+
 /// Another word is another call. Answering it would be the simulator inventing
 /// a policy nobody stated.
 #[test]

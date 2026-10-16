@@ -1,4 +1,5 @@
-//! What a journey says a call answers for an instance an act is about to make.
+//! What a journey says a call answers: from the start, in `given` or a file's
+//! `world` (issue #19), and for an instance an act is about to make.
 //!
 //! ```text
 //! repo does Open(repo, "crash") on Tracker
@@ -20,12 +21,32 @@
 //! the act makes nothing of that kind, nothing was answered and nothing is
 //! listed: a receipt for an answer no call could have read is a false one.
 
-use inspect_sim::{step::RuleOutcome, value::EntityId, world::Answer};
+use inspect_sim::{Value, step::RuleOutcome, value::EntityId, world::Answer};
 
 use crate::{
+    Outcome,
     journey::{Cast, Term, Where},
     run::{Stipulation, Undecided, Walker},
 };
+
+/// An answer `given` or a file's world put in force, by what it resolved to.
+///
+/// Kept by resolved arguments rather than by the words: `allowed(n.who)`
+/// written in the world while `n.who` was `b` is an answer about `b`, and the
+/// same words in a journey that moved `n.who` to `c` are about `c` — another
+/// call, which overrides nothing.
+#[derive(Debug, Clone)]
+pub(crate) struct FromTheStart {
+    call: String,
+    arguments: Vec<Value>,
+    /// The line that said it, in the file.
+    line: usize,
+    /// Whether the file's world said it rather than a journey.
+    by_the_file: bool,
+    /// The journey whose `given` said it, when one did, and the ledger line.
+    standing_on: Option<String>,
+    said: String,
+}
 
 /// A `where` answer that landed, and what it landed on.
 #[derive(Debug, Clone)]
@@ -135,7 +156,7 @@ impl Walker<'_> {
             let arguments = answer.arguments.iter().map(|term| self.value_of(term)).collect();
             let value = self.value_of(&answer.value);
             let said = format!("{} = {}", answer.as_written(), value.render());
-            self.world.answers.push(Answer { call: answer.call.clone(), arguments, value });
+            self.world.tell(Answer { call: answer.call.clone(), arguments, value });
             self.landed.push(Landed {
                 call: answer.call.clone(),
                 said: said.clone(),
@@ -143,6 +164,90 @@ impl Walker<'_> {
                 id: id.clone(),
                 turn: self.firings,
             });
+            self.stipulated.push(Stipulation { said, through: self.standing_on.clone() });
+        }
+    }
+
+    /// Put a `given` answer in force, or say why it could not be.
+    ///
+    /// Listed once it lands, like every stipulation, when `listed` — the
+    /// journey wrote it. The file's world lists its own lines `from the file`.
+    ///
+    /// An argument or an answer with no value is refused rather than
+    /// recorded. The simulator never matches an unknown argument, and an
+    /// unknown answer settles nothing — either way the ledger would list a
+    /// line that answers nothing, two lines above a rule saying it was not
+    /// answered. A refused world line is left out of the inherited ledger, by
+    /// [`Self::lay_out`], in every journey that takes the world.
+    ///
+    /// An answer replacing one the file's world gave marks that world line
+    /// overridden; one replacing an earlier line in the same journey's
+    /// `given` takes its place in the ledger. Decided by what was replaced,
+    /// not by the words, which may read the same and be about another value.
+    pub(crate) fn answer_from_the_start(&mut self, answer: &Where, line: usize, listed: bool) {
+        let arguments: Vec<Value> =
+            answer.arguments.iter().map(|term| self.value_of(term)).collect();
+        let value = self.value_of(&answer.value);
+        let unsettled = answer
+            .arguments
+            .iter()
+            .zip(&arguments)
+            .find(|(_, value)| value.holds_unknown())
+            .map(|(term, _)| (term, "answers no call the specification can ask"))
+            .or_else(|| {
+                value.holds_unknown().then_some((&answer.value, "gives the call no answer"))
+            });
+        if let Some((term, consequence)) = unsettled {
+            self.notes.push(Outcome {
+                line,
+                verdict: crate::check::Verdict::Undecided,
+                about: format!("given {}", answer.as_written()),
+                detail: Some(format!(
+                    "`{}` has no value when the world is laid out, so this {consequence}",
+                    term.as_written()
+                )),
+            });
+            if !listed {
+                self.refused_in_the_world.push(line);
+            }
+            return;
+        }
+        let said = format!("{} = {}", answer.as_written(), answer.value.as_written());
+        self.world.tell(Answer { call: answer.call.clone(), arguments: arguments.clone(), value });
+        let replaced: Vec<FromTheStart> = self
+            .answered
+            .iter()
+            .filter(|earlier| earlier.call == answer.call && earlier.arguments == arguments)
+            .cloned()
+            .collect();
+        for earlier in replaced {
+            if earlier.by_the_file {
+                // Only this journey's own lines mark the world's, as with a
+                // field: the ledger is about what *this* journey changed.
+                if listed {
+                    for inherited in &mut self.inherited {
+                        if inherited.line == earlier.line {
+                            inherited.overridden = true;
+                        }
+                    }
+                }
+            } else if earlier.standing_on == self.standing_on
+                && let Some(gone) = self.stipulated.iter().position(|told| {
+                    told.said == earlier.said && told.through == earlier.standing_on
+                })
+            {
+                self.stipulated.remove(gone);
+            }
+        }
+        self.answered.push(FromTheStart {
+            call: answer.call.clone(),
+            arguments,
+            line,
+            by_the_file: !listed,
+            standing_on: self.standing_on.clone(),
+            said: said.clone(),
+        });
+        if listed {
             self.stipulated.push(Stipulation { said, through: self.standing_on.clone() });
         }
     }
