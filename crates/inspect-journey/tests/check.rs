@@ -465,7 +465,9 @@ fn an_instance_a_step_catches_can_act_in_the_next_one() {
         ada does MemberBorrows(ada, copy) on MemberShelf
 }",
     );
+    // `title` and `medium` are words nobody cast, and are remarked on as such;
+    // what this is about is that `ada`, whom the step caught, is not.
     let strangers: Vec<_> =
-        reported.iter().filter(|(_, message)| message.contains("is nobody")).collect();
+        reported.iter().filter(|(_, message)| message.contains("`ada` is nobody")).collect();
     assert!(strangers.is_empty(), "{reported:#?}");
 }

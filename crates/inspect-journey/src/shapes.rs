@@ -238,18 +238,25 @@ pub fn notes_outside_steps(journey: &Journey, notes: &[check::Note]) -> Vec<Outc
 /// What a journey line outside the steps is about, for reporting.
 ///
 /// The check reports a line and a message; a reader needs to know which part
-/// of the journey the line *was*. Cast and `given` are the only two places a
-/// note can land outside a step, so those are the two it names.
+/// of the journey the line *was*. Cast and `given` — the journey's own or its
+/// file's world — are the only places a note can land outside a step, so those
+/// are the ones it names.
 fn describes(journey: &Journey, line: usize) -> String {
     if let Some(member) = journey.cast.iter().find(|member| member.line == line) {
         return format!("cast {}: {}", member.name, member.type_expr);
     }
-    if let Some(crate::journey::Given::Instance { name, type_expr, .. }) =
-        journey.given.iter().find(|given| given.line() == line)
-    {
-        return format!("given {name}: {type_expr}");
+    // The file's world too: the checker reads a word the world writes, and a
+    // note about one is a note about a `given` line like any other.
+    let world = journey.inherits.as_ref().map(|shared| shared.given.as_slice()).unwrap_or_default();
+    match journey.given.iter().chain(world).find(|given| given.line() == line) {
+        Some(crate::journey::Given::Instance { name, type_expr, .. }) => {
+            format!("given {name}: {type_expr}")
+        }
+        Some(crate::journey::Given::Assign { path, value, .. }) => {
+            format!("given {} = {}", path.as_written(), value.as_written())
+        }
+        None => format!("line {line}"),
     }
-    format!("line {line}")
 }
 
 /// Whether the world stopped changing on its own.

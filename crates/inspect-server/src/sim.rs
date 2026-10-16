@@ -120,7 +120,7 @@ fn entities(graph: &inspect_model::SpecGraph) -> Vec<EntityChoice> {
                     .map(|field| FieldChoice {
                         name: field.name.clone(),
                         type_expr: field.type_expr.clone(),
-                        states: graph.states_of(field).to_vec(),
+                        states: graph.states_of(&node.module, field).to_vec(),
                         derived: field.derived,
                     })
                     .collect(),

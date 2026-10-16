@@ -1,0 +1,38 @@
+-- allium: 3
+-- queue.allium
+--
+-- Another module's `Status` and `Item`, with other states. `open` is a state
+-- of this module's, and of nothing in `drafts.allium`.
+
+use "./drafts.allium" as drafts
+
+enum Status { open | closed }
+
+entity Issue {
+    status: Status
+    page: drafts/Page?
+}
+
+entity Item {
+    stage: open | closed
+    done: Boolean
+}
+
+rule Close {
+    when: Close(issue)
+    requires: issue.status = open
+    ensures: issue.status = closed
+}
+
+rule Finish {
+    when: Finish(item)
+    requires: item.stage = open
+    ensures: item.done = true
+}
+
+surface Desk {
+    facing issue: Issue
+    provides:
+        Close(issue)
+        Finish(item)
+}

@@ -354,11 +354,13 @@ fn a_state_no_enumeration_declares_is_reported_by_the_checker() {
 }
 
 /// A word no enumeration declares, handed to a rule that only *stores* it, is
-/// not reported: nothing is ever asked to match it. `PersonCreatesGroup(she,
-/// "Bruno", genesis, …)` is this shape, and reporting it stopped a step the
-/// spec supports — and every step after it that needed the group.
+/// not a reason to stop: nothing is ever asked to match it.
+/// `PersonCreatesGroup(she, "Bruno", genesis, …)` is this shape, and reporting
+/// it as unspecified stopped a step the spec supports — and every step after
+/// it that needed the group. It is still a word nobody cast and nothing
+/// declares, so it is a remark: worth a look, and walked.
 #[test]
-fn a_word_a_rule_only_stores_is_not_reported() {
+fn a_word_a_rule_only_stores_is_a_remark_and_not_a_stop() {
     let source = journey(
         "    2. bea reviews it
         bea does MemberReviewsHold(hold, bea) on HoldReview
@@ -368,10 +370,31 @@ fn a_word_a_rule_only_stores_is_not_reported() {
     let journeys = parse(&source).expect("parses");
     let (graph, program, _) = common::library(DESK);
     let notes = check(&journeys[0], &journeys, &graph, &program);
-    assert!(
-        !notes.iter().any(|note| note.message.contains("no state the spec declares")),
-        "{notes:#?}"
+    remarked_only(&notes, "somebody", "MemberPlacesHold");
+}
+
+/// A remark about `word` handed to `trigger`, and nothing that would stop it.
+fn remarked_only(notes: &[inspect_journey::Note], word: &str, trigger: &str) {
+    assert!(notes.iter().all(|note| note.verdict == Verdict::Remark), "{notes:#?}");
+    let named = format!("`{word}`");
+    let remark = notes.iter().find(|note| note.message.contains(&named));
+    let message = remark.map(|note| note.message.as_str()).unwrap_or_default();
+    assert!(message.contains(&format!("`{trigger}` is handed the bare word")), "{notes:#?}");
+}
+
+/// A capitalised word is a collection, which is the walk's to resolve, and
+/// not a word nobody cast: handed to a rule that only stores it, it is not
+/// remarked on.
+#[test]
+fn a_collection_handed_to_an_act_is_not_remarked_on() {
+    let source = journey(
+        "    2. somebody places another
+        ada does MemberPlacesHold(Members) on HoldReview",
     );
+    let journeys = parse(&source).expect("parses");
+    let (graph, program, _) = common::library(DESK);
+    let notes = check(&journeys[0], &journeys, &graph, &program);
+    assert!(!notes.iter().any(|note| note.message.contains("`Members`")), "{notes:#?}");
 }
 
 /// Somebody the journey cast, passed where a rule compares states, is who
@@ -393,7 +416,8 @@ fn a_cast_name_where_a_rule_compares_states_is_not_reported() {
 
 /// Only the rules on *this* act's trigger count. `WithdrawHold` compares its
 /// second parameter against states, and `ReviewHold`'s second is a reviewer —
-/// so an undeclared word there is somebody nobody cast, not a misspelt state.
+/// so an undeclared word there is somebody nobody cast, not a misspelt state,
+/// and is remarked on rather than reported as unspecified.
 #[test]
 fn a_rule_on_another_trigger_does_not_make_a_word_a_state() {
     let source = journey(
@@ -403,10 +427,7 @@ fn a_rule_on_another_trigger_does_not_make_a_word_a_state() {
     let journeys = parse(&source).expect("parses");
     let (graph, program, _) = common::library(DESK);
     let notes = check(&journeys[0], &journeys, &graph, &program);
-    assert!(
-        !notes.iter().any(|note| note.message.contains("no state the spec declares")),
-        "{notes:#?}"
-    );
+    remarked_only(&notes, "stranger", "MemberReviewsHold");
 }
 
 /// And a declared one is not, nor is somebody the journey cast.

@@ -12,8 +12,10 @@
 //! that differs from the surface's own actor — a surface facing a
 //! `membership/Member` and an act taking an `identity/Identity` is either a
 //! small inconsistency or a person being both, and a checker that picks is the
-//! same failure as a simulator that guesses. And it does not check anything
-//! about values, which is the runner's job and needs a world.
+//! same failure as a simulator that guesses. And it does not check values,
+//! which is the runner's job and needs a world — with one exception that needs
+//! none: a bare word, which the walk would read as a state, is checked against
+//! the states the spec declares (`crate::words`, `crate::states`).
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -24,7 +26,10 @@ use inspect_model::{
     graph::{NodeDetail, SurfaceDetail},
 };
 
-use crate::journey::{Cast, Clause, Given, Journey, Step};
+use crate::{
+    journey::{Cast, Clause, Given, Journey, Step},
+    words::{self, Written},
+};
 
 /// What the spec had to say about one line of a journey.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,10 +99,55 @@ pub fn check(
             notes.push(note);
         }
     }
+    // Every value `given` writes, the file's world's included: the walk lays
+    // both out, and a misspelt state in the world is the worst place for one
+    // to hide.
+    let world = journey.inherits.as_ref().map(|shared| shared.given.as_slice()).unwrap_or_default();
+    for given in world.iter().chain(&journey.given) {
+        check_given(given, &known, graph, &mut notes);
+    }
     for step in &journey.steps {
         check_step(step, graph, program, &mut known, &mut notes);
     }
     notes
+}
+
+/// The words one `given` line writes, against the fields it writes them to.
+fn check_given(given: &Given, known: &Names, graph: &SpecGraph, notes: &mut Vec<Note>) {
+    let knows = |name: &str| known.knows(name);
+    match given {
+        Given::Instance { type_expr, fields, line, .. } => {
+            for (field, value) in fields {
+                let into = words::field_at(graph, type_expr, std::slice::from_ref(field));
+                words::check(Written { value, into, line: *line }, &knows, graph, notes);
+            }
+        }
+        Given::Assign { path, value, line } => {
+            check_written(path, Written { value, into: None, line: *line }, known, graph, notes);
+        }
+    }
+}
+
+/// A word written into `path` — by `given`, `stipulate` or compared in a
+/// `then` — against the field `path` ends on.
+///
+/// `config` is the walk's: it checks a value against the parameter's declared
+/// type, which says more than any state could.
+fn check_written(
+    path: &crate::journey::Path,
+    written: Written<'_, '_>,
+    known: &Names,
+    graph: &SpecGraph,
+    notes: &mut Vec<Note>,
+) {
+    if crate::config::is_config(path) {
+        return;
+    }
+    let into = known
+        .types
+        .get(&path.root)
+        .and_then(|type_expr| words::field_at(graph, type_expr, &path.segments));
+    words::check(Written { into, ..written }, &|name| known.knows(name), graph, notes);
 }
 
 /// Every name a journey has bound so far, and where.
@@ -227,14 +277,25 @@ fn check_step(
                         message: format!("no rule called `{rule}`"),
                     });
                 }
-                crate::journey::Assertion::Within { haystack, .. } => {
+                crate::journey::Assertion::Within { needle, haystack } => {
                     check_collection(haystack, *line, known, graph, notes);
+                    let written = Written { value: needle, into: None, line: *line };
+                    words::check(written, &|name| known.knows(name), graph, notes);
                 }
-                crate::journey::Assertion::Compare { left, .. } => {
+                crate::journey::Assertion::Compare { left, right, .. } => {
                     check_field(left, *line, known, graph, notes);
+                    let written = Written { value: right, into: None, line: *line };
+                    check_written(left, written, known, graph, notes);
                 }
                 _ => {}
             },
+            // A call's arguments and answer are matched against what the spec
+            // spells in that call, not against states: `can(r, code)` names a
+            // word no enumeration need declare.
+            Clause::Stipulate { subject: crate::journey::Subject::Path(path), value, line } => {
+                let written = Written { value, into: None, line: *line };
+                check_written(path, written, known, graph, notes);
+            }
             Clause::Stipulate { .. } | Clause::After { .. } => {}
         }
     }
@@ -265,22 +326,10 @@ fn check_field(
 ) {
     let [field] = path.segments.as_slice() else { return };
     let Some(type_expr) = known.types.get(&path.root) else { return };
-
-    // Qualified names carry their module, and an optional carries a `?`. The
-    // module counts: two modules may each declare an `Order`, with different
-    // fields, and `warehouse/Order` is the one the journey said.
-    let written = type_expr.trim_end_matches('?');
-    let (module, bare) = written.rsplit_once('/').map_or((None, written), |(m, b)| (Some(m), b));
-    let Some(detail) = graph
-        .nodes
-        .iter()
-        .filter(|node| matches!(node.kind, NodeKind::Entity | NodeKind::Value))
-        .filter(|node| module.is_none_or(|module| node.module == module))
-        .find(|node| node.name == bare)
-        .and_then(|node| node.detail.as_entity())
+    // An actor, a variant, or something this graph has no fields for. A name
+    // the spec does not have at all is `missing_type`'s to report.
+    let Some(words::Declared { name: bare, detail, .. }) = words::fields_of(graph, type_expr)
     else {
-        // An actor, a variant, or something this graph has no fields for. A
-        // name the spec does not have at all is `missing_type`'s to report.
         return;
     };
 

@@ -554,8 +554,10 @@ fn a_field_typed_by_a_named_enum_is_set_to_the_state_the_rule_names() {
 }
 
 /// And still checked rather than accepted on sight. A state the enumeration
-/// does not have must stay unknown and be reported, or a misspelling becomes
-/// a state nothing in the spec mentions.
+/// does not have must be reported, or a misspelling becomes a state nothing in
+/// the spec mentions. It used to be compared and come back *refused* — the
+/// spec saying no to a word it has never heard of — and is now unspecified,
+/// before anything is compared, naming the states the field does declare.
 #[test]
 fn a_state_no_enumeration_declares_is_still_unknown() {
     let result = walked(
@@ -571,7 +573,10 @@ fn a_state_no_enumeration_declares_is_still_unknown() {
 }",
     );
     let seen = &result.steps[0].outcomes[1];
-    assert_eq!(seen.verdict, Verdict::Refused, "{seen:?}");
+    assert_eq!(seen.verdict, Verdict::Unspecified, "{seen:?}");
+    let detail = seen.detail.as_deref().unwrap_or_default();
+    assert!(detail.contains("`papyrus` is no state of `Reservation.wanted_as`"), "{detail}");
+    assert!(detail.contains("print, audio"), "{detail}");
 }
 
 // --- one journey continuing from another ----------------------------------

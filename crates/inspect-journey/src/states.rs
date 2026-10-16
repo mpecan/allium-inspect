@@ -11,8 +11,8 @@
 //! over a word.
 //!
 //! So the checker says so, before anything is walked — and only then. Both
-//! halves have to hold, because each alone has a false positive a real spec set
-//! trips over at once:
+//! halves have to hold for it to be **unspecified**, because each alone has a
+//! false positive a real spec set trips over at once:
 //!
 //! - *No enumeration declares it.* A word that is a state somewhere is very
 //!   likely the state meant, and a trigger's parameters carry no types to say
@@ -20,7 +20,13 @@
 //! - *The rule compares that parameter against states.* `PersonCreatesGroup(
 //!   she, "Bruno", genesis, …)` hands an unbound word to a rule that only
 //!   stores it, and nothing in that rule is ever asked to match it. Reporting
-//!   it would stop a step the spec supports.
+//!   it as unspecified would stop a step the spec supports.
+//!
+//! A word that holds only the first half is still a word nobody cast and
+//! nothing declares, and is the same word `given` and `then` report
+//! (`crate::words`). It is a **remark**: worth a look — it is usually a
+//! misspelt name or a state the spec has not declared yet — and walked, since
+//! no rule on the act has to match it.
 
 use std::collections::BTreeSet;
 
@@ -30,6 +36,7 @@ use inspect_model::{NodeKind, Program, RuleAst, SpecGraph, graph::TriggerSource,
 use crate::{
     check::{Note, Verdict},
     journey::Term,
+    words::hint,
 };
 
 /// What the checker needs to say whether one act names a state nobody has.
@@ -54,21 +61,37 @@ pub(crate) fn check(
         if !path.segments.is_empty() || knows(&path.root) {
             continue;
         }
-        if declared.get_or_insert_with(|| graph.declared_states()).contains(path.root.as_str()) {
+        let declared = declared.get_or_insert_with(|| graph.declared_states());
+        if declared.contains(path.root.as_str()) {
             continue;
         }
+        let word = path.root.as_str();
         let Some((rule, parameter, states)) = compared(act.trigger, position, graph, program)
         else {
+            // A capitalised word is a collection, which is the walk's.
+            if word.chars().next().is_some_and(char::is_uppercase) {
+                continue;
+            }
+            notes.push(Note {
+                line: act.line,
+                verdict: Verdict::Remark,
+                message: format!(
+                    "`{word}` is nobody in this journey and no state the spec declares, so `{}` \
+                     is handed the bare word{}",
+                    act.trigger,
+                    hint(word, declared.iter().copied())
+                ),
+            });
             continue;
         };
         notes.push(Note {
             line: act.line,
             verdict: Verdict::Unspecified,
             message: format!(
-                "`{}` is no state the spec declares, and `{rule}` compares `{parameter}` against \
-                 states — {} — so it can never match",
-                path.root,
-                states.into_iter().collect::<Vec<_>>().join(", ")
+                "`{word}` is no state the spec declares, and `{rule}` compares `{parameter}` \
+                 against states — {} — so it can never match{}",
+                states.iter().map(String::as_str).collect::<Vec<_>>().join(", "),
+                hint(word, states.iter().map(String::as_str))
             ),
         });
     }

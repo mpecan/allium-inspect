@@ -124,19 +124,75 @@ Both are *told*, not shown — nothing ran to make them true. That is the point 
 
 Values may be a number (`5`, `2_000_000`), a duration (`21.days`), a string
 (`"Ada"`), `true`, `false`, `null`, a set (`{a, b}`), a name the journey cast, or
-a bare word, which is read as a state the spec declares.
+a bare word, which is read as a state the spec declares — and is checked
+against the spec before anything runs, see [a word the spec does not
+declare](#a-word-the-spec-does-not-declare).
 
 A set is written on one line, and may be empty:
 
 ```
 given:
     repo.tags = {"a", "b"}
-    repo.owners = {ada, bruno}
+    repo.owners = {ada, bob}
     repo.labels = {}
 ```
 
 What tells the two forms apart is an `=` before the first brace, not the brace:
 `note: Message { body: "a = b" }` is still an instance.
+
+### A word the spec does not declare
+
+Nothing in the grammar tells a state apart from somebody the journey cast:
+`copy.status = available` and `loan.member = ada` are the same shape. The walk
+decides — a name the journey bound is what it is bound to, and any other word
+is the state it spells. So before anything runs, every such word is checked
+against the states the spec declares, the way the simulator checks a word one
+of the spec's own rules hands on:
+
+- **Written into a field the checker can name** — in `given`, in an inline
+  instance, in `stipulate <path> = …`, or on the right of a `then` comparison —
+  the word must be one of *that field's* states: its inline `open | returned`,
+  or the values of the enumeration it is typed by. The field is followed hop
+  by hop from the type the journey cast the name as, as long as each hop is an
+  entity or value type the spec declares. The enumeration's name is read in
+  the module that declares the field: two modules may each have an `enum
+  Status`, and an issue's `status` takes its own module's values, not the first
+  `Status` in the set. Where a name could mean either and nothing says which,
+  the field's states count as unknown, and the next rule applies.
+- **Anywhere else** — a field typed by an entity, a `String`, a collection, a
+  path the checker cannot follow — any state the spec declares anywhere will
+  do, because nothing says which one is meant.
+
+A word that fails is **unspecified**, names the field and the states it does
+declare, and suggests the nearest one when it is a slip away:
+
+```text
+`availble` is no state of `Copy.status`, which declares available, on_loan, lost — did you mean `available`?
+`bob` is nobody in this journey and no state the spec declares
+```
+
+On a `then` or `stipulate` line nothing is compared or written, as with any
+unspecified line. In `given`, the field is **left unset** rather than holding
+the word, so a rule that reads it is undecided and names the field, instead of
+refused on the strength of a state the spec has never heard of. The names a
+`given` block makes are known on every line of it, in any order: `copy: spare`
+may come before `spare: catalogue/Copy { … }`. A word that is
+a state — of another field — is still reported where the field is known:
+`then loan.status = available` can never hold when `available` is a copy's.
+
+**An act's arguments** have no field to check against: a trigger's parameters
+carry no types. A word nobody cast and nothing declares there is reported as
+**unspecified** when a rule on that trigger compares the parameter against
+states (it can never match), and as a **remark** otherwise — worth a look, as
+it is usually somebody missing from the cast, and walked, since no rule has to
+match it. A remark is shown by `check`; a walk does not list it beside the
+step, which reads `holds` when everything the step asserts held.
+
+Left alone: a stipulated *call*'s arguments and answer — `stipulate can(r,
+code) = true` matches the words the spec writes in that call, which no
+enumeration need declare — anything under `config`, which the walk checks
+against the parameter's declared type, and a capitalised word, which is a
+collection (`Loans` is every loan — see [`then`](#then--assert-something)).
 
 ### Configuration — running with a switch turned on
 

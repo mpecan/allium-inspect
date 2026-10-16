@@ -72,6 +72,10 @@ pub const SWITCHES: &[&str] = &["switches"];
 /// surface faces, and whether somebody is one.
 pub const FACING: &[&str] = &["admins", "portal"];
 
+/// Two modules that each declare an `enum Status` and an `Item`, with
+/// different states: which one a field means is the declaring module's.
+pub const QUEUE: &[&str] = &["drafts", "queue"];
+
 /// `modules`, replayed from their recordings, with each module's source.
 pub fn library(modules: &[&str]) -> (SpecGraph, Program, Sources) {
     let root = fixtures();

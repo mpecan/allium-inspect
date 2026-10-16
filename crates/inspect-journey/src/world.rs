@@ -24,6 +24,7 @@ use crate::{
     config::{self, Unwritten},
     journey::{Cast, Given, Journey, Path, Term},
     run::{CastMember, Origin, Stipulation, Walker},
+    words,
 };
 
 impl Walker<'_> {
@@ -60,21 +61,47 @@ impl Walker<'_> {
             let created = self.create(&member.type_expr);
             self.bind(member, Some(created), Origin::Cast);
         }
-        for given in given {
+        // Every instance is made and named before any field is written, so a
+        // field may name an instance given on a later line. The checker reads
+        // the names a journey gives in any order; a walk that did not would
+        // refuse `copy: c2` written above `c2: Copy {…}` as a word no state
+        // spells, and leave the field unset with no note on the line saying
+        // why.
+        let made: Vec<Option<EntityId>> = given
+            .iter()
+            .map(|given| {
+                let Given::Instance { name, type_expr, line, .. } = given else { return None };
+                let id = self.create(type_expr);
+                // A given instance is a cast member declared inline, so it
+                // goes through the same door under the same shape.
+                let who = Cast { name: name.clone(), type_expr: type_expr.clone(), line: *line };
+                self.bind(&who, Some(id.clone()), Origin::Given);
+                Some(id)
+            })
+            .collect();
+        for (given, made) in given.iter().zip(made) {
             match given {
-                Given::Instance { name, type_expr, fields, line } => {
-                    let id = self.create(type_expr);
+                Given::Instance { type_expr, fields, .. } => {
+                    let Some(id) = made else { continue };
                     for (field, value) in fields {
+                        let declared =
+                            words::field_at(self.spec, type_expr, std::slice::from_ref(field));
+                        if self.rejects(value, declared) {
+                            continue;
+                        }
                         let value = self.value_of(value);
                         self.world.set_field(&id, field, value);
                     }
-                    // A given instance is a cast member declared inline, so it
-                    // goes through the same door under the same shape.
-                    let who =
-                        Cast { name: name.clone(), type_expr: type_expr.clone(), line: *line };
-                    self.bind(&who, Some(id), Origin::Given);
                 }
                 Given::Assign { path, value: term, line } => {
+                    if !config::is_config(path) {
+                        let declared = self.declared_type(&path.root).and_then(|type_expr| {
+                            words::field_at(self.spec, type_expr, &path.segments)
+                        });
+                        if self.rejects(term, declared) {
+                            continue;
+                        }
+                    }
                     let value = self.value_of(term);
                     // A `given` that wrote nothing is the same fault as a
                     // stipulation that wrote nothing, one step earlier: the
@@ -133,6 +160,26 @@ impl Walker<'_> {
             origin,
             line: who.line,
         });
+    }
+
+    /// The type `name` was bound under, as the journey wrote it.
+    ///
+    /// Written, not read off the instance: `y/Item` names the `Item` of `y`,
+    /// and an id says only `Item` — when two modules each declare one, the
+    /// first in the graph is not necessarily the one meant. The checker reads
+    /// the same words, so the two agree about which field a line writes.
+    fn declared_type(&self, name: &str) -> Option<&str> {
+        self.cast
+            .iter()
+            .rev()
+            .find(|member| member.name == name)
+            .map(|member| member.type_expr.as_str())
+    }
+
+    /// Whether `term` is a word the checker reports for `field`, and so is
+    /// left unwritten — see [`words::rejected`].
+    fn rejects(&self, term: &Term, field: Option<words::Field<'_>>) -> bool {
+        words::rejected(term, field, &|name| self.bound.contains_key(name), self.spec)
     }
 
     /// Write a value the journey asserted, or say why nothing was written.

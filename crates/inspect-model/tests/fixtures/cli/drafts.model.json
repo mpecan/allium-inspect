@@ -1,0 +1,1 @@
+{"diagnostics":[],"entities":[{"fields":[{"name":"status","type_expr":"Status"}],"kind":"internal","name":"Page"},{"fields":[{"enum_values":["draft","live"],"name":"stage","type_expr":"draft | live"}],"kind":"internal","name":"Item"}],"enums":[{"name":"Status","values":["draft","live"]}],"version":3}
