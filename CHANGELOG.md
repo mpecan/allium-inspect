@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/mpecan/allium-inspect/compare/allium-inspect-v0.1.1...allium-inspect-v0.1.2) (2026-10-16)
+
+
+### Bug Fixes
+
+* **journey:** close the eight walk gaps found distilling Forgejo ([#6](https://github.com/mpecan/allium-inspect/issues/6)–[#13](https://github.com/mpecan/allium-inspect/issues/13)) ([#14](https://github.com/mpecan/allium-inspect/issues/14)) ([d76b7af](https://github.com/mpecan/allium-inspect/commit/d76b7af8654b310ccfddc60f2955b9f670bcce4c))
+
 ## [0.1.1](https://github.com/mpecan/allium-inspect/compare/allium-inspect-v0.1.0...allium-inspect-v0.1.1) (2026-09-25)
 
 
