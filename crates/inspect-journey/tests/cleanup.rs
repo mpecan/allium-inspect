@@ -125,6 +125,29 @@ fn a_crate_due_before_its_dock_shuts_races_being_abandoned() {
     raced(&walk, "then Abandon does not fire", ("Abandon", "Shut"), "c");
 }
 
+/// A round of three events races as a round of two does: a second dock holding
+/// the same crate adds an event, and `Abandon` is still undecided rather than
+/// read off the order it happens to run in.
+#[test]
+fn a_round_of_three_events_races_as_a_round_of_two_does() {
+    let text = AS_FILED.replace(
+        "        k: Dock\n    given:\n        c.opened_at = now\n        c.late = false\n        \
+         k.closed_at = now\n        k.crate = c\n",
+        "        k: Dock\n        j: Dock\n    given:\n        c.opened_at = now\n        \
+         c.late = false\n        k.closed_at = now\n        k.crate = c\n        \
+         j.closed_at = now\n        j.crate = c\n",
+    );
+    assert_ne!(text, AS_FILED, "the journey gained a second dock");
+    let journeys = parse(&text).expect("the journeys parse");
+    let journey = journeys
+        .iter()
+        .find(|journey| journey.name == "ACrateOnAShutDockRacesBeingAbandoned")
+        .expect("the journey");
+    let (graph, program, sources) = common::library(CLEANUP);
+    let walk = walk(journey, &journeys, &graph, &program, &sources);
+    raced(&walk, "then Abandon does not fire", ("Abandon", "Shut"), "c");
+}
+
 /// The claim the other way about the same race is not decided either.
 #[test]
 fn a_parcel_given_up_on_beside_its_removal_is_not_decided_either() {

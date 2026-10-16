@@ -174,6 +174,34 @@ mod tests {
         assert!(reads(&held, "n", &derived));
     }
 
+    /// A `for` reads what its collection, its filter or its body reads,
+    /// each on its own; the body's assignment target is still a write.
+    #[test]
+    fn a_for_reads_through_its_collection_its_filter_or_its_body() {
+        let derived = Derivations::default();
+        let each = |collection: Expr, filter: Option<Expr>, body: Expr| {
+            rule(vec![Expr::For {
+                span: AT,
+                binding: allium_parser::ast::ForBinding::Single(Ident {
+                    span: AT,
+                    name: "x".to_owned(),
+                }),
+                collection: Box::new(collection),
+                filter: filter.map(Box::new),
+                body: Box::new(body),
+            }])
+        };
+        let writes = || set(of(name("x"), "n"), name("one"));
+        let over = each(of(name("c"), "n"), None, writes());
+        assert!(reads(&over, "n", &derived), "the collection alone reads it");
+        let filtered = each(name("xs"), Some(of(name("x"), "n")), writes());
+        assert!(reads(&filtered, "n", &derived), "the filter alone reads it");
+        let body = each(name("xs"), None, set(of(name("x"), "m"), of(name("x"), "n")));
+        assert!(reads(&body, "n", &derived), "the body alone reads it");
+        let none = each(name("xs"), Some(name("ok")), writes());
+        assert!(!reads(&none, "n", &derived), "writing it in the body is not reading it");
+    }
+
     /// Through a derived field, and through two that mention each other
     /// without going round for ever.
     #[test]

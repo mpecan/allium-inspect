@@ -96,3 +96,19 @@ fn an_offer_with_no_opening_is_still_listed_as_undecided_with_its_reason() {
     let offer = world.instances_of("Offer").next().expect("an offer").id.clone();
     assert_eq!(withdraw.unsettled_over, vec![Value::Ref(offer)]);
 }
+
+/// Which rules a listing reads at all: one whose `when` binds the instance
+/// it is about does, and `Overdue` — `when: Chore.due_at <= now`, binding
+/// nothing — does not, so a listing's silence about it is no answer.
+#[test]
+fn a_listing_reads_a_rule_that_binds_its_instance_and_not_one_that_binds_nothing() {
+    let (graph, program, _) = recorded();
+    let rule = |name: &str| {
+        graph
+            .nodes_of(inspect_model::NodeKind::Rule)
+            .find(|node| node.name == name)
+            .unwrap_or_else(|| panic!("no rule {name}"))
+    };
+    assert!(inspect_sim::step::lists(&program, rule("Expire")), "Expire binds `task`");
+    assert!(!inspect_sim::step::lists(&program, rule("Overdue")), "Overdue binds nothing");
+}
