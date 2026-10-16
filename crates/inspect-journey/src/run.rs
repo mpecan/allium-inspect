@@ -79,6 +79,7 @@ pub fn walk(
         unapplied: Vec::new(),
         refused: Vec::new(),
         created: Vec::new(),
+        removed: BTreeMap::new(),
         awaiting: None,
         landed: Vec::new(),
         answered: Vec::new(),
@@ -172,6 +173,8 @@ pub(crate) struct Walker<'a> {
     /// Every instance made since it, in the order it was made — the act's own
     /// first, then whatever it set off.
     pub(crate) created: Vec<EntityId>,
+    /// Every instance removed since it, and the rule that removed it first.
+    pub(crate) removed: BTreeMap<EntityId, String>,
     /// An act's `where` answers, until what they are about is made.
     pub(crate) awaiting: Option<crate::answers::Awaiting>,
     /// The `where` answers that landed since the last clause, and on what.

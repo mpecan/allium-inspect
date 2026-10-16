@@ -251,6 +251,7 @@ fn the_fixtures_own_journeys_report_no_word() {
         ("absence", LENDING),
         ("audience", common::AUDIENCE),
         ("chains", common::CHAINS),
+        ("cleanup", common::CLEANUP),
         ("deadlines", common::DEADLINES),
         ("facing", common::FACING),
         ("failures", common::FAILURES),

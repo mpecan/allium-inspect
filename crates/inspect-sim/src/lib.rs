@@ -21,6 +21,7 @@ mod binding;
 pub mod creation;
 mod due;
 pub mod eval;
+mod gone;
 mod per_member;
 pub mod seed;
 pub mod step;

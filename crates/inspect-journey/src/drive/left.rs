@@ -1,8 +1,9 @@
 //! What the clock left undecided, said once the world has stopped changing.
 
-use inspect_sim::{Disposition, Enabled, step::step, world::Event};
+use inspect_model::NodeKind;
+use inspect_sim::{Disposition, Enabled, EntityId, step::step, world::Event};
 
-use crate::run::Walker;
+use crate::run::{Undecided, Walker};
 
 impl Walker<'_> {
     /// The temporal rules the clock left undecided: each once, with the reason
@@ -42,5 +43,34 @@ impl Walker<'_> {
                 }
             }
         }
+    }
+
+    /// Rules a round listed as due on `instance`, which another firing in the
+    /// same round removed before their own event came round.
+    ///
+    /// Undecided, each naming the rule that removed it. The round fires its
+    /// events in a fixed order, so had theirs come first they would have run:
+    /// a `then … does not fire` about them holding here would be that order's
+    /// answer, flipped by renaming a rule, and not the specification's.
+    pub(super) fn raced(&mut self, woken: &[String], instance: &EntityId) {
+        let by = self.removed.get(instance).map_or("another rule", String::as_str);
+        let mut said = Vec::new();
+        for id in woken {
+            let Some(node) = self.spec.nodes_of(NodeKind::Rule).find(|it| it.id.as_str() == id)
+            else {
+                continue;
+            };
+            said.push(Undecided {
+                rule: node.name.clone(),
+                why: format!(
+                    "`{}` was due on `{instance}` in the same round, and `{by}` removed it \
+                     before it ran; the specification does not say which of the two runs first",
+                    node.name
+                ),
+                turn: self.firings,
+                ..Undecided::default()
+            });
+        }
+        self.undecided.extend(said);
     }
 }

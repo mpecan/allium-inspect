@@ -1,0 +1,70 @@
+-- allium: 3
+-- Issue #22: an instance a rule removes while the clock moves has no state
+-- conditions left to check. `Cleanup` and `TimesOut` both watch a `Delivery`,
+-- so the one event that wakes the first reaches the second as well, after the
+-- delivery is gone. `Close` removes a parcel that `GiveUp` is due to look at
+-- in the same round, from an event of its own. `Expire` and `Lapse` watch a
+-- `Lease` under different names, so the event that wakes one does not carry
+-- the other's.
+
+config {
+    keep: Duration = 7.days
+    patience: Duration = 1.hour
+}
+
+entity Delivery {
+    status: sending | done
+    finished_at: Timestamp
+    is_expired: finished_at + config.keep <= now
+    is_overdue: status = sending
+}
+
+rule Cleanup {
+    when: d: Delivery.is_expired
+    ensures: not exists d
+}
+
+-- Due only while sending — a delivery that is done has nothing to time out.
+rule TimesOut {
+    when: d: Delivery.is_overdue
+    requires: d.finished_at < now
+    ensures: d.status = done
+}
+
+entity Parcel {
+    sent_at: Timestamp
+    late: Boolean
+}
+
+entity Route {
+    closed_at: Timestamp
+    parcel: Parcel
+}
+
+rule Close {
+    when: r: Route.closed_at + config.patience <= now
+    ensures: not exists r.parcel
+}
+
+rule GiveUp {
+    when: p: Parcel.sent_at + config.patience <= now
+    ensures: p.late = true
+}
+
+entity Lease {
+    ends_at: Timestamp
+    renewed: Boolean
+    lapsed: Boolean
+    is_expired: ends_at <= now
+    is_lapsed: renewed = false
+}
+
+rule Expire {
+    when: e: Lease.is_expired
+    ensures: not exists e
+}
+
+rule Lapse {
+    when: l: Lease.is_lapsed
+    ensures: l.lapsed = true
+}

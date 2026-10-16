@@ -117,6 +117,7 @@ impl Walker<'_> {
         self.unapplied.clear();
         self.refused.clear();
         self.created.clear();
+        self.removed.clear();
         self.landed.clear();
         self.cut_off = None;
         self.listed = None;
@@ -155,8 +156,12 @@ impl Walker<'_> {
                 Disposition::Unsimulatable => {}
             }
             for effect in &rule.effects {
-                if let inspect_sim::Effect::Created { id, .. } = effect {
-                    self.created.push(id.clone());
+                match effect {
+                    inspect_sim::Effect::Created { id, .. } => self.created.push(id.clone()),
+                    inspect_sim::Effect::Removed { id, .. } => {
+                        self.removed.entry(id.clone()).or_insert_with(|| rule.name.clone());
+                    }
+                    _ => {}
                 }
             }
         }
@@ -253,6 +258,17 @@ impl Walker<'_> {
                 return Settled::Yes;
             }
             for (event, over, woken) in waiting {
+                // Listed before anything this round fired, and since removed
+                // by a firing before this one (issue #22). Not fired about an
+                // instance that is gone — and not dropped without a word
+                // either: every rule here was due on it, beside the one that
+                // removed it, and which goes first is the spec's to say.
+                if let Value::Ref(id) = &over
+                    && self.world.instance(id).is_none()
+                {
+                    self.raced(&woken, id);
+                    continue;
+                }
                 let outcome = self.fire(&event);
                 // What woke it, and whatever else the same firing ran: a rule
                 // that became true between the listing and the firing has run

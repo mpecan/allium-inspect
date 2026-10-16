@@ -32,6 +32,7 @@ use crate::{
     apply::{Application, Effect},
     binding, creation, due,
     eval::{Env, Unresolved, eval},
+    gone::{self, Removed},
     per_member,
     truth::Truth,
     value::Value,
@@ -192,6 +193,9 @@ pub fn step(
     let mut next = world.clone();
     let mut rules = Vec::new();
     let mut emitted = Vec::new();
+    // What the rules before each one removed, and the world they were all
+    // woken in: a state rule woken about one of those is answered by `gone`.
+    let mut removed = Removed::new(world);
 
     for node in spec.nodes_of(NodeKind::Rule) {
         let Some(detail) = node.detail.as_rule() else { continue };
@@ -209,8 +213,9 @@ pub fn step(
             spec,
             source,
             &mut next,
-            event,
+            (event, &removed),
         );
+        removed.note(&outcome);
         for effect in &outcome.effects {
             if let Effect::Emitted { trigger, .. } = effect {
                 emitted.push(trigger.clone());
@@ -260,7 +265,7 @@ fn run_rule(
     spec: &SpecGraph,
     source: &str,
     world: &mut World,
-    event: &Event,
+    (event, removed): (&Event, &Removed),
 ) -> RuleOutcome {
     let empty = inspect_model::RuleAst::default();
     let ast = program.rule(id).unwrap_or(&empty);
@@ -304,6 +309,7 @@ fn run_rule(
     if let Some((binding, _)) = state_condition(detail, ast)
         && !bindings.contains_key(binding)
         && let Some(id) = carried(event, world, &detail.trigger)
+            .or_else(|| removed.carried(event, &detail.trigger))
     {
         bindings.insert(binding.to_owned(), Value::Ref(id));
     }
@@ -357,6 +363,20 @@ fn run_rule(
     // skipping it let `HoldExpires` run beside `HoldIsGranted` on a hold whose
     // expiry was a week away, and write `lapsed` over a hold nothing lapsed.
     if let Some((binding, condition)) = state_condition(detail, ast) {
+        // Removed earlier in this step: refused if it was not due when the
+        // step began, a race the spec does not settle if it was — and either
+        // way nothing else it says is read about an absent instance.
+        if let Some(gone) = removed.when_verdict(
+            (name, bindings.get(binding)),
+            world,
+            (&when_text, ast.when.as_ref()),
+            |before, id| {
+                let scope = Env::new(before, module, source).deriving(program.derivations());
+                due::trigger(condition, &about(scope, &detail.trigger, binding, id))
+            },
+        ) {
+            return gone::outcome((id, name, module), requires, unresolved, gone);
+        }
         let evaluated = match bindings.get(binding) {
             Some(Value::Ref(id)) => due::trigger(
                 condition,

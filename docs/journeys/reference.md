@@ -920,6 +920,52 @@ is not. A *state* rule that is not temporal is not reported on the clock's line:
 time does not decide it, and a `then <Rule> fires` about it, when a listing
 could not decide it, still says it could not be told.
 
+**An instance that is gone has no state left to check.** A state rule's trigger
+is its entity, so the one event that runs `Cleanup` — `when: d:
+Delivery.is_expired`, `ensures: not exists d` — reaches every other rule on
+`Delivery` too, `TimesOut` among them, after the delivery is gone. What that
+rule comes to turns on whether it was due when the event woke them both.
+
+If it was not — the delivery was `done`, so never overdue — it does not apply:
+it is refused, decided, and the refusal says which rule removed the instance:
+
+```text
+`TimesOut` refused: d: Delivery.is_overdue — `Delivery#1` was removed earlier in this step, by `Cleanup`, so it has no state left for this condition to be about
+```
+
+That holds whatever the second rule calls the instance. `Lapse` reading `l:
+Lease.is_lapsed` is woken by an event that carries the lease as `Expire`'s `e`,
+and is still answered about that lease. No guard such as `requires: exists d`
+is needed for this case.
+
+If it was due — the delivery was still `sending` — the two rules raced over one
+delivery, and the specification does not say which runs first. The walk runs
+them in an order of its own — by module, then rule name — so a verdict either way would be
+that order's and would flip if a rule were renamed. It is undecided instead,
+and says which two rules raced:
+
+```text
+while the clock moved, what it set off: `TimesOut` could not be decided: `TimesOut` was due on `Delivery#1` when this step began, and `Cleanup` removed it earlier in the same step; the specification does not say which of the two runs first — in `d: Delivery.is_overdue`
+```
+
+The same holds a round wider. Everything due is listed before anything fires,
+so an instance one firing removes can still be waiting for its own event. That
+event is not fired about something that is gone, and the rules it would have
+woken are not dropped either — they were due, so they are undecided the same
+way:
+
+```text
+`GiveUp` could not be decided: `GiveUp` was due on `Parcel#1` in the same round, and `Close` removed it before it ran; the specification does not say which of the two runs first
+```
+
+A race leaves the step undecided, and every `then` about the world after it
+with it: the world the walk reached is one order's. Settle it in the spec — a
+`requires` on one rule that rules the other out — and the walk can decide it.
+
+Only an instance the walk removed. A reference to something the world never
+held is not answered this way — it is still undecided, as `` `Delivery#9` is
+not in this world ``.
+
 ### `then` — assert something
 
 ```

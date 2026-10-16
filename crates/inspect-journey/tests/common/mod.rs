@@ -72,6 +72,10 @@ pub const DISCARDS: &[&str] = &["discards", "hush"];
 /// that may be `null` (issue #20).
 pub const DEADLINES: &[&str] = &["deadlines"];
 
+/// The cleanup fixture, alone: an instance removed while the clock moves, and
+/// the state rules that were watching it (issue #22).
+pub const CLEANUP: &[&str] = &["cleanup"];
+
 /// The fanout fixture, alone: a rule that iterates an entity collection and
 /// emits once per member, and the rule chained from that emission.
 pub const FANOUT: &[&str] = &["fanout"];
