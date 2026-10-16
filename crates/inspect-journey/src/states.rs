@@ -265,6 +265,22 @@ rule Decide {
         assert_eq!(against(outside, "decision"), ["live"]);
     }
 
+    /// A loop that takes its members apart binds every part it names, and
+    /// only those: a word beside them inside the loop is still a state.
+    #[test]
+    fn each_part_a_destructured_loop_names_is_a_binding() {
+        let source = "
+rule Decide {
+    when: Decide(group, decision)
+    for (h, mode) in group.pairs:
+        requires: decision != h
+        requires: decision != mode
+        requires: decision = gone
+}
+";
+        assert_eq!(against(source, "decision"), ["gone"]);
+    }
+
     /// The states `rule` compares `parameter` with.
     fn against(source: &str, parameter: &str) -> Vec<String> {
         let ast = rule(source);

@@ -579,6 +579,33 @@ fn an_act_s_remark_is_carried_into_the_walk_beside_the_step() {
     assert!(step.outcomes.iter().all(|outcome| outcome.verdict != Verdict::Remark), "{step:#?}");
 }
 
+/// An aside is a remark on that line, and nothing else: another step's
+/// remark is not this step's, and a line `check` could not support is the
+/// step's verdict rather than something said beside it.
+#[test]
+fn only_a_remark_on_the_step_s_own_line_is_an_aside() {
+    let source = "journey J {
+    cast:
+        ada:  Member
+        loan: Loan
+    given:
+        loan.member = ada
+        loan.status = open
+    1. report
+        ada does MemberReportsLoss(loan, mislaid) on MemberShelf
+    2. look
+        then loan.status = opne
+}";
+    let notes = checked(source);
+    assert_eq!(about(&notes, "mislaid").verdict, Verdict::Remark);
+    assert_ne!(about(&notes, "opne").verdict, Verdict::Remark);
+    let walk = walked(source);
+    assert_eq!(walk.steps[0].asides.len(), 1, "{:#?}", walk.steps[0]);
+    let second = &walk.steps[1];
+    assert!(second.asides.is_empty(), "{second:#?}");
+    assert!(second.outcomes.iter().any(|outcome| outcome.about == "then loan.status = opne"));
+}
+
 /// Both modules declare an `Item`, and an issue's `item: Item` is its own
 /// module's. Followed by name alone, the hop landed on the first `Item` in the
 /// set — the drafts', which declares no `open` — and a correct `then` was
