@@ -183,10 +183,14 @@ impl Walker<'_> {
     /// Why `name` names no instance, when it is a `creating` line that caught
     /// nothing: the cause of every read through it, which an unknown with no
     /// reason would leave looking like a bug.
+    ///
+    /// Only a `creating` line is ever listed with nothing behind it — a cast
+    /// member and a given instance are made as they are named — so a listed
+    /// name with no instance is one, and asking its origin as well would be a
+    /// second test of the same fact.
     fn caught_nothing(&self, name: &str) -> Option<String> {
         let member = self.cast.iter().rev().find(|member| member.name == name)?;
-        (member.origin == Origin::Caught && member.entity.is_none())
-            .then(|| format!("`{name}` caught nothing, on line {}", member.line))
+        member.entity.is_none().then(|| format!("`{name}` caught nothing, on line {}", member.line))
     }
 
     /// The type `name` was bound under, as the journey wrote it.
