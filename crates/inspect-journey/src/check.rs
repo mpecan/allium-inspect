@@ -227,7 +227,9 @@ fn check_step(
 ) {
     for clause in &step.clauses {
         match clause {
-            Clause::Does { actor, trigger, arguments, surface, creating, negated, line } => {
+            Clause::Does {
+                actor, trigger, arguments, surface, creating, negated, line, ..
+            } => {
                 check_actor(actor, *line, known, notes);
                 check_act(trigger, surface, *line, graph, notes);
                 check_arity(trigger, arguments.len(), *line, graph, notes);

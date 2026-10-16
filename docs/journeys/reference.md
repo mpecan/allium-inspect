@@ -448,6 +448,10 @@ ada does MemberBorrows(ada, copy) on MemberShelf
 `loan` is then a name like any cast member, usable by every clause after it —
 including as the actor of a later step.
 
+What a call the spec never defines answers for the instance being made is said
+under the same act, with [`where`](#stipulate--say-it-rather-than-show-it):
+`creating issue: Issue` then `where audience(issue) = {}`.
+
 **An act runs everything it sets off.** A rule that emits a trigger wakes the
 rules waiting on that trigger, and those wake the next — so `creating` can name
 what a rule two hops away made, and `then <Rule> fires` can ask about it. The
@@ -1001,6 +1005,67 @@ then the call is about a value nobody knows rather than about a word:
 - any bare name inside an entity's own definition. `allowed: can(this, level)`
   reads `level` as the repo's field, and a field nobody set is not bound — so
   inside an entity no word is read, and the call stays undecided.
+
+**About what the act makes: `where`.** A reaction to a creation often asks a
+black box about the new instance — who hears about an issue, `audience(issue)`,
+the moment it is opened. `stipulate` cannot answer that: before the act there is
+no issue to name, and after it the reaction has already asked and been left
+undecided. So the answer goes under the act, beside the `creating` that names
+the instance:
+
+```no-check
+repo does Open(repo, "crash") on Tracker
+    creating issue: Issue
+    where audience(issue) = {}
+```
+
+It is in force from the engine turn after the one that made the instance
+`creating` will catch: for everything that creation sets off, and not for the
+rule that made it. It is listed in the ledger like any other stipulation:
+
+```text
+Nobody Is In The Audience  —  1 of 1 steps hold
+    stipulated  audience(issue) = {}
+   1. open an issue whose audience is empty            holds
+```
+
+As many `where` lines as there are calls to answer, each `where <call> =
+<value>`, and each held to what it is for:
+
+- **It needs a `creating`**, because without one there is nothing to wait for.
+- **It is a call, never a field.** What the act writes into what it makes is
+  what the specification says, and overruling it mid-act would be a `then` that
+  cannot fail. `stipulate` it after the act if that is really what you mean.
+- **It names the caught instance** — `audience(issue)`, `muted(issue, repo)`,
+  `reach({issue, other})`. An answer about anything else can be said with
+  `stipulate` before the act, and is refused here so there is one place to say
+  it.
+- **It answers for that instance and no other.** An act that makes two issues
+  has its first caught and answered; the second's audience is still nobody's
+  answer, and the step stays undecided, with a remark beside the act saying
+  the call was asked of something the answer is not about.
+- **The rule that makes the instance cannot read it.** A rule that creates the
+  issue and asks `audience(issue)` in its own `ensures` asked before the answer
+  existed; the step stays undecided, and the remark beside the act says so.
+- **Its arguments are read when the instance is made.** `reach(issue.repo)`
+  reads `issue.repo` as it stood then; a field the cascade sets later is not
+  what the answer is about.
+- **Its words are not checked.** A bare word in the value is a word, as it is
+  in a `stipulate` about a call: `{rpo}` is a set holding the word `rpo`, not
+  the repo.
+- **Nothing made, nothing listed.** An act that makes nothing of the kind, or
+  that its surface refuses, answered no call, and the ledger does not claim it
+  did.
+
+Written as a `stipulate` after the act instead, the answer still lands — a later
+act may ask the same question — but the step stays undecided, and when what the
+act set off asked that very call the walk says why beside the line rather than
+leaving it to look like the next line answers it:
+
+```text
+        remark  stipulate audience(issue) = {}
+          said after the act that made `issue`, so nothing the act set off could read it — to answer `audience(issue)` for what it set off, write `where` under `creating issue: Issue`
+```
 
 **Every stipulation is reported, first and always.** An agent can make any
 journey pass; it cannot make one pass invisibly.

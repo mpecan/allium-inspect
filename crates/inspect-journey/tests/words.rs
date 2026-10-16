@@ -249,6 +249,7 @@ fn configuration_is_left_to_the_walk() {
 fn the_fixtures_own_journeys_report_no_word() {
     let sets: &[(&str, &[&str])] = &[
         ("absence", LENDING),
+        ("audience", common::AUDIENCE),
         ("chains", common::CHAINS),
         ("facing", common::FACING),
         ("fanout", common::FANOUT),

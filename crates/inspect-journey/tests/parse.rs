@@ -1106,3 +1106,109 @@ mod stipulating_a_call {
         assert_eq!(subject.as_written(), "may_invite(chat, she)");
     }
 }
+
+/// `where` under `creating`, on its own line or several, answers a call for
+/// what the act makes (issue #18).
+#[test]
+fn an_act_can_say_what_a_call_answers_for_what_it_makes() {
+    let journeys = parse(
+        "journey J {\n    1. she opens one\n        repo does Open(repo) on Tracker\n            \
+         creating issue: Issue\n            where audience(issue) = {}\n            \
+         where muted(issue, repo) = false\n}\n",
+    )
+    .expect("parses");
+    let Clause::Does { creating, answering, surface, .. } = &journeys[0].steps[0].clauses[0] else {
+        panic!("expected an act");
+    };
+    assert_eq!(surface, "Tracker");
+    assert_eq!(creating.as_ref().map(|caught| caught.name.as_str()), Some("issue"));
+    let written: Vec<String> = answering.iter().map(inspect_journey::Where::as_written).collect();
+    assert_eq!(written, ["audience(issue)", "muted(issue, repo)"]);
+    assert_eq!(answering[0].value, Term::Set(Vec::new()));
+    assert_eq!(answering[1].value, Term::Literal(Value::Bool(false)));
+}
+
+/// An act with no `where` answers nothing.
+#[test]
+fn an_act_without_where_answers_nothing() {
+    let Clause::Does { answering, .. } = &first().steps[0].clauses[0] else {
+        panic!("expected an act");
+    };
+    assert!(answering.is_empty());
+}
+
+/// Without `creating` there is nothing for it to wait for, and it would
+/// otherwise read as part of the surface's name.
+#[test]
+fn where_without_creating_is_refused_and_says_where_it_belongs() {
+    let error = parse(
+        "journey J {\n    1. she opens one\n        repo does Open(repo) on Tracker\n            \
+         where audience(repo) = {}\n}\n",
+    )
+    .expect_err("nothing to wait for");
+    assert!(error.message.contains("belongs under `creating"), "{error:?}");
+}
+
+/// A field of what the act makes is what the specification writes, and a
+/// journey overruling it mid-act would be a `then` that cannot fail.
+#[test]
+fn where_about_a_field_is_refused() {
+    let error = parse(
+        "journey J {\n    1. she opens one\n        repo does Open(repo) on Tracker\n            \
+         creating issue: Issue\n            where issue.notified = true\n}\n",
+    )
+    .expect_err("a field");
+    assert!(error.message.contains("names a field"), "{error:?}");
+    assert!(error.message.contains("`stipulate` it after the act"), "{error:?}");
+}
+
+/// A call about anything else could be said before the act, and is.
+#[test]
+fn where_about_something_else_is_refused() {
+    let error = parse(
+        "journey J {\n    1. she opens one\n        repo does Open(repo) on Tracker\n            \
+         creating issue: Issue\n            where audience(repo) = {}\n}\n",
+    )
+    .expect_err("not about the issue");
+    assert!(error.message.contains("is not about `issue`"), "{error:?}");
+    assert!(error.message.contains("before the act"), "{error:?}");
+}
+
+/// A `where` that is not `<call> = <value>` says what it expected.
+#[test]
+fn where_without_an_answer_is_refused() {
+    let error = parse(
+        "journey J {\n    1. she opens one\n        repo does Open(repo) on Tracker\n            \
+         creating issue: Issue\n            where audience(issue)\n}\n",
+    )
+    .expect_err("no answer");
+    assert!(error.message.contains("expected `where <call> = <value>`"), "{error:?}");
+}
+
+/// `where` level with the act rather than under its `creating` is the likeliest
+/// slip, and is told where it goes rather than that there is no clause here.
+#[test]
+fn where_level_with_the_act_says_it_belongs_under_creating() {
+    let error = parse(
+        "journey J {\n    1. she opens one\n        repo does Open(repo) on Tracker\n            \
+         creating issue: Issue\n        where audience(issue) = {}\n}\n",
+    )
+    .expect_err("a where on its own");
+    assert!(error.message.contains("indented under the act's `creating"), "{error:?}");
+    assert!(!error.message.contains("no clause here"), "{error:?}");
+}
+
+/// A `where` inside a quoted answer is part of the answer.
+#[test]
+fn a_where_whose_answer_quotes_where_parses() {
+    let journeys = parse(
+        "journey J {\n    1. she opens one\n        repo does Open(repo) on Tracker\n            \
+         creating issue: Issue\n            where label(issue) = \"x where y\"\n}\n",
+    )
+    .expect("parses");
+    let Clause::Does { answering, .. } = &journeys[0].steps[0].clauses[0] else {
+        panic!("expected an act");
+    };
+    assert_eq!(answering.len(), 1);
+    assert_eq!(answering[0].value, Term::Literal(Value::Str("x where y".to_owned())));
+}

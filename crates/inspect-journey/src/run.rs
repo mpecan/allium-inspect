@@ -79,6 +79,8 @@ pub fn walk(
         unapplied: Vec::new(),
         refused: Vec::new(),
         created: Vec::new(),
+        awaiting: None,
+        landed: Vec::new(),
         cut_off: None,
         firings: 0,
         moved: false,
@@ -126,10 +128,15 @@ pub fn walk(
 }
 
 /// A rule the engine could not decide, and the first reason it gave.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct Undecided {
     pub(crate) rule: String,
     pub(crate) why: String,
+    /// The calls nothing answered when it ran, as the spec wrote them:
+    /// `audience(issue)`. What a remark about an answer matches against.
+    pub(crate) asked: Vec<String>,
+    /// The engine turn of its act it ran in.
+    pub(crate) turn: usize,
 }
 
 pub(crate) struct Walker<'a> {
@@ -162,6 +169,10 @@ pub(crate) struct Walker<'a> {
     /// Every instance made since it, in the order it was made — the act's own
     /// first, then whatever it set off.
     pub(crate) created: Vec<EntityId>,
+    /// An act's `where` answers, until what they are about is made.
+    pub(crate) awaiting: Option<crate::answers::Awaiting>,
+    /// The `where` answers that landed since the last clause, and on what.
+    pub(crate) landed: Vec<crate::answers::Landed>,
     /// A cascade since it that was cut off before it settled, and where. Kept
     /// apart from `undecided`: it names triggers still waiting, not a rule.
     pub(crate) cut_off: Option<String>,
@@ -231,6 +242,27 @@ impl Walker<'_> {
                 continue;
             }
             let mut outcome = self.walk_clause(clause);
+            // A stipulation that landed and has something to say about when
+            // it was said: worth reading, and no reason the step fails.
+            if matches!(clause, Clause::Stipulate { .. })
+                && outcome.verdict == Verdict::Specified
+                && let Some(detail) = outcome.detail.take()
+            {
+                asides.push(Outcome {
+                    verdict: Verdict::Remark,
+                    detail: Some(detail),
+                    ..outcome.clone()
+                });
+            }
+            // An act whose `where` answered a call something still asked
+            // unanswered: which of the two ways, beside the act.
+            if matches!(clause, Clause::Does { .. }) {
+                asides.extend(self.unanswered().into_iter().map(|detail| Outcome {
+                    verdict: Verdict::Remark,
+                    detail: Some(detail),
+                    ..outcome.clone()
+                }));
+            }
             // A definite `false` that follows something undecided is not the
             // spec forbidding anything — it is a consequence of a world this
             // tool could not finish computing. Reporting it as a refusal would
@@ -263,19 +295,28 @@ impl Walker<'_> {
     fn walk_clause(&mut self, clause: &Clause) -> Outcome {
         let about = about(clause);
         match clause {
-            Clause::Does { actor, trigger, arguments, surface, creating, negated, line } => self
-                .act(
-                    &Act {
-                        actor,
-                        trigger,
-                        arguments,
-                        surface,
-                        creating: creating.as_ref(),
-                        negated: *negated,
-                    },
-                    *line,
-                    about,
-                ),
+            Clause::Does {
+                actor,
+                trigger,
+                arguments,
+                surface,
+                creating,
+                answering,
+                negated,
+                line,
+            } => self.act(
+                &Act {
+                    actor,
+                    trigger,
+                    arguments,
+                    surface,
+                    creating: creating.as_ref(),
+                    answering,
+                    negated: *negated,
+                },
+                *line,
+                about,
+            ),
             Clause::After { duration, line, .. } => self.advance(duration, *line, about),
             Clause::Then { assertion, line } => self.assert(assertion, *line, about),
             Clause::Sees { actor, subject, surface, contexts, negated, line } => self.observe(
@@ -311,12 +352,13 @@ impl Walker<'_> {
                     // the whole reason it needs saying. It is remembered and
                     // answered from when the specification asks.
                     Subject::Call { name, arguments } => {
+                        let detail = self.too_late(name, arguments);
                         let arguments: Vec<Value> =
                             arguments.iter().map(|term| self.value_of(term)).collect();
                         self.world.answers.push(Answer { call: name.clone(), arguments, value });
                         self.stipulated
                             .push(Stipulation { said: written, through: self.standing_on.clone() });
-                        Outcome { line: *line, verdict: Verdict::Specified, about, detail: None }
+                        Outcome { line: *line, verdict: Verdict::Specified, about, detail }
                     }
                 }
             }
@@ -344,7 +386,12 @@ impl Walker<'_> {
             event = event.passing(self.value_of(argument));
         }
 
+        // A `where` under `creating` is in force from the moment what it is
+        // about is made, so the cascade that follows reads it.
+        self.awaiting = crate::answers::Awaiting::of(creating, act.answering);
+        let named = creating.and_then(|caught| self.bound.get(&caught.name).cloned());
         let outcome = self.fire(&event);
+        self.awaiting = None;
 
         // `bruno cannot do MemberAsksToChat(…)`: the journey asserting a
         // refusal it *wants*, which without this reads as `refused` — the
@@ -360,21 +407,17 @@ impl Walker<'_> {
         }
 
         if let Some(caught) = creating {
-            // The first made, not the first in the world's order: ids sort as
-            // text, so `Order#10` comes before `Order#9`, and a reaction that
-            // made another order would be caught instead of the act's own
-            // whenever the count crossed a digit.
-            let bare = caught.type_expr.rsplit('/').next().unwrap_or(&caught.type_expr);
-            let fresh = self
-                .created
-                .iter()
-                .find(|id| id.entity() == bare && self.world.instance(id).is_some())
-                .cloned();
-            match fresh {
+            match self.first_made(caught) {
                 Some(id) => {
                     self.bind(caught, Some(id), Origin::Caught);
                 }
                 None => {
+                    // A `where` bound the name early, to an instance the act
+                    // then removed: what it named before is what it names.
+                    match named {
+                        Some(id) => self.bound.insert(caught.name.clone(), id),
+                        None => self.bound.remove(&caught.name),
+                    };
                     // Listed anyway, with nothing behind it. A name the journey
                     // uses from here on that resolves to no instance is exactly
                     // what the reader is trying to understand, and leaving it
@@ -498,6 +541,8 @@ pub(crate) struct Act<'a> {
     pub(crate) arguments: &'a [Term],
     pub(crate) surface: &'a str,
     pub(crate) creating: Option<&'a crate::journey::Cast>,
+    /// What the act's `where` lines say calls answer for what it makes.
+    pub(crate) answering: &'a [crate::journey::Where],
     /// Whether the journey said this *cannot* happen.
     pub(crate) negated: bool,
 }

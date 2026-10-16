@@ -277,6 +277,7 @@ struct Before {
     bound: BTreeMap<String, EntityId>,
     cast: Vec<CastMember>,
     notes: usize,
+    stipulated: usize,
 }
 
 impl Walker<'_> {
@@ -301,8 +302,11 @@ impl Walker<'_> {
             Facing::Closed(why) => {
                 let (_, woken, before) = self.trial(act, line, &about);
                 self.put_back(before);
-                self.refused
-                    .extend(woken.into_iter().map(|rule| Undecided { rule, why: why.clone() }));
+                self.refused.extend(woken.into_iter().map(|rule| Undecided {
+                    rule,
+                    why: why.clone(),
+                    ..Undecided::default()
+                }));
                 let verdict = if act.negated { Verdict::Specified } else { Verdict::Refused };
                 self.unmade(act);
                 Outcome { line, verdict, about, detail: Some(why) }
@@ -327,8 +331,11 @@ impl Walker<'_> {
                     return outcome;
                 }
                 self.put_back(before);
-                self.undecided
-                    .extend(woken.into_iter().map(|rule| Undecided { rule, why: why.clone() }));
+                self.undecided.extend(woken.into_iter().map(|rule| Undecided {
+                    rule,
+                    why: why.clone(),
+                    ..Undecided::default()
+                }));
                 self.unmade(act);
                 Outcome { line, verdict: Verdict::Undecided, about, detail: Some(why) }
             }
@@ -343,6 +350,7 @@ impl Walker<'_> {
             bound: self.bound.clone(),
             cast: self.cast.clone(),
             notes: self.notes.len(),
+            stipulated: self.stipulated.len(),
         };
         let outcome = self.fire_act(act, line, about.to_owned());
         let mut woken: Vec<String> = Vec::new();
@@ -362,6 +370,8 @@ impl Walker<'_> {
         self.bound = before.bound;
         self.cast = before.cast;
         self.notes.truncate(before.notes);
+        // A `where` that landed in an act now undone answered nothing.
+        self.stipulated.truncate(before.stipulated);
         self.forget();
     }
 

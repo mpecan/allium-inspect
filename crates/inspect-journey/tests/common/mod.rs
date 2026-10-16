@@ -85,6 +85,10 @@ pub const NEWSROOM: &[&str] = &["newsroom", "press"];
 /// the stored one (issue #21).
 pub const RUNS: &[&str] = &["runs"];
 
+/// The audience fixture, alone: a reaction to a creation that asks a black
+/// box about the instance just made (issue #18).
+pub const AUDIENCE: &[&str] = &["audience"];
+
 /// `modules`, replayed from their recordings, with each module's source.
 pub fn library(modules: &[&str]) -> (SpecGraph, Program, Sources) {
     let root = fixtures();

@@ -112,6 +112,27 @@ pub struct Cast {
     pub line: usize,
 }
 
+/// `where audience(issue) = {}`: a stipulated call about what an act makes.
+///
+/// Always a call, and always naming the caught instance among its arguments —
+/// anything else could have been said with `stipulate` before the act, and
+/// is refused rather than read as that.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Where {
+    pub call: String,
+    pub arguments: Vec<Term>,
+    pub value: Term,
+}
+
+impl Where {
+    /// The call as the journey wrote it: `audience(issue)`.
+    #[must_use]
+    pub fn as_written(&self) -> String {
+        let inside: Vec<String> = self.arguments.iter().map(Term::as_written).collect();
+        format!("{}({})", self.call, inside.join(", "))
+    }
+}
+
 /// The world before anything happens.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Given {
@@ -155,6 +176,15 @@ pub enum Clause {
         surface: String,
         /// What the step caught, named by the writer rather than numbered.
         creating: Option<Cast>,
+        /// `where audience(issue) = {}` under `creating issue: Issue`: what a
+        /// call the spec never defines answers for the instance the act makes.
+        ///
+        /// A `stipulate` cannot say it. Before the act the instance does not
+        /// exist to be named, and after it the reaction that asked has already
+        /// run and been left undecided. These are in force once the engine
+        /// turn that made the instance is over: for what that creation sets
+        /// off, and not for the rule that made it.
+        answering: Vec<Where>,
         /// `bruno cannot do MemberAsksToChat(…) on GroupMembers`.
         ///
         /// The journey asserting a refusal it *wants*. Without it a blocked
@@ -349,6 +379,17 @@ impl Term {
                 format!("{{{}}}", inside.join(", "))
             }
             Term::Clock { written, .. } => written.clone(),
+        }
+    }
+
+    /// Whether `name` is read anywhere in this term: `issue`, `issue.repo`,
+    /// or a member of `{issue, other}`.
+    #[must_use]
+    pub fn mentions(&self, name: &str) -> bool {
+        match self {
+            Term::Path(path) => path.root == name,
+            Term::Set(items) => items.iter().any(|item| item.mentions(name)),
+            Term::Literal(_) | Term::Clock { .. } => false,
         }
     }
 }

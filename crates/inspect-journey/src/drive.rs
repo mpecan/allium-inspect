@@ -115,6 +115,7 @@ impl Walker<'_> {
         self.unapplied.clear();
         self.refused.clear();
         self.created.clear();
+        self.landed.clear();
         self.cut_off = None;
         self.firings = 0;
     }
@@ -124,6 +125,7 @@ impl Walker<'_> {
         use inspect_sim::Disposition;
         self.firings += 1;
         let outcome = step(self.spec, self.program, self.sources, &self.world, event);
+        let turn = self.firings;
         for rule in &outcome.rules {
             match rule.disposition {
                 Disposition::Fired => {
@@ -135,16 +137,17 @@ impl Walker<'_> {
                     // off — so the step is undecided, and says what was not
                     // applied. Kept apart from `undecided`, because it ran.
                     if let Some(why) = crate::outcome::unapplied(rule) {
-                        self.unapplied.push(Undecided { rule: rule.name.clone(), why });
+                        self.unapplied.push(crate::answers::noted(rule, why, turn));
                     }
                 }
-                Disposition::Undecided => self.undecided.push(Undecided {
-                    rule: rule.name.clone(),
-                    why: crate::outcome::undecided(rule),
-                }),
+                Disposition::Undecided => {
+                    let why = crate::outcome::undecided(rule);
+                    self.undecided.push(crate::answers::noted(rule, why, turn));
+                }
                 Disposition::Refused => self.refused.push(Undecided {
                     rule: rule.name.clone(),
                     why: crate::outcome::refused(rule),
+                    ..Undecided::default()
                 }),
                 Disposition::Unsimulatable => {}
             }
@@ -155,6 +158,7 @@ impl Walker<'_> {
             }
         }
         self.world = outcome.world.clone();
+        self.answer_what_was_made();
         outcome
     }
 
@@ -502,7 +506,7 @@ mod tests {
         use super::*;
 
         fn rule(name: &str, why: &str) -> Undecided {
-            Undecided { rule: name.to_owned(), why: why.to_owned() }
+            Undecided { rule: name.to_owned(), why: why.to_owned(), ..Undecided::default() }
         }
 
         #[test]
@@ -534,7 +538,7 @@ mod tests {
         use super::*;
 
         fn rule(name: &str, why: &str) -> Undecided {
-            Undecided { rule: name.to_owned(), why: why.to_owned() }
+            Undecided { rule: name.to_owned(), why: why.to_owned(), ..Undecided::default() }
         }
 
         /// A fan-out that skipped two members left two notes from one rule;
