@@ -96,3 +96,16 @@ journey TwiceInGiven {
     1. the later answer is asked
         r cannot do Grant(r) on Settings
 }
+
+-- Replacing an answer removes that answer from the ledger and no other, even
+-- one listed before it by the same journey.
+journey TwiceInGivenBesideAnother {
+    cast:
+        s: Repo
+    given:
+        can(s, code) = true
+        can(r, code) = true
+        can(r, code) = false
+    1. the later answer is asked, and the other answer stays listed
+        r cannot do Grant(r) on Settings
+}

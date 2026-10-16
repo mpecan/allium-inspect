@@ -220,3 +220,13 @@ fn a_world_line_refused_is_reported_and_not_listed() {
         .unwrap_or_else(|| panic!("a note on the world's line: {}", text(&walk)));
     assert_eq!(note.verdict, Verdict::Undecided);
 }
+
+/// Replacing the earlier answer to `can(r, code)` takes that one line out of
+/// the ledger — not the first line this journey listed, which is about `s`.
+#[test]
+fn replacing_an_answer_leaves_the_journeys_other_answers_listed() {
+    let walk = walked("TwiceInGivenBesideAnother");
+    let out = text(&walk);
+    assert_eq!(walk.verdict(), Verdict::Specified, "{out}");
+    assert_eq!(said(&walk), ["can(s, code) = true", "can(r, code) = false"]);
+}
