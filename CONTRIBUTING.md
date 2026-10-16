@@ -108,6 +108,12 @@ Rust-touching commits past it. A green `just check` therefore says *coverage was
 measured recently and cleared the floor*, not *coverage passes now*. The drift
 bound is what keeps that gap small.
 
+A receipt also records a fingerprint of the Rust sources it measured, so after a
+squash-merge drops the commit it names, the gates find the commit on main with
+the same sources and count from there. Only an exact match survives the merge:
+refresh both receipts after the last Rust change on a branch, or main goes red.
+The gates print a `NOTE` while HEAD's Rust differs from a receipt's.
+
 ## Stipulations
 
 `CLAUDE.md` holds eight decisions everything else rests on. Changing one is a

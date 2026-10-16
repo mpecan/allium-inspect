@@ -1,4 +1,8 @@
 # Coverage receipt — written by 'just coverage-check'. Do not hand-edit.
 # Read by scripts/check-coverage-freshness.sh, which runs inside 'just check'.
-# Fields: <commit> <percent> <measured-at>
-68037b9739937371344cbf4495f5ac17db74f89b 95 2026-10-15T23:59:11Z
+# Fields: <commit> <percent> <measured-at> <rust-fingerprint>
+# What is certified is the Rust sources <rust-fingerprint> names (see
+# rust_fingerprint in scripts/common.sh); <commit> is where to find them. After
+# a squash-merge drops <commit>, the gate finds the commit on main with the same
+# sources. Receipts without a fingerprint are still read.
+bd155518fda977d1051b41abdb8b8b2271b4a69a 96 2026-10-16T11:01:17Z 54e188fe3f91f9ad7d3b18f4a1856ce3eac58bf0

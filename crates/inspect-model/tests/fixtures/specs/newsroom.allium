@@ -1,0 +1,38 @@
+-- allium: 3
+-- newsroom.allium
+--
+-- Listeners for triggers emitted from elsewhere (issue #12), read beside
+-- `press.allium`, which `use`s this module.
+--
+-- `MarkSeen` waits on `Published(story)` and imports nothing: `press` emits
+-- it, from the module that imported this one, and a bare `Published(…)` there
+-- may be this module's trigger. `File` waits on `Filed(story)` and takes
+-- `story` from its own `let`, so `Submit` naming its argument `item` leaves
+-- nothing unbound — the walk binds the `let` before it reads the `when`.
+
+entity Story {
+    seen: Boolean
+    filed: Boolean
+}
+
+rule MarkSeen {
+    when: Published(story)
+    ensures: story.seen = true
+}
+
+rule Submit {
+    when: Submit(story)
+    ensures: Filed(item: story)
+}
+
+rule File {
+    when: Filed(story)
+    let story = item
+    ensures: story.filed = true
+}
+
+surface Newsdesk {
+    facing s: Story
+    provides:
+        Submit(s)
+}

@@ -509,3 +509,113 @@ fn a_reaction_to_another_modules_entity_is_triggered_by_that_entity() {
     assert_eq!(trigger.entity.as_deref(), Some("Note"));
     assert_eq!(trigger.parameters, ["note"]);
 }
+
+/// Issue #12, option 2: an emission a listener can never bind, said before
+/// anything runs.
+///
+/// `chains` emits `Published(item: doc)`, which neither `MarkSeen` nor, across
+/// the boundary, `relay`'s `Echo` can bind `doc` from; and `Noted(doc: doc,
+/// reason: doc)`, which leaves `Mark`'s `cause?` unbound because `reason` may
+/// be it misnamed. Every other emission in the pair binds — by position under
+/// each listener's own names, or by a name the listener has — and is not
+/// reported. The location is the emission's, computed from its *byte* offset,
+/// in a file with an em-dash above it.
+#[test]
+fn an_emission_a_listener_can_never_bind_is_reported_where_it_is_written() {
+    let (runner, reader, paths) = replay_of(&["chains", "relay"]);
+    let graph = ingest(&runner, &reader, &paths).expect("the recorded fixtures ingest").graph;
+    let source = read(&fixtures().join("specs/chains.allium"));
+
+    let found: Vec<_> = graph
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code.as_deref() == Some("inspect.trigger.unbound"))
+        .collect();
+    let said: Vec<(&str, &str, Option<&str>)> = found
+        .iter()
+        .map(|it| (it.module.as_str(), it.message.as_str(), it.node.as_deref()))
+        .collect();
+    assert_eq!(
+        said,
+        [
+            (
+                "chains",
+                "`Note` emits `Noted(doc: doc, reason: doc)` without binding `cause` for `Mark`, which listens for \
+                 `Noted(doc, cause?)`: it was handed `reason` by name, and a named argument \
+                 binds only the parameter it names",
+                Some("chains::rule::Note"),
+            ),
+            (
+                "chains",
+                "`Publish` emits `Published(item: doc)` without binding `doc` for `MarkSeen`, which \
+                 listens for `Published(doc)`: it was handed `item` by name, and a named \
+                 argument binds only the parameter it names",
+                Some("chains::rule::Publish"),
+            ),
+            (
+                "chains",
+                "`Publish` emits `Published(item: doc)` without binding `doc` for `relay/Echo`, which \
+                 listens for `chains/Published(doc)`: it was handed `item` by name, and a named \
+                 argument binds only the parameter it names",
+                Some("chains::rule::Publish"),
+            ),
+        ],
+        "{found:#?}"
+    );
+
+    // Where `Published(item: doc)` starts, counted in characters on its line —
+    // from a byte offset, never from a char index into the whole file.
+    let written = "ensures: Published(item: doc)";
+    let at = source.find(written).expect("the emission is in the spec") + "ensures: ".len();
+    let line = source[..at].matches('\n').count() + 1;
+    let line_start = source[..at].rfind('\n').map_or(0, |newline| newline + 1);
+    let column = source[line_start..at].chars().count() + 1;
+    let published =
+        found.iter().find(|it| it.message.contains("for `MarkSeen`")).expect("MarkSeen");
+    let location = published.location.as_ref().expect("a location");
+    assert_eq!((location.line, location.column), (line, column));
+    assert!(location.file.ends_with("chains.allium"), "{location:?}");
+    assert_eq!(published.severity, inspect_model::Severity::Warning);
+}
+
+/// Every fixture spec, ingested as one set: the two in `chains` and the one
+/// across the boundary in `relay` above, `grants`' `Prod` emitting `Ask(repo)`
+/// a parameter short of `when: Ask(repo, kind)` — and nothing else. The check
+/// reports a mismatch, not every chain.
+#[test]
+fn only_an_emission_a_listener_cannot_bind_is_reported() {
+    let mut modules: Vec<String> = std::fs::read_dir(fixtures().join("specs"))
+        .expect("the fixture specs are listed")
+        .filter_map(|entry| {
+            let path = entry.ok()?.path();
+            (path.extension()? == "allium")
+                .then(|| path.file_stem()?.to_str().map(str::to_owned))?
+        })
+        .collect();
+    modules.sort();
+    let names: Vec<&str> = modules.iter().map(String::as_str).collect();
+    let (runner, reader, paths) = replay_of(&names);
+    let graph = ingest(&runner, &reader, &paths).expect("the recorded fixtures ingest").graph;
+    let found: Vec<(&str, &str)> = graph
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code.as_deref() == Some("inspect.trigger.unbound"))
+        .map(|it| (it.node.as_deref().unwrap_or_default(), it.message.as_str()))
+        .collect();
+    let nodes: Vec<&str> = found.iter().map(|(node, _)| *node).collect();
+    assert_eq!(
+        nodes,
+        [
+            "chains::rule::Note",
+            "chains::rule::Publish",
+            "chains::rule::Publish",
+            "grants::rule::Prod"
+        ],
+        "{found:#?}"
+    );
+    assert_eq!(
+        found[3].1,
+        "`Prod` emits `Ask(repo)` without binding `kind` for `Ask`, which listens for `Ask(repo, \
+         kind)`: it carried 1 argument by position, and none in that place"
+    );
+}

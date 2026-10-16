@@ -43,6 +43,22 @@ impl Verdict {
     pub fn is_failure(self) -> bool {
         matches!(self, Verdict::Refused | Verdict::Unspecified | Verdict::Unexposed)
     }
+
+    /// Whether a step or a journey with this verdict is counted as holding.
+    ///
+    /// Only what the spec supports. A step whose verdict is `remark` is an act
+    /// no rule waits for: not a failure, and not the spec supporting anything
+    /// either, so it is not counted. A remark `check` makes about a line is
+    /// not a verdict at all — it is an aside ([`crate::Walked::asides`]) — so
+    /// a step every line of which the spec supports holds beside one.
+    ///
+    /// One definition, because every count of what held — the summary line,
+    /// the ground a journey stands on, the JSON and the server's tally — has
+    /// to give the same answer for the same step.
+    #[must_use]
+    pub fn holds(self) -> bool {
+        self == Verdict::Specified
+    }
 }
 
 /// Whether a set of walks passes at this strictness.
@@ -59,7 +75,7 @@ pub fn passes(walks: &[Walk], strictness: Strictness) -> bool {
 pub fn render(walks: &[Walk]) -> String {
     let mut out = String::new();
     for walk in walks {
-        let holds = walk.steps.iter().filter(|step| step.verdict() == Verdict::Specified).count();
+        let holds = walk.steps.iter().filter(|step| step.verdict().holds()).count();
         // The readable name in the heading, because a column of PascalCase is
         // work nobody should be doing. The identifier is one line down, on the
         // journeys that carry a `from the file` ledger, and in the JSON — and
@@ -72,7 +88,7 @@ pub fn render(walks: &[Walk]) -> String {
         // given instead is the thing that decides whether any of this means
         // anything: whether the ground itself held.
         if let Some(standing) = &walk.after {
-            let how = if standing.verdict == Verdict::Specified {
+            let how = if standing.verdict.holds() {
                 String::new()
             } else {
                 ", so this begins somewhere the spec does not fully support".to_owned()
@@ -127,6 +143,13 @@ pub fn render(walks: &[Walk]) -> String {
                 }
                 out.push_str(&format!("        {}\n", outcome.about));
                 if let Some(detail) = &outcome.detail {
+                    out.push_str(&format!("          {detail}\n"));
+                }
+            }
+            // Under the step's own lines, marked, and not in its verdict.
+            for aside in &step.asides {
+                out.push_str(&format!("        {}  {}\n", aside.verdict.as_str(), aside.about));
+                if let Some(detail) = &aside.detail {
                     out.push_str(&format!("          {detail}\n"));
                 }
             }
@@ -185,6 +208,12 @@ pub fn as_json(walks: &[Walk]) -> serde_json::Value {
                             "verdict": outcome.verdict.as_str(),
                             "about": outcome.about,
                             "detail": outcome.detail,
+                        })).collect::<Vec<_>>(),
+                        "asides": step.asides.iter().map(|aside| serde_json::json!({
+                            "line": aside.line,
+                            "verdict": aside.verdict.as_str(),
+                            "about": aside.about,
+                            "detail": aside.detail,
                         })).collect::<Vec<_>>(),
                     })).collect::<Vec<_>>(),
                 })
@@ -277,6 +306,7 @@ mod tests {
             title: title.to_owned(),
             line: 9,
             outcomes,
+            asides: Vec::new(),
             world: inspect_sim::World::new(),
         }
     }
@@ -322,6 +352,52 @@ mod tests {
         assert!(!Verdict::Undecided.is_failure());
         assert!(!Verdict::Specified.is_failure());
         assert!(!Verdict::Remark.is_failure());
+    }
+
+    /// Only what the spec supports holds. A step whose verdict is a remark
+    /// is an act no rule waits for, and is not counted; a step whose lines
+    /// all hold beside an aside `check` made is, and the aside is printed
+    /// under it, marked.
+    #[test]
+    fn only_a_supported_step_holds_and_an_aside_does_not_change_that() {
+        let not = [
+            Verdict::Remark,
+            Verdict::Undecided,
+            Verdict::Refused,
+            Verdict::Unspecified,
+            Verdict::Unexposed,
+        ];
+        assert!(Verdict::Specified.holds());
+        assert!(!not.into_iter().any(Verdict::holds));
+
+        let mut aside = step(1, "she acts", vec![outcome(Verdict::Specified, "she acts", None)]);
+        aside.asides = vec![outcome(Verdict::Remark, "ada does Tag(o, urgnet)", Some("a typo?"))];
+        let steps = vec![
+            aside,
+            step(2, "she pokes", vec![outcome(Verdict::Remark, "she pokes", Some("no rule"))]),
+        ];
+        let out = render(&[walk("J", steps, Vec::new())]);
+        assert!(out.contains("J  —  1 of 2 steps hold"), "{out}");
+        assert!(
+            out.contains("        remark  ada does Tag(o, urgnet)\n          a typo?"),
+            "{out}"
+        );
+        let json = as_json(&[walk("J", vec![], Vec::new())]);
+        assert_eq!(json[0]["steps"], serde_json::json!([]));
+    }
+
+    /// The ground line agrees with the count beside it: a journey it stands on
+    /// whose worst step is a remark did not hold end to end, and says so.
+    #[test]
+    fn the_ground_line_is_judged_by_the_same_test_as_the_count() {
+        let mut on_remark = walk("J", vec![step(1, "she acts", vec![])], Vec::new());
+        on_remark.after = Some(ground(Verdict::Remark, 0, 1));
+        let out = render(&[on_remark]);
+        assert!(out.contains("0 of 1 steps held, so this begins somewhere"), "{out}");
+        let mut on_firm = walk("J", vec![step(1, "she acts", vec![])], Vec::new());
+        on_firm.after = Some(ground(Verdict::Specified, 1, 1));
+        let out = render(&[on_firm]);
+        assert!(out.contains("1 of 1 steps held\n"), "{out}");
     }
 
     #[test]

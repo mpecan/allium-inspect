@@ -124,7 +124,9 @@ pub(crate) fn reacts_in(spec: &SpecGraph, module: &str, when: Option<&Expr>) -> 
 /// `when`.
 ///
 /// A creation rule only by its creation; every other rule by its trigger's
-/// name, as before. The second half is what keeps a state rule's firing about
+/// name — and, when a rule emitted it, only a rule that hears the emitting
+/// module ([`inspect_model::listening::hears`], which `check` asks too).
+/// Waking a creation rule only by its creation keeps a state rule's firing about
 /// an order from reaching a rule that reacts to orders being made.
 ///
 /// And a creation rule only by a creation in the module its entity is from:
@@ -145,7 +147,11 @@ pub(crate) fn wakes(
                 && (event.module.is_empty()
                     || reacts_in(spec, module, when).is_none_or(|home| home == event.module))
         }
-        None => trigger == event.trigger,
+        None => {
+            trigger == event.trigger
+                && (!event.emitted
+                    || inspect_model::listening::hears(spec, module, when, &event.module))
+        }
     }
 }
 

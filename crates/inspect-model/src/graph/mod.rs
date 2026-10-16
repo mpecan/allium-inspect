@@ -423,23 +423,56 @@ impl SpecGraph {
     ///
     /// Written in one of two places and both count. `status: open | returned`
     /// carries its own; `withdrawn_because: WithdrawalReason?` carries none and
-    /// names an enumeration that does. The qualifier is dropped: `catalogue/
-    /// Medium` and `Medium` are one declaration written from two distances.
+    /// names an enumeration that does.
+    ///
+    /// `module` is where the entity declaring `field` lives, because the name
+    /// is read from there: a bare `Status` is that module's own, and
+    /// `catalogue/Medium` is whatever it imported `as catalogue`. Two modules
+    /// may each declare an `enum Status` with different values, and the first
+    /// one in the graph is not this field's. Only where the name leads to no
+    /// declaration from there is it looked up by name alone — and then only
+    /// when every enumeration of that name agrees, because picking one of
+    /// several is a guess. Ambiguous is no states, which every caller already
+    /// reads as *not known* rather than *none*.
     ///
     /// One home for the rule, because the simulator's `apply`, the browser's
     /// editor and the journey checker all ask it — and three copies of how to
-    /// strip a qualifier are three answers waiting to disagree.
+    /// resolve a qualifier are three answers waiting to disagree.
     #[must_use]
-    pub fn states_of<'a>(&'a self, field: &'a detail::EntityField) -> &'a [String] {
+    pub fn states_of<'a>(&'a self, module: &str, field: &'a detail::EntityField) -> &'a [String] {
         if !field.enum_values.is_empty() {
             return &field.enum_values;
         }
         let named = field.type_expr.trim().trim_end_matches('?');
-        let named = named.rsplit('/').next().unwrap_or(named);
-        self.nodes_of(NodeKind::Enum)
-            .find(|node| node.name == named)
-            .and_then(|node| node.detail.as_enum())
-            .map_or(&[], |detail| detail.values.as_slice())
+        let (qualifier, bare) =
+            named.rsplit_once('/').map_or((None, named), |(alias, bare)| (Some(alias), bare));
+        let home = self.home_of(module, qualifier);
+        let values = |node: &'a Node| node.detail.as_enum().map(|detail| detail.values.as_slice());
+        if let Some(found) = self.node(&NodeId::new(home, NodeKind::Enum, bare)).and_then(values) {
+            return found;
+        }
+        let mut named = self.nodes_of(NodeKind::Enum).filter(|node| node.name == bare);
+        let Some(first) = named.next().and_then(values) else { return &[] };
+        if named.all(|other| values(other) == Some(first)) { first } else { &[] }
+    }
+
+    /// The module a type name written in `module` is declared in: a bare name
+    /// is `module`'s own, and `alias/X` is in whatever `module` imported `as
+    /// alias` — or, when it imported nothing by that name, the module called
+    /// that.
+    ///
+    /// Where a name is read from, and nothing more: whether that module
+    /// declares it is the caller's question, and so is what to do when it
+    /// does not.
+    #[must_use]
+    pub fn home_of<'a>(&'a self, module: &'a str, qualifier: Option<&'a str>) -> &'a str {
+        let Some(alias) = qualifier else { return module };
+        self.modules
+            .iter()
+            .find(|declared| declared.name == module)
+            .and_then(|declared| declared.imports.iter().find(|import| import.alias == alias))
+            .and_then(|import| import.target.as_deref())
+            .unwrap_or(alias)
     }
 
     /// Every state any enumeration or inline status in the spec declares, once
@@ -551,10 +584,47 @@ mod tests {
     fn a_field_s_states_are_its_own_or_those_of_the_enumeration_it_names() {
         let graph = states_graph();
         let hold = graph.nodes[1].detail.as_entity().expect("an entity");
-        let states = |name: &str| graph.states_of(hold.field(name).expect("the field")).to_vec();
+        let states =
+            |name: &str| graph.states_of("desk", hold.field(name).expect("the field")).to_vec();
         assert_eq!(states("status"), ["pending", "granted"]);
         assert_eq!(states("because"), ["moved"], "qualified and optional, and still found");
         assert!(states("member").is_empty());
+    }
+
+    /// Two modules each declaring an `enum Status`: a field's is read from
+    /// the module of the entity declaring it, an alias through that module's
+    /// imports, and a name that leads nowhere from there is no states rather
+    /// than whichever `Status` came first.
+    #[test]
+    fn an_enumeration_is_read_from_the_module_of_the_field() {
+        let mut graph = SpecGraph::new("test");
+        let status = |module: &str, values: &[&str]| {
+            Node::new(module, NodeKind::Enum, "Status").with(NodeDetail::Enum(EnumDetail {
+                values: values.iter().map(|value| (*value).to_owned()).collect(),
+            }))
+        };
+        graph.nodes.push(status("pages", &["draft", "live"]));
+        graph.nodes.push(status("tickets", &["open", "closed"]));
+        graph.modules.push(Module {
+            name: "tickets".to_owned(),
+            path: "tickets.allium".to_owned(),
+            imports: vec![Import {
+                alias: "p".to_owned(),
+                path: "./pages.allium".to_owned(),
+                target: Some("pages".to_owned()),
+                span: None,
+            }],
+            language_version: None,
+        });
+        let own = EntityField::new("status", "Status");
+        let theirs = EntityField::new("page_status", "p/Status?");
+        assert_eq!(graph.states_of("tickets", &own), ["open", "closed"]);
+        assert_eq!(graph.states_of("pages", &own), ["draft", "live"]);
+        assert_eq!(graph.states_of("tickets", &theirs), ["draft", "live"], "through the alias");
+        assert!(graph.states_of("elsewhere", &own).is_empty(), "two answers is no answer");
+        // One `Status` in the whole set is that one, from wherever it is named.
+        graph.nodes.remove(0);
+        assert_eq!(graph.states_of("elsewhere", &own), ["open", "closed"]);
     }
 
     #[test]

@@ -106,6 +106,7 @@ fn emitted(outcome: &StepOutcome, name: &str) -> Event {
                 module: module.clone(),
                 arguments: arguments.clone(),
                 positional: positional.clone(),
+                emitted: true,
             }),
             _ => None,
         })
@@ -284,4 +285,65 @@ fn a_definitely_false_precondition_refuses_despite_an_unbound_parameter() {
     assert!(when.unresolved[0].reason.contains("binds `scale`"), "{:?}", when.unresolved);
     assert!(weigh.requires.iter().any(|clause| clause.truth == Truth::False), "{weigh:#?}");
     assert_eq!(flag(&outcome, &doc, "weighed"), Value::Bool(false));
+}
+
+/// Two modules that do not import each other, each closing its own thing with
+/// its own `Closed`: a trigger name they share by coincidence.
+fn unrelated() -> (SpecGraph, Program, Sources) {
+    let modules = [
+        (
+            "issues",
+            "-- allium: 3\nentity Issue { closed: Boolean }\n\
+             rule CloseIssue {\n    when: CloseIssue(issue)\n    ensures: Closed(issue: issue)\n}\n\
+             rule MarkIssueClosed {\n    when: Closed(issue)\n    ensures: issue.closed = true\n}\n",
+        ),
+        (
+            "pulls",
+            "-- allium: 3\nentity Pull { closed: Boolean }\n\
+             rule ClosePull {\n    when: ClosePull(pull)\n    ensures: Closed(pull: pull)\n}\n\
+             rule MarkPullClosed {\n    when: Closed(pull)\n    ensures: pull.closed = true\n}\n",
+        ),
+    ];
+    let mut runner = MapRunner::new("test");
+    let mut reader = MemoryReader::default();
+    let mut sources: Sources = BTreeMap::new();
+    let mut paths = Vec::new();
+    for (module, text) in modules {
+        let path = PathBuf::from(format!("{module}.allium"));
+        for command in [Command::Model, Command::Plan] {
+            runner = runner.with(command, &path, serde_json::json!({}));
+        }
+        reader = reader.with(&path, text);
+        sources.insert(module.to_owned(), text.to_owned());
+        paths.push(path);
+    }
+    let Ingestion { graph, program } = ingest(&runner, &reader, &paths).expect("ingests");
+    (graph, program, sources)
+}
+
+/// An emission wakes the rules that hear the module it was emitted in, and
+/// not an unrelated module's rule waiting on the same word — which reported a
+/// correct rule undecided, handed `issue` when it waits for `pull`.
+#[test]
+fn an_emission_is_not_heard_by_a_module_that_does_not_import_the_emitter() {
+    let (graph, program, sources) = unrelated();
+    let mut world = World::new();
+    let issue = world.create("Issue", "issues");
+    world.set_field(&issue, "closed", Value::Bool(false));
+    let event = Event::new("Closed", "issues").with("issue", Value::Ref(issue)).as_emitted();
+    let outcome = step(&graph, &program, &sources, &world, &event);
+    let woken: Vec<&str> = outcome.rules.iter().map(|rule| rule.name.as_str()).collect();
+    assert_eq!(woken, ["MarkIssueClosed"]);
+    assert_eq!(outcome.rules[0].disposition, Disposition::Fired);
+}
+
+/// A firing nobody emitted is not narrowed: which module's `Closed` a person
+/// meant is not something to guess, so both listeners are woken as before.
+#[test]
+fn a_firing_nobody_emitted_still_wakes_every_listener_of_that_name() {
+    let (graph, program, sources) = unrelated();
+    let event = Event::new("Closed", "issues");
+    let outcome = step(&graph, &program, &sources, &World::new(), &event);
+    let woken: Vec<&str> = outcome.rules.iter().map(|rule| rule.name.as_str()).collect();
+    assert_eq!(woken, ["MarkIssueClosed", "MarkPullClosed"]);
 }

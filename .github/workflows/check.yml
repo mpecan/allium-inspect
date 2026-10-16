@@ -7,9 +7,10 @@
 # exercises the process runner deliberately names a binary that does not exist.
 #
 # `fetch-depth: 0` is not optional: `coverage-fresh` and `mutation-debt` both
-# measure drift in commits since a recorded sha, and a shallow clone makes that
-# distance meaningless — the gates would either fail on a stranger's PR or,
-# worse, quietly pass because the sha was not there to compare against.
+# measure drift in commits since a recorded sha — or, after a squash-merge, since
+# the commit on main with the same Rust sources — and a shallow clone makes that
+# distance meaningless. The gates refuse to search a shallow clone and say to
+# fetch full history, rather than fail with a misleading reason.
 
 name: check
 

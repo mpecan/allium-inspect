@@ -31,12 +31,20 @@ use crate::value::{EntityId, Instance, Value};
 pub struct Event {
     /// The trigger's name, as the spec spells it.
     pub trigger: String,
-    /// Where the trigger is declared.
+    /// Where the trigger is declared, or, for an emission, the module whose
+    /// rule emitted it.
     ///
-    /// A label, not a filter: rules are matched on the trigger's name alone,
-    /// because a module that `use`s another reacts to triggers that module
-    /// declares. Narrowing to this module would silence exactly those rules.
+    /// A label for a firing nobody emitted: an act wakes every rule waiting on
+    /// its name, because which module's trigger a person meant is not
+    /// something to guess. For an emission it is also a filter, read by
+    /// [`inspect_model::listening::hears`]: a rule hears its own module, the
+    /// modules it `use`s and the modules that `use` it — or, written `when:
+    /// chains/Published(…)`, only the module that names — and not an unrelated
+    /// module's trigger of the same name.
     pub module: String,
+    /// Whether a rule's `ensures` emitted this, rather than somebody firing it.
+    #[serde(default)]
+    pub emitted: bool,
     /// Argument bindings, by parameter name.
     pub arguments: BTreeMap<String, Value>,
     /// Arguments passed by position, in order.
@@ -59,7 +67,15 @@ impl Event {
             module: module.into(),
             arguments: BTreeMap::new(),
             positional: Vec::new(),
+            emitted: false,
         }
+    }
+
+    /// The same event, as an emission from its module.
+    #[must_use]
+    pub fn as_emitted(mut self) -> Self {
+        self.emitted = true;
+        self
     }
 
     /// The same event with `value` passed as its next positional argument.

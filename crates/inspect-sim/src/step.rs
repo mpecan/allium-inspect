@@ -32,6 +32,7 @@ use crate::{
     apply::{Application, Effect},
     binding, creation,
     eval::{Env, Unresolved, eval},
+    per_member,
     truth::Truth,
     value::Value,
     world::{Event, World},
@@ -45,6 +46,12 @@ pub struct ClauseVerdict {
     pub text: String,
     pub truth: Truth,
     /// What could not be decided, when anything could not.
+    ///
+    /// And, first, for a precondition inside a loop that one member failed,
+    /// which member and which loop — about the whole clause, so its
+    /// `expression` is the clause's own text. That one is the clause's alone
+    /// and is never among the rule's `unresolved`, because nothing about it
+    /// was undecided.
     pub unresolved: Vec<Unresolved>,
 }
 
@@ -379,32 +386,30 @@ fn run_rule(
 
     // The graph lists only the rule's own `requires`, not those written inside
     // a rule-level `for`, so its texts are counted against the top-level ones
-    // alone; a per-member clause is sliced from the source by its own span.
+    // alone; a per-member clause is sliced from the source by its own span,
+    // and read once for each member its loop keeps.
     let mut top_level = detail.clauses_of("requires");
+    let scope = || rule_scope(Env::new(world, module, source), program, &declared, &bindings);
     for (index, clause) in ast.requires.iter().enumerate() {
-        let (text, evaluated) = match ast.per_member.get(&index) {
+        let (text, read) = match ast.per_member.get(&index) {
             Some(within) => (
                 crate::eval::span_of(clause)
                     .and_then(|span| span.slice(source))
                     .map(str::to_owned)
                     .unwrap_or_default(),
-                per_member(within, clause, source),
+                per_member::precondition(within, clause, &scope, spec),
             ),
-            None => {
-                let scope =
-                    rule_scope(Env::new(world, module, source), program, &declared, &bindings);
-                (
-                    top_level.next().map(|clause| clause.text.clone()).unwrap_or_default(),
-                    eval(clause, &scope),
-                )
-            }
+            None => (
+                top_level.next().map(|clause| clause.text.clone()).unwrap_or_default(),
+                eval(clause, &scope()).into(),
+            ),
         };
+        let per_member::Precondition { evaluated, refused_by } = read;
         unresolved.extend(evaluated.unresolved.clone());
-        requires.push(ClauseVerdict {
-            text,
-            truth: evaluated.truth(),
-            unresolved: evaluated.unresolved,
-        });
+        let truth = evaluated.truth();
+        let mut said = evaluated.unresolved;
+        said.splice(0..0, refused_by);
+        requires.push(ClauseVerdict { text, truth, unresolved: said });
     }
 
     let verdict = Truth::all(requires.iter().map(|clause| clause.truth));
@@ -443,27 +448,6 @@ fn run_rule(
         effects,
         unresolved,
         unapplied,
-    }
-}
-
-/// A `requires` written inside a rule-level `for`: undecided, whatever it says.
-///
-/// Read as the rule's own, it named the loop's name unbound — unless a trigger
-/// argument or a `let` shared it, and then it was decided about that instead.
-fn per_member(within: &str, clause: &Expr, source: &str) -> crate::eval::Evaluation {
-    crate::eval::Evaluation {
-        value: Value::Unknown,
-        unresolved: vec![Unresolved {
-            reason: format!(
-                "this precondition is inside `for {within} in …`, and whether one member \
-                 failing it refuses the rule or only skips that member is not something the \
-                 simulator decides"
-            ),
-            expression: crate::eval::span_of(clause)
-                .and_then(|span| span.slice(source))
-                .map(str::to_owned),
-            span: crate::eval::span_of(clause),
-        }],
     }
 }
 

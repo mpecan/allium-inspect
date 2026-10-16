@@ -46,7 +46,7 @@ pub fn document(command: &str, file: &str, walks: &[Walk], error: Option<&str>) 
     }
     for walk in walks {
         for step in &walk.steps {
-            for outcome in &step.outcomes {
+            for outcome in step.outcomes.iter().chain(&step.asides) {
                 if outcome.verdict == Verdict::Specified {
                     continue;
                 }
@@ -73,7 +73,7 @@ pub fn document(command: &str, file: &str, walks: &[Walk], error: Option<&str>) 
 /// `type` and `summary` beside type-specific evidence, which is the shape
 /// every finding allium emits already has.
 fn finding(walk: &Walk) -> Value {
-    let holds = walk.steps.iter().filter(|step| step.verdict() == Verdict::Specified).count();
+    let holds = walk.steps.iter().filter(|step| step.verdict().holds()).count();
     json!({
         "type": "journey",
         "summary": format!(
@@ -96,6 +96,12 @@ fn finding(walk: &Walk) -> Value {
                 "verdict": verdict_name(outcome.verdict),
                 "about": outcome.about,
                 "detail": outcome.detail,
+            })).collect::<Vec<_>>(),
+            "asides": step.asides.iter().map(|aside| json!({
+                "line": aside.line,
+                "verdict": verdict_name(aside.verdict),
+                "about": aside.about,
+                "detail": aside.detail,
             })).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
     })
@@ -175,6 +181,7 @@ mod tests {
                         detail: Some("because".to_owned()),
                     })
                     .collect(),
+                asides: Vec::new(),
             }],
         }
     }

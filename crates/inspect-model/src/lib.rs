@@ -20,9 +20,11 @@
 
 #![forbid(unsafe_code)]
 
+pub mod binding;
 pub mod diagnostic;
 pub mod graph;
 pub mod ingest;
+pub mod listening;
 pub mod program;
 pub mod runner;
 pub mod span;
@@ -34,6 +36,8 @@ pub use graph::{
 pub use ingest::{
     FileReader, IngestError, Ingestion, MemoryReader, SourceReader, ingest, module_name,
 };
-pub use program::{Boundary, Context, Derivations, Function, Party, Program, RuleAst, derived_key};
+pub use program::{
+    Boundary, Context, Derivations, Function, Party, PerMember, Program, RuleAst, derived_key,
+};
 pub use runner::{AlliumRunner, Command, MapRunner, ProcessRunner, RunError};
 pub use span::{LineIndex, Position, Span};

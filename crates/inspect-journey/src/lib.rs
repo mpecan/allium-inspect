@@ -25,6 +25,7 @@ mod guard;
 pub mod journey;
 pub mod outcome;
 pub mod parse;
+mod reach;
 pub mod report;
 pub mod run;
 mod shapes;
@@ -32,6 +33,7 @@ mod standing;
 mod states;
 mod terms;
 pub mod title;
+mod words;
 mod world;
 
 pub use check::{Note, Verdict, check};

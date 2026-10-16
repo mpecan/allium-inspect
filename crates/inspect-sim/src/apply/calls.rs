@@ -35,8 +35,10 @@ impl Application<'_> {
             }
         }
 
-        // Otherwise a bare name: a trigger emission.
-        match bare_name(function) {
+        // Otherwise a bare name: a trigger emission. Asked of the same function
+        // ingestion reports an unbindable emission by, so the two agree on
+        // what an emission is.
+        match inspect_model::listening::emitted(function) {
             Some(trigger) => {
                 let (arguments, positional) = self.emission_arguments(args);
                 Applied::effect(Effect::Emitted {
@@ -79,14 +81,21 @@ impl Application<'_> {
     /// name it is nobody — so `Finish` was handed nothing for `how`, and its
     /// `how = cancel` could never be decided. When the spec declares that word
     /// as a state, the state is what was meant: an emission is the spec's own
-    /// act. A journey's act reads any unbound word as a state, and a word the
-    /// spec does not declare then compares false; here, with no journey to
-    /// have said it, only a declared one is.
+    /// act.
     ///
-    /// Only a declared state. A trigger's parameters carry no types, so there
-    /// is no other side to say a word is a state, and an undeclared word may be
-    /// something this simulator does not model. It stays undecided, and the
-    /// rule that reads it says so.
+    /// Only a declared state — the same test, [`SpecGraph::declared_states`],
+    /// the journey checker puts to a word a journey writes. The difference is
+    /// in who answers for a word that fails it. A journey is a person's text,
+    /// so the checker reports it before anything is walked: unspecified where
+    /// it is compared or written into a field (checked against that field's
+    /// own states when the field is known), a remark where an act only hands
+    /// it on — and the walk then passes the word as written, since nothing has
+    /// to match it. Here there is nobody to report it to. A trigger's
+    /// parameters carry no types, so there is no other side to say a word is a
+    /// state, and an undeclared word may be something this simulator does not
+    /// model. It stays undecided, and the rule that reads it says so.
+    ///
+    /// [`SpecGraph::declared_states`]: inspect_model::SpecGraph::declared_states
     fn carried(&self, value: &Expr) -> Value {
         let evaluated = self.evaluate(value).value;
         match bare_name(value) {
@@ -233,6 +242,12 @@ impl Application<'_> {
     /// asks `not exists Receipt{…, kind: read}` before creating one could
     /// never tell whether it already had, and a person reading the same
     /// message twice was undecidable from the second time on.
+    ///
+    /// A field declaring no states — an enumeration name ambiguous from its
+    /// module among them — takes no word here. A journey's checker is more
+    /// willing with the same field, accepting any state the spec declares,
+    /// because a journey's word is the author's own (`inspect_journey`'s
+    /// `words::unknown`).
     pub(super) fn declared_state(
         &self,
         home: &str,
@@ -245,7 +260,7 @@ impl Application<'_> {
         let spec = self.against.spec;
         let node = entity_node(spec, home, entity)?;
         let declared = node.detail.as_entity()?.field(field)?;
-        let known = spec.states_of(declared).iter().any(|state| state == name);
+        let known = spec.states_of(&node.module, declared).iter().any(|state| state == name);
         known.then(|| Value::Enum(name.to_owned()))
     }
 }

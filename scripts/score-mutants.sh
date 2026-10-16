@@ -68,10 +68,9 @@ sha="$(head_commit)"
     fail "the mutation run completed, but this branch has no commit to record it against.
        Commit first, then re-run."
 
-{
-    echo "# Mutation receipt — written by 'just mutants'. Do not hand-edit."
-    echo "# Read by scripts/check-mutation-debt.sh, which runs inside 'just check'."
-    echo "# Fields: <commit> <caught>/<total> <survivors> <measured-at>"
-    echo "$sha $caught/$total $survivors $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-} > "$receipt"
+fingerprint="$(rust_fingerprint "$sha")" || fail "could not read the Rust sources at $sha"
+require_fingerprint "$fingerprint" "Rust fingerprint of $sha"
+
+write_mutation_receipt "$receipt" "$sha" "$caught/$total" "$survivors" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$fingerprint"
 echo "Receipt written: $receipt"

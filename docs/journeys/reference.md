@@ -124,19 +124,90 @@ Both are *told*, not shown — nothing ran to make them true. That is the point 
 
 Values may be a number (`5`, `2_000_000`), a duration (`21.days`), a string
 (`"Ada"`), `true`, `false`, `null`, a set (`{a, b}`), a name the journey cast, or
-a bare word, which is read as a state the spec declares.
+a bare word, which is read as a state the spec declares — and is checked
+against the spec before anything runs, see [a word the spec does not
+declare](#a-word-the-spec-does-not-declare).
 
 A set is written on one line, and may be empty:
 
 ```
 given:
     repo.tags = {"a", "b"}
-    repo.owners = {ada, bruno}
+    repo.owners = {ada, bob}
     repo.labels = {}
 ```
 
 What tells the two forms apart is an `=` before the first brace, not the brace:
 `note: Message { body: "a = b" }` is still an instance.
+
+### A word the spec does not declare
+
+Nothing in the grammar tells a state apart from somebody the journey cast:
+`copy.status = available` and `loan.member = ada` are the same shape. The walk
+decides — a name the journey bound is what it is bound to, and any other word
+is the state it spells. So before anything runs, every such word is checked
+against the states the spec declares, the way the simulator checks a word one
+of the spec's own rules hands on:
+
+- **Written into a field the checker can name** — in `given`, in an inline
+  instance, in `stipulate <path> = …`, or on the right of a `then` comparison —
+  the word must be one of *that field's* states: its inline `open | returned`,
+  or the values of the enumeration it is typed by. The field is followed hop
+  by hop from the type the journey cast the name as, as long as each hop is an
+  entity or value type the spec declares. The enumeration's name is read in
+  the module that declares the field: two modules may each have an `enum
+  Status`, and an issue's `status` takes its own module's values, not the first
+  `Status` in the set. Where a name could mean either and nothing says which,
+  the field's states count as unknown, and the next rule applies.
+- **Anywhere else** — a field typed by an entity, a `String`, a collection, a
+  path the checker cannot follow — any state the spec declares anywhere will
+  do, because nothing says which one is meant.
+
+A word that fails is **unspecified**, names the field and the states it does
+declare, and suggests the nearest one when it is a slip away:
+
+```text
+`availble` is no state of `Copy.status`, which declares available, on_loan, lost — did you mean `available`?
+`bob` is nobody in this journey and no state the spec declares
+```
+
+On a `then` or `stipulate` line nothing is compared or written, as with any
+unspecified line. In `given`, the field is **left unset** rather than holding
+the word, so a rule that reads it is undecided and names the field, instead of
+refused on the strength of a state the spec has never heard of. A set with one
+such word in it, `hold.reviewers = {ada, bbo}`, is left unset whole: each bad
+member is reported, and laying out the rest would let `then ada in
+hold.reviewers` hold beside a line saying the set is wrong. Wherever the walk
+leaves a `given` unwritten the line carries a note saying why, so nothing is
+dropped without a word. The names a
+`given` block makes are known on every line of it, in any order: `copy: spare`
+may come before `spare: catalogue/Copy { … }`. A word that is
+a state — of another field — is still reported where the field is known:
+`then loan.status = available` can never hold when `available` is a copy's.
+A path through another entity is followed the same way, each hop in the module
+of the entity declaring the field: `bo.item.stage` on a `queue/Issue` with
+`item: Item` is the queue's `Item`, even when another module declares one too.
+
+The file's `world` is laid out before the journey's own cast, so a world line
+can name only the world's own cast and instances, and the journeys this one
+continues from. A world line naming somebody only the journey casts is
+**unspecified** — `` `ada` is cast by this journey, and the file's world is
+laid out before the journey's cast `` — and left unset.
+
+**An act's arguments** have no field to check against: a trigger's parameters
+carry no types. A word nobody cast and nothing declares there is reported as
+**unspecified** when a rule on that trigger compares the parameter against
+states (it can never match), and as a **remark** otherwise — worth a look, as
+it is usually somebody missing from the cast, and walked, since no rule has to
+match it. A remark is an *aside*: shown under the step by `check`, by the
+walk and in the browser alike, and no part of the step's verdict, which reads
+`holds` when everything the step asserts held.
+
+Left alone: a stipulated *call*'s arguments and answer — `stipulate can(r,
+code) = true` matches the words the spec writes in that call, which no
+enumeration need declare — anything under `config`, which the walk checks
+against the parameter's declared type, and a capitalised word, which is a
+collection (`Loans` is every loan — see [`then`](#then--assert-something)).
 
 ### Configuration — running with a switch turned on
 
@@ -484,9 +555,60 @@ c does Poke(c) on Console
 ```
 
 The same goes for a collection nobody settled, `for h in b.hooks` with `b.hooks`
-never stated. A `requires` written inside the loop is undecided whatever it
-says, naming the loop: whether a member failing it should refuse the whole
-rule or only skip that member is not something this tool decides for the spec.
+never stated.
+
+**A `requires` inside the loop is the rule's, for every member the filter
+keeps.** The reading this tool takes: a `requires` is a precondition of the
+rule wherever it is written, and inside a `for` it is quantified over the loop.
+One kept member failing it refuses the whole rule, and nothing it ensures is
+applied — not to that member, not to the others, not the clauses after the
+loop. It is not a guard that skips the member: the loop's `where` and an `if`
+inside it are how a spec says that, and reading `requires` as a third way would
+make it mean something different inside a loop from everywhere else. The
+language does not settle this, so the refusal says which reading was taken.
+
+```allium
+rule Muster {
+    when: Muster(c)
+    for h in Hooks where h.armed = true:
+        requires: h.active = true
+        ensures: h.swept = true
+    ensures: c.done = true
+}
+```
+
+It is decided the way `all` is over the same members, which are the ones the
+loop's `ensures` are applied to:
+
+- no hook, or no armed one: it holds — there is nothing for it to be false
+  about — and `Muster` fires;
+- every armed hook active: it holds, and an idle hook the filter leaves out is
+  not asked;
+- one armed hook inactive: `Muster` refuses, quoting `h.active = true` and
+  naming the loop and the hook — `` `for h in Hooks`: Hook#2 does not satisfy
+  this precondition, and a `requires` inside a loop is read for every member
+  the loop keeps, so the whole rule is refused `` — whatever else is
+  undecided;
+- an armed hook nobody said was active: undecided, naming the loop and the
+  member — `` `for h in Hooks` could not decide this precondition for Hook#1 ``;
+- a hook whose `armed` nobody stated counts only if it fails: active, it passes
+  whether the filter keeps it or not;
+- a collection that may be missing members — `for h in r.hooks` over
+  `hooks: Hook with rack = this`, with a hook whose `rack` nobody set — is
+  undecided when every hook it holds passes, because the one it may be missing
+  was never asked, and it says so: `` `for h in r.hooks` may be missing members
+  it could not decide on ``. A hook it does hold failing still refuses.
+
+A `let` written inside the loop above the clause is bound per member, so
+`let live = h.active` then `requires: live = true` reads each hook's own.
+The clause is shown as the spec wrote it, sliced from its own span.
+
+A loop that takes its members apart, `for (h, ok) in Hooks`, is not read at
+all: the simulator binds a member to one name, and leaving `ok` unbound would
+let a trigger argument or a rule-level `let ok` answer for it. A `requires`
+inside one is undecided and nothing it ensures is applied, each quoting the
+binding as written — `` `for (h, ok) in Hooks` takes each member apart into
+names, which this simulator does not do ``.
 
 **A rule that fired and left part of what it ensures unapplied leaves the step
 undecided**, `for` or not. Six things count, and only these: a member of a
@@ -583,6 +705,64 @@ The fix is in the spec: name the argument the way the listener does
 (`Published(doc: doc)`), pass it by position (`Published(doc)`), or rename the
 listener's parameter. A precondition that is definitely false still refuses
 the rule, because that is decided whatever the missing name would have been.
+
+#### Said before anything runs
+
+Which parameters an emission binds depends only on its *shape* — the names it
+passed and how many arguments it passed by position — so it does not need a
+journey to find out. Two places say it up front, from the same rules the walk
+binds by (one function answers all three, so they cannot disagree):
+
+- **The spec, in the browser and at the terminal.** Every `ensures:` emission
+  that leaves some listener's parameter unbound is a warning at the emission,
+  on the emitting rule, coded `inspect.trigger.unbound` — not `allium.*`,
+  because allium did not say it. Every pair is reported, whether or not a
+  journey reaches it:
+
+  ```text
+  `Publish` emits `Published(item: doc)` without binding `doc` for `MarkSeen`, which listens for `Published(doc)`: it was handed `item` by name, and a named argument binds only the parameter it names
+  ```
+
+- **`check`, on the act that sets it off.** An act whose trigger wakes a rule
+  that emits — or wakes a rule woken by one that emits, however far down — is
+  given a **remark** for each such listener parameter, with the same words and
+  the file and line of the emission — once a journey, on the first act that
+  reaches it. A remark and not a verdict: whether the
+  emission is reached in a world is the walk's question (it may sit in a branch
+  no world takes), so it is an aside beside the step and the step still
+  counts toward "N of M steps hold". The walk does not stop at a remark; it
+  shows it beside the step, runs the act and, when the emission is reached,
+  reports the listener **undecided** as above. An act the journey says is
+  refused (`cannot do`) sets nothing off and gets no remark.
+
+The reading this takes of the language, where the reference is silent:
+
+- **What an emission is.** A call to a bare name in an `ensures:` — at the top
+  of the clause, in a block, in either branch of an `if`, in the body of a
+  `for` that names its member once, or as the value of a `let` — a `for (a,
+  b) in …` is never applied, so nothing inside one is reached.
+  `Entity.created(…)` is a creation, and a
+  call inside a value (`x.n = f(y)`) is evaluated rather than emitted. A
+  qualified emission, `other/Published(…)`, is not applied by the walk at all
+  (it reports it as a form it does not model), so it is not checked here.
+- **Which rules it wakes.** A rule whose `when:` calls that trigger name and
+  *hears* the module the emission is written in: an unqualified `when:
+  Published(doc)` hears its own module, every module it `use`s and every
+  module that `use`s it — whose bare `Published(…)` may be this module's
+  trigger — and a qualified `when: chains/Published(doc)` hears only the
+  module it imported `as chains`. Two modules neither of which imports the
+  other and each have a
+  `Closed` have two triggers that share a word, and neither's emission wakes
+  the other's listener — in the walk, in the browser's *follow*, and here
+  alike. A trigger nobody emitted — an act, or one fired from the browser's
+  form — still wakes every rule waiting on its name, because which module's
+  trigger a person meant is not something to guess.
+- **A listener's own `let`** of a parameter's name is bound before its `when`
+  is read, so a parameter it gives itself is not reported.
+- **Not followed:** what a rule *reacting to a creation* emits. `check` follows
+  an act through emissions only; which module's `Order.created` a reaction
+  answers is a question about the instance. The spec-level warning still
+  reports such an emission, and the walk still reports the listener.
 
 ### `cannot do` — the spec refuses, and that is the point
 
@@ -829,6 +1009,13 @@ Six verdicts, and telling them apart is the whole point.
 | **unexposed** | it happens, and nobody is shown it | ⊘ |
 | **undecided** | this tool could not tell | ◈ |
 | **remark** | worth a look | · |
+
+A step marked **remark** is an act no rule waits for: not a failure, and not
+the spec supporting anything either, so it is not counted in "N of M steps
+hold". A remark `check` makes about a line — a bare word no rule compares, an
+emission some listener cannot bind — is not a step's verdict at all: it is an
+aside, shown under the step, and a step whose every line holds still holds
+beside one.
 
 The three that are not "holds" are three different pieces of work. "The spec
 forbids this", "the spec has never heard of this" and "this tool could not tell"

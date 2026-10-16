@@ -1,0 +1,1 @@
+{"diagnostics":[],"entities":[{"fields":[{"name":"seen","type_expr":"Boolean"},{"name":"filed","type_expr":"Boolean"}],"kind":"internal","name":"Story"}],"version":3}

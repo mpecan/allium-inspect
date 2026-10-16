@@ -24,7 +24,7 @@ function emptyWorld(now = 0): World {
 function outcome(trigger: string, now: number, emitted: string[] = []): StepOutcome {
   return {
     world: emptyWorld(now),
-    event: { trigger, module: "m", arguments: {}, positional: [] },
+    event: { trigger, module: "m", emitted: false, arguments: {}, positional: [] },
     rules: [],
     invariants: [],
     newly_enabled: [],

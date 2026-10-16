@@ -14,6 +14,19 @@
 -- named like a hook's own field, `Mark` decides everything it ensures while
 -- carrying notes about what it did not need, and `Check` has a precondition
 -- inside its loop named like its trigger's argument.
+--
+-- `Muster` and `Hang` put a precondition inside the loop: every hook the
+-- filter keeps must be active, or the rule refuses. `Muster` ranges over the
+-- type's own hooks, which are all known; `Hang` over a rack's, a relationship
+-- that may be missing a hook whose `rack` nobody set. `Toll` puts one inside
+-- a loop over a bell's hooks, which a journey may never have stated. `Pair`
+-- takes each hook apart into two names, the second spelled like a `let` of
+-- the rule's own, which the simulator must not read in its place; `Split`
+-- does the same in what it ensures, spelling its binding without the space
+-- a reader would expect, so a verdict quoting it is seen to quote the spec.
+--
+-- `Hook.rack` is read only through `Rack.hooks`' `with rack = this`, so the
+-- analyse recording carries an info-level `allium.field.unused` about it.
 
 entity Hook {
     active: Boolean
@@ -21,6 +34,8 @@ entity Hook {
     swept: Boolean
     matched: Boolean
     flagged: Boolean
+    armed: Boolean
+    rack: Rack
 }
 
 entity Clock {
@@ -28,6 +43,11 @@ entity Clock {
     done: Boolean
     spare: Boolean
     marked: Boolean
+}
+
+entity Rack {
+    hooks: Hook with rack = this
+    hung: Boolean
 }
 
 entity Bell {
@@ -89,6 +109,48 @@ rule Check {
         ensures: w.swept = true
 }
 
+rule Muster {
+    when: Muster(c)
+    for h in Hooks where h.armed = true:
+        requires: h.active = true
+        ensures: h.swept = true
+    ensures: c.done = true
+}
+
+rule Hang {
+    when: Hang(r)
+    for h in r.hooks:
+        let live = h.active
+        requires: live = true
+        ensures: h.swept = true
+    ensures: r.hung = true
+}
+
+rule Toll {
+    when: Toll(b)
+    for h in b.hooks:
+        requires: h.active = true
+        ensures: h.swept = true
+    ensures: b.rung = true
+}
+
+rule Pair {
+    when: Pair(c)
+    let ok = true
+    for (h, ok) in Hooks:
+        requires: ok = true
+        ensures: h.swept = true
+    ensures: c.done = true
+}
+
+rule Split {
+    when: Split(c)
+    let swept = true
+    for (h,swept) in Hooks:
+        ensures: h.swept = swept
+    ensures: c.done = true
+}
+
 rule Poke {
     when: Poke(c)
     ensures: Raised(kind: "x")
@@ -116,6 +178,9 @@ surface Console {
         Sweep(c)
         Wave(c)
         Mark(c)
+        Muster(c)
+        Pair(c)
+        Split(c)
 }
 
 surface Panel {
@@ -128,4 +193,11 @@ surface Belfry {
     facing b: Bell
     provides:
         Ring(b)
+        Toll(b)
+}
+
+surface Workshop {
+    facing r: Rack
+    provides:
+        Hang(r)
 }

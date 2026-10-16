@@ -15,6 +15,7 @@ describe("chosenEvent", () => {
     expect(chosenEvent("Assign", "desk", [task, user])).toEqual({
       trigger: "Assign",
       module: "desk",
+      emitted: false,
       arguments: {},
       positional: [task, user],
     });
@@ -29,7 +30,10 @@ describe("chosenEvent", () => {
 });
 
 describe("followedEvent", () => {
-  it("fires an emission with what it carried, both ways", () => {
+  // Marked as an emission, so the step hears it only where the walk would: a
+  // module that does not import `chains` and has its own `Published` is not
+  // woken by this one.
+  it("fires an emission with what it carried, both ways, as an emission", () => {
     const emission: Emission = {
       kind: "emitted",
       trigger: "Published",
@@ -40,6 +44,7 @@ describe("followedEvent", () => {
     expect(followedEvent(emission)).toEqual({
       trigger: "Published",
       module: "chains",
+      emitted: true,
       arguments: { item: task },
       positional: [user],
     });

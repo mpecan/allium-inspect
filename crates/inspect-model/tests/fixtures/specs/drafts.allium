@@ -1,0 +1,17 @@
+-- allium: 3
+-- drafts.allium
+--
+-- A `Status` and an `Item` of its own, read beside `queue.allium`, which
+-- declares a different one of each. Two modules naming an enumeration or an
+-- entity alike is ordinary in a spec set; which one a field means is read from
+-- the module declaring the field, never from whichever comes first.
+
+enum Status { draft | live }
+
+entity Page {
+    status: Status
+}
+
+entity Item {
+    stage: draft | live
+}

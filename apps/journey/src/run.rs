@@ -10,7 +10,7 @@
 
 use std::{collections::BTreeMap, io::Write, path::Path};
 
-use inspect_journey::{Strictness, Walk, journey::Journey};
+use inspect_journey::{Strictness, Verdict, Walk, journey::Journey};
 use inspect_model::{
     AlliumRunner, FileReader, Ingestion, Program, SourceReader, SpecGraph, ingest, module_name,
 };
@@ -150,21 +150,25 @@ fn statically(
         .map(|step| {
             let lines: Vec<usize> =
                 step.clauses.iter().map(inspect_journey::Clause::line).collect();
+            let as_outcome = |note: &inspect_journey::Note| inspect_journey::Outcome {
+                line: note.line,
+                verdict: note.verdict,
+                about: note.message.clone(),
+                detail: None,
+            };
+            let (asides, outcomes): (Vec<_>, Vec<_>) = notes
+                .iter()
+                .filter(|note| lines.contains(&note.line))
+                .partition(|note| note.verdict == Verdict::Remark);
+            // A remark is an aside, as it is in the walk: worth reading, and
+            // no part of whether the step holds.
             inspect_journey::Walked {
                 number: step.number,
                 title: step.title.clone(),
                 line: step.line,
                 world: inspect_sim::World::new(),
-                outcomes: notes
-                    .iter()
-                    .filter(|note| lines.contains(&note.line))
-                    .map(|note| inspect_journey::Outcome {
-                        line: note.line,
-                        verdict: note.verdict,
-                        about: note.message.clone(),
-                        detail: None,
-                    })
-                    .collect(),
+                outcomes: outcomes.into_iter().map(as_outcome).collect(),
+                asides: asides.into_iter().map(as_outcome).collect(),
             }
         })
         .collect();
@@ -256,10 +260,15 @@ mod tests {
     /// `allium` on PATH, in milliseconds, against the same recordings every
     /// other test in the repository uses.
     fn recorded() -> (MapRunner, Vec<PathBuf>) {
+        recorded_of(&["catalogue", "lending"])
+    }
+
+    /// The same, for `modules`.
+    fn recorded_of(modules: &[&str]) -> (MapRunner, Vec<PathBuf>) {
         let root = fixtures();
         let mut runner = MapRunner::new(read(&root.join("cli/VERSION")).trim());
         let mut specs = Vec::new();
-        for module in ["catalogue", "lending"] {
+        for module in modules {
             let path = root.join(format!("specs/{module}.allium"));
             for command in CliCommand::ALL {
                 let document = read(&root.join(format!("cli/{module}.{command}.json")));
@@ -366,6 +375,40 @@ mod tests {
         // A real spec has fields nobody has stated, so a gate that failed
         // there would fail on every journey that leaves one unsaid.
         assert_eq!(walk_code, CLEAN, "a world that could not settle it is not a refusal");
+    }
+
+    /// Issue #12, option 2, end to end: `check` says up front what the walk
+    /// would find, on the act's line, as a remark — `info`, and no failure,
+    /// because whether the emission is reached is the walk's to say.
+    #[test]
+    fn check_remarks_on_an_act_that_sets_off_an_emission_no_listener_can_bind() {
+        let (runner, specs) = recorded_of(&["chains", "relay"]);
+        let found = Found { specs, journeys: vec![journeys().join("chains.journey")] };
+        let mut out = Vec::new();
+        let code = all(&runner, &check_command(), &options(false, false), &found, &mut out)
+            .unwrap_or_else(|error| panic!("{error}"));
+        let document: serde_json::Value =
+            serde_json::from_slice(&out).unwrap_or_else(|error| panic!("JSON: {error}"));
+        let diagnostics = document["diagnostics"].as_array().cloned().unwrap_or_default();
+        let codes: Vec<&str> =
+            diagnostics.iter().filter_map(|diagnostic| diagnostic["code"].as_str()).collect();
+        assert_eq!(codes, ["allium.journey.remark", "allium.journey.remark"], "{document:#}");
+        assert!(diagnostics.iter().all(|diagnostic| diagnostic["severity"] == "info"));
+        let message = diagnostics[0]["message"].as_str().unwrap_or_default();
+        assert!(
+            message.contains(
+                "`Publish` emits `Published(item: doc)` without binding `doc` for `MarkSeen`"
+            ),
+            "{message}"
+        );
+        assert!(message.contains("chains.allium:37)"), "where the emission is: {message}");
+        assert_eq!(code, CLEAN, "a remark is worth reading and is not a failure");
+        // And the step it sits on still holds: every line of it is supported,
+        // and the remark is conditional on a world `check` does not have.
+        assert_eq!(
+            document["findings"][0]["summary"], "ChainedByName: 1 of 1 steps hold",
+            "{document:#}"
+        );
     }
 
     #[test]

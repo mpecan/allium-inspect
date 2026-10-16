@@ -920,3 +920,303 @@ fn a_precondition_inside_a_loop_is_shown_as_the_spec_wrote_it() {
     assert_eq!(texts, ["w.active = true"], "{:?}", check.requires);
     assert_eq!(check.requires[0].truth, Truth::Unknown);
 }
+
+/// `Muster` over the hooks `armed` says, each with whether it is active.
+fn mustered(hooks: &[(Option<bool>, Option<bool>)]) -> inspect_sim::RuleOutcome {
+    let (graph, program, sources) = recorded(&["fanout"]);
+    let mut world = World::new();
+    let clock = world.create("Clock", "fanout");
+    world.set_field(&clock, "done", Value::Bool(false));
+    for (armed, active) in hooks {
+        let hook = world.create("Hook", "fanout");
+        if let Some(armed) = armed {
+            world.set_field(&hook, "armed", Value::Bool(*armed));
+        }
+        if let Some(active) = active {
+            world.set_field(&hook, "active", Value::Bool(*active));
+        }
+    }
+    let event = Event::new("Muster", "fanout").passing(Value::Ref(clock));
+    let outcome = step(&graph, &program, &sources, &world, &event);
+    outcome_for("Muster", &outcome)
+}
+
+/// The verdict on `Muster`'s one precondition, the one inside its loop.
+fn inside(outcome: &inspect_sim::RuleOutcome) -> &ClauseVerdict {
+    let clause = outcome.requires.iter().find(|it| it.text == "h.active = true");
+    clause.unwrap_or_else(|| panic!("the clause inside the loop: {:?}", outcome.requires))
+}
+
+/// A `requires` inside a rule-level `for` is the rule's precondition for every
+/// member the filter keeps. Over no members it holds: there is nothing for it
+/// to be false about.
+#[test]
+fn a_precondition_inside_a_loop_over_no_members_holds() {
+    let outcome = mustered(&[]);
+    assert_eq!(outcome.disposition, Disposition::Fired, "{:?}", outcome.requires);
+    assert_eq!(inside(&outcome).truth, Truth::True);
+}
+
+/// Every kept member passing fires the rule; a member the filter leaves out is
+/// not asked, even one that would fail.
+#[test]
+fn a_precondition_inside_a_loop_is_asked_only_of_the_members_the_filter_keeps() {
+    let outcome = mustered(&[(Some(true), Some(true)), (Some(false), Some(false))]);
+    assert_eq!(outcome.disposition, Disposition::Fired, "{:?}", outcome.requires);
+    assert_eq!(inside(&outcome).truth, Truth::True);
+}
+
+/// One kept member failing refuses the whole rule, and nothing it ensures is
+/// applied — not to the member that passed either.
+#[test]
+fn a_precondition_inside_a_loop_one_kept_member_failing_refuses_the_rule() {
+    let outcome = mustered(&[(Some(true), Some(true)), (Some(true), Some(false))]);
+    assert_eq!(outcome.disposition, Disposition::Refused, "{:?}", outcome.requires);
+    assert_eq!(inside(&outcome).truth, Truth::False);
+    assert!(outcome.effects.is_empty(), "{:?}", outcome.effects);
+    // Which member, and which loop, beside the clause: `h.active = true` alone
+    // is a clause about nobody in particular. The clause's to show, and not
+    // the rule's: nothing about a refusal was undecided.
+    let said = &inside(&outcome).unresolved[0];
+    assert_eq!(
+        said.reason,
+        "`for h in Hooks`: Hook#2 does not satisfy this precondition, and a `requires` inside a \
+         loop is read for every member the loop keeps, so the whole rule is refused"
+    );
+    assert_eq!(said.expression.as_deref(), Some("h.active = true"));
+    assert!(outcome.unresolved.is_empty(), "{:?}", outcome.unresolved);
+}
+
+/// False beside undecided is false: one member that fails settles it, whatever
+/// the one nobody gave an `active` would have said.
+#[test]
+fn a_precondition_inside_a_loop_failing_for_one_member_is_not_unsettled_by_another() {
+    let outcome = mustered(&[(Some(true), None), (Some(true), Some(false))]);
+    assert_eq!(outcome.disposition, Disposition::Refused, "{:?}", outcome.requires);
+}
+
+/// A kept member it cannot decide about leaves the rule undecided, and the
+/// reason names the loop and the member before what could not be read.
+#[test]
+fn a_precondition_inside_a_loop_a_kept_member_it_cannot_decide_about_is_undecided() {
+    let outcome = mustered(&[(Some(true), None)]);
+    assert_eq!(outcome.disposition, Disposition::Undecided, "{:?}", outcome.requires);
+    let clause = inside(&outcome);
+    assert_eq!(clause.truth, Truth::Unknown);
+    let first = &clause.unresolved[0].reason;
+    assert!(first.contains("`for h in Hooks`"), "{first}");
+    assert!(first.contains("Hook#1"), "{first}");
+    assert_eq!(clause.unresolved[0].expression.as_deref(), Some("h.active = true"));
+}
+
+/// A member whose filter cannot be decided is asked anyway: passing, it does
+/// not matter whether the filter keeps it.
+#[test]
+fn a_precondition_inside_a_loop_a_member_the_filter_cannot_decide_about_that_passes_holds() {
+    let outcome = mustered(&[(None, Some(true))]);
+    assert_eq!(inside(&outcome).truth, Truth::True, "{:?}", outcome.requires);
+}
+
+/// Failing, it does: whether the rule refuses depends on whether the filter
+/// keeps it, so it is undecided, naming the loop's filter.
+#[test]
+fn a_precondition_inside_a_loop_a_member_the_filter_cannot_decide_about_that_fails_is_undecided() {
+    let outcome = mustered(&[(None, Some(false))]);
+    let clause = inside(&outcome);
+    assert_eq!(clause.truth, Truth::Unknown, "{:?}", outcome.requires);
+    let first = &clause.unresolved[0].reason;
+    assert!(first.contains("could not tell whether its filter keeps Hook#1"), "{first}");
+    assert!(first.ends_with("and this precondition does not hold for it"), "{first}");
+    assert_eq!(clause.unresolved[0].expression.as_deref(), Some("h.armed = true"));
+}
+
+/// Neither the filter nor the clause decided: undecided, saying both.
+#[test]
+fn a_precondition_inside_a_loop_a_member_nothing_was_said_about_is_undecided_saying_both() {
+    let outcome = mustered(&[(None, None)]);
+    let clause = inside(&outcome);
+    assert_eq!(clause.truth, Truth::Unknown, "{:?}", outcome.requires);
+    let first = &clause.unresolved[0].reason;
+    assert!(first.contains("could not tell whether its filter keeps Hook#1"), "{first}");
+    assert!(first.ends_with("could not be decided for it either"), "{first}");
+}
+
+/// A loop over a collection nobody stated has no members to read the
+/// precondition for: undecided, naming the loop and the collection.
+#[test]
+fn a_precondition_inside_a_loop_over_a_collection_nobody_settled_is_undecided_and_names_it() {
+    let (graph, program, sources) = recorded(&["fanout"]);
+    let mut world = World::new();
+    let bell = world.create("Bell", "fanout");
+    let event = Event::new("Toll", "fanout").passing(Value::Ref(bell));
+    let outcome = step(&graph, &program, &sources, &world, &event);
+    let toll = outcome_for("Toll", &outcome);
+    assert_eq!(toll.disposition, Disposition::Undecided, "{:?}", toll.requires);
+    let first = &toll.unresolved[0];
+    assert_eq!(
+        first.reason,
+        "`for h in b.hooks`: `b.hooks` was never settled, so this precondition could not be \
+         read for its members"
+    );
+    assert_eq!(first.expression.as_deref(), Some("b.hooks"));
+}
+
+/// The same loop over a value that is not a collection says what it is.
+#[test]
+fn a_precondition_inside_a_loop_over_something_that_is_not_a_collection_says_what_it_is() {
+    let (graph, program, sources) = recorded(&["fanout"]);
+    let mut world = World::new();
+    let bell = world.create("Bell", "fanout");
+    world.set_field(&bell, "hooks", Value::Int(3));
+    let event = Event::new("Toll", "fanout").passing(Value::Ref(bell));
+    let outcome = step(&graph, &program, &sources, &world, &event);
+    let toll = outcome_for("Toll", &outcome);
+    assert_eq!(toll.disposition, Disposition::Undecided, "{:?}", toll.requires);
+    let first = &toll.unresolved[0].reason;
+    assert!(first.starts_with("`for h in b.hooks` ranges over "), "{first}");
+    assert!(first.ends_with("so this precondition could not be read for its members"), "{first}");
+}
+
+/// `Hang` over a rack holding the hooks given, each `(on the rack, active)`:
+/// a hook not on it has no `rack` at all, so the rack may be missing it.
+fn hung(hooks: &[(bool, Option<bool>)]) -> inspect_sim::RuleOutcome {
+    let (graph, program, sources) = recorded(&["fanout"]);
+    let mut world = World::new();
+    let rack = world.create("Rack", "fanout");
+    for (on, active) in hooks {
+        let hook = world.create("Hook", "fanout");
+        if *on {
+            world.set_field(&hook, "rack", Value::Ref(rack.clone()));
+        }
+        if let Some(active) = active {
+            world.set_field(&hook, "active", Value::Bool(*active));
+        }
+    }
+    let event = Event::new("Hang", "fanout").passing(Value::Ref(rack));
+    let outcome = step(&graph, &program, &sources, &world, &event);
+    outcome_for("Hang", &outcome)
+}
+
+/// The verdict on `Hang`'s precondition, which reads a `let` the loop wrote.
+fn live(outcome: &inspect_sim::RuleOutcome) -> &ClauseVerdict {
+    let clause = outcome.requires.iter().find(|it| it.text == "live = true");
+    clause.unwrap_or_else(|| panic!("the clause inside the loop: {:?}", outcome.requires))
+}
+
+/// A precondition reading a `let` the loop wrote is undecided for a member the
+/// `let` could not settle, and says what the `let` could not read — not only
+/// that the clause was undecided.
+#[test]
+fn a_precondition_inside_a_loop_reading_a_let_says_what_the_let_could_not_settle() {
+    let outcome = hung(&[(true, None)]);
+    let clause = live(&outcome);
+    assert_eq!(clause.truth, Truth::Unknown, "{:?}", outcome.requires);
+    let first = &clause.unresolved[0].reason;
+    assert!(first.contains("`for h in r.hooks`"), "{first}");
+    assert!(first.contains("Hook#1"), "{first}");
+    assert!(
+        clause.unresolved.iter().any(|it| it.expression.as_deref() == Some("h.active")
+            && it.reason.contains("has no `active` set")),
+        "{:?}",
+        clause.unresolved
+    );
+}
+
+/// A member it could not decide about, over a collection that may also be
+/// missing members: undecided, saying both — that member's reason, and that
+/// there may be members it never asked.
+#[test]
+fn a_precondition_inside_a_loop_undecided_for_a_member_of_an_incomplete_collection_says_both() {
+    let outcome = hung(&[(true, None), (false, Some(true))]);
+    let clause = live(&outcome);
+    assert_eq!(clause.truth, Truth::Unknown, "{:?}", outcome.requires);
+    let reasons: Vec<&str> = clause.unresolved.iter().map(|it| it.reason.as_str()).collect();
+    assert!(reasons[0].contains("could not decide this precondition for Hook#1"), "{reasons:?}");
+    assert!(
+        reasons.contains(
+            &"`for h in r.hooks` may be missing members it could not decide on, so this \
+              precondition could not be checked for them"
+        ),
+        "{reasons:?}"
+    );
+}
+
+/// Every member the collection holds passes, and it may be missing one it
+/// could not decide on: undecided, not true, because the member it left out
+/// was never asked.
+#[test]
+fn a_precondition_inside_a_loop_every_held_member_passing_an_incomplete_collection_is_undecided() {
+    let outcome = hung(&[(true, Some(true)), (false, Some(true))]);
+    let clause = live(&outcome);
+    assert_eq!(clause.truth, Truth::Unknown, "{:?}", outcome.requires);
+    assert_eq!(outcome.disposition, Disposition::Undecided);
+    assert_eq!(
+        clause.unresolved[0].reason,
+        "`for h in r.hooks` may be missing members it could not decide on, so this precondition \
+         could not be checked for them"
+    );
+}
+
+/// And one member it holds failing settles it even so: refused, whatever the
+/// member it may have left out would have said.
+#[test]
+fn a_precondition_inside_a_loop_a_held_member_failing_an_incomplete_collection_is_refused() {
+    let outcome = hung(&[(true, Some(false)), (false, Some(true))]);
+    let clause = live(&outcome);
+    assert_eq!(clause.truth, Truth::False, "{:?}", outcome.requires);
+    assert_eq!(outcome.disposition, Disposition::Refused);
+}
+
+/// `for (h, ok) in Hooks` takes each member apart. The simulator binds a member
+/// to one name, so reading the clause would answer `ok` with the rule's own
+/// `let ok = true` — deciding it about the wrong thing. Undecided, quoting the
+/// binding as written, and nothing inside the loop is applied either.
+#[test]
+fn a_loop_that_takes_its_members_apart_is_not_read_with_an_outer_name_in_their_place() {
+    let (graph, program, sources) = recorded(&["fanout"]);
+    let mut world = World::new();
+    let clock = world.create("Clock", "fanout");
+    world.set_field(&clock, "done", Value::Bool(false));
+    world.create("Hook", "fanout");
+    let event = Event::new("Pair", "fanout").passing(Value::Ref(clock));
+    let outcome = step(&graph, &program, &sources, &world, &event);
+    let pair = outcome_for("Pair", &outcome);
+    assert_eq!(pair.disposition, Disposition::Undecided, "{:?}", pair.requires);
+    let clause = pair.requires.iter().find(|it| it.text == "ok = true");
+    let clause =
+        clause.unwrap_or_else(|| panic!("the clause inside the loop: {:?}", pair.requires));
+    assert_eq!(clause.truth, Truth::Unknown);
+    let first = &clause.unresolved[0];
+    assert_eq!(
+        first.reason,
+        "`for (h, ok) in Hooks` takes each member apart into names, which this simulator does \
+         not do, so this precondition could not be read for its members"
+    );
+    assert_eq!(first.expression.as_deref(), Some("(h, ok)"));
+}
+
+/// The same in what a loop ensures: `for (h,swept) in Hooks` writing
+/// `h.swept = swept` would write the rule's `let swept = true` to every hook.
+/// Nothing inside it is applied, and what was left undone quotes the binding
+/// as the spec spells it — without the space a rebuilt `(h, swept)` would have.
+#[test]
+fn a_loop_that_takes_its_members_apart_applies_nothing_inside_it() {
+    let (graph, program, sources) = recorded(&["fanout"]);
+    let mut world = World::new();
+    let clock = world.create("Clock", "fanout");
+    world.create("Hook", "fanout");
+    let event = Event::new("Split", "fanout").passing(Value::Ref(clock));
+    let outcome = step(&graph, &program, &sources, &world, &event);
+    let split = outcome_for("Split", &outcome);
+    assert_eq!(split.disposition, Disposition::Fired, "{:?}", split.requires);
+    let writes: Vec<String> = split.effects.iter().map(|it| format!("{it:?}")).collect();
+    assert!(!writes.iter().any(|it| it.contains("swept")), "{writes:#?}");
+    assert!(writes.iter().any(|it| it.contains("done")), "{writes:#?}");
+    let first = &split.unapplied[0];
+    assert_eq!(
+        first.reason,
+        "`for (h,swept) in Hooks` takes each member apart into names, which this simulator \
+         does not do, so the clauses inside it were not applied"
+    );
+    assert_eq!(first.expression.as_deref(), Some("(h,swept)"));
+}

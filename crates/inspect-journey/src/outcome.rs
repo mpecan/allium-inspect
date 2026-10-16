@@ -63,12 +63,26 @@ pub(crate) fn refusal(outcome: &StepOutcome) -> Option<String> {
 }
 
 /// Why a rule refused: the clauses that were false, as the spec wrote them.
+///
+/// With what the simulator said about a false clause as a whole, when it said
+/// anything: a precondition inside a loop names the member that failed it and
+/// the loop, and without that `h.active = true` is a clause about nobody in
+/// particular.
 pub(crate) fn refused(rule: &RuleOutcome) -> String {
-    let blocking: Vec<&str> = rule
+    let blocking: Vec<String> = rule
         .requires
         .iter()
         .filter(|clause| clause.truth == Truth::False)
-        .map(|clause| clause.text.as_str())
+        .map(|clause| {
+            let whole = clause
+                .unresolved
+                .iter()
+                .find(|note| note.expression.as_deref() == Some(clause.text.as_str()));
+            match whole {
+                Some(note) => format!("{} — {}", clause.text, note.reason),
+                None => clause.text.clone(),
+            }
+        })
         .collect();
     blocking.join("; ")
 }

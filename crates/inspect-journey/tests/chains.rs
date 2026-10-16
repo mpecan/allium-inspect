@@ -176,3 +176,80 @@ fn an_optional_parameter_beside_a_misnamed_argument_is_undecided_not_null() {
     assert!(detail.contains("`Mark` could not be decided"), "{detail}");
     assert!(detail.contains("binds `cause`: it was handed `reason` by name"), "{detail}");
 }
+
+/// Issue #12, option 2: `check` says it before anything runs. The act sets
+/// off `Publish`, whose `Published(item: doc)` neither `MarkSeen` nor, across
+/// the boundary, `Echo` can bind `doc` from — a remark on the act's line, which
+/// is worth reading and is not a failure: whether the emission is reached is
+/// the walk's to say.
+#[test]
+fn check_remarks_on_an_act_that_sets_off_an_emission_a_listener_cannot_bind() {
+    let journeys = parse(AS_FILED).expect("the journey parses");
+    let (graph, program, _) = common::library(CHAINS);
+    let notes = inspect_journey::check(&journeys[0], &journeys, &graph, &program);
+    let act = journeys[0].steps[0].clauses[0].line();
+    // The emission quoted as written, and where it is: the act's line is in
+    // the journey, and the emission is in the spec.
+    let at = format!(" (at {}:37)", common::fixtures().join("specs/chains.allium").display());
+    let said: Vec<(usize, Verdict, &str)> =
+        notes.iter().map(|note| (note.line, note.verdict, note.message.as_str())).collect();
+    let mark_seen = format!(
+        "`Publish` emits `Published(item: doc)` without binding `doc` for `MarkSeen`, which \
+         listens for `Published(doc)`: it was handed `item` by name, and a named argument binds \
+         only the parameter it names{at}"
+    );
+    let echo = format!(
+        "`Publish` emits `Published(item: doc)` without binding `doc` for `relay/Echo`, which \
+         listens for `chains/Published(doc)`: it was handed `item` by name, and a named \
+         argument binds only the parameter it names{at}"
+    );
+    assert_eq!(
+        said,
+        [(act, Verdict::Remark, mark_seen.as_str()), (act, Verdict::Remark, echo.as_str())]
+    );
+    assert!(!Verdict::Remark.is_failure());
+}
+
+/// An act the journey says is refused sets nothing off, so `check` does not
+/// remark on what it would have: the same act written `does` draws two.
+#[test]
+fn check_does_not_remark_on_an_act_the_journey_says_is_refused() {
+    let source = "journey J {
+    cast:
+        d: Doc
+    1. publish, refused
+        d cannot do Publish(d) on Desk
+}";
+    let journeys = parse(source).expect("the journey parses");
+    let (graph, program, _) = common::library(CHAINS);
+    let notes = inspect_journey::check(&journeys[0], &journeys, &graph, &program);
+    assert!(notes.iter().all(|note| note.verdict != Verdict::Remark), "{notes:#?}");
+}
+
+/// The control: an act whose emissions every listener binds draws no remark.
+#[test]
+fn check_says_nothing_of_an_act_whose_emissions_every_listener_binds() {
+    let source = "journey J {
+    cast:
+        d: Doc
+    1. republish and announce
+        d does Republish(d) on Desk
+        d does Announce(d) on Desk
+        d does Share(d) on Desk
+        d does Pair(d) on Desk
+}";
+    let journeys = parse(source).expect("the journey parses");
+    let (graph, program, _) = common::library(CHAINS);
+    let notes = inspect_journey::check(&journeys[0], &journeys, &graph, &program);
+    assert!(notes.is_empty(), "{notes:#?}");
+}
+
+/// The remark does not stop the walk running the act: the walk has the better
+/// answer — the listener undecided, at run time — and still gives it.
+#[test]
+fn a_remark_from_check_does_not_stop_the_walk_running_the_act() {
+    let walk = walked(AS_FILED);
+    let act = &walk.steps[0].outcomes[0];
+    assert_eq!(act.verdict, Verdict::Undecided, "{act:#?}");
+    assert!(act.detail.as_deref().is_some_and(|it| it.contains("what it set off")), "{act:#?}");
+}

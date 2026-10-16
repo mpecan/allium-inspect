@@ -71,6 +71,39 @@ expect_pass() {
     fi
 }
 
+# Assert a command exits 0 *and* says something: a pass for the right reason.
+expect_pass_saying() {
+    local what="$1" want="$2"; shift 2
+    checks=$((checks + 1))
+    local out status
+    out="$("$@" 2>&1)" && status=0 || status=$?
+    if [ "$status" -ne 0 ]; then
+        echo "FAIL: $what — expected exit 0, got $status"
+        echo "$out" | sed 's/^/      /'
+        failures=$((failures + 1))
+    elif ! printf '%s' "$out" | grep -q "$want"; then
+        echo "FAIL: $what — passed but did not say '$want'"
+        echo "$out" | sed 's/^/      /'
+        failures=$((failures + 1))
+    else
+        echo "ok:   $what passes, saying why"
+    fi
+}
+
+# Assert the Nth field of a receipt's data line is the Rust fingerprint of HEAD.
+expect_fingerprint_field() {
+    local what="$1" file="$2" field="$3" got want
+    checks=$((checks + 1))
+    got="$(receipt_line "$file" | awk -v f="$field" '{ print $f }')"
+    want="$(rust_fingerprint HEAD)"
+    if [ "$got" = "$want" ]; then
+        echo "ok:   $what records the Rust fingerprint"
+    else
+        echo "FAIL: $what recorded fingerprint '$got', expected '$want'"
+        failures=$((failures + 1))
+    fi
+}
+
 . "$here/common.sh"
 head_sha="$(head_commit)"
 stamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -126,6 +159,11 @@ if [ -n "$head_sha" ]; then
         echo "FAIL: a passing coverage run wrote no receipt"
         failures=$((failures + 1))
     fi
+    # And the receipt it wrote carries what a squash-merge needs to find its
+    # sources again, and is one the freshness gate accepts.
+    expect_fingerprint_field "a passing coverage run's receipt" "$INSPECT_COVERAGE_RECEIPT" 4
+    expect_pass "freshness reading the receipt check-coverage wrote" \
+        bash "$here/check-coverage-freshness.sh"
 else
     skip "coverage above the floor"
     skip "a passing coverage run writes its receipt"
@@ -244,7 +282,7 @@ expect_fail "mutation debt over the line budget, uncommitted" "Rust lines have c
 checks=$((checks + 1))
 warned="$(in_repo env INSPECT_MUTATION_WARN_LINES=5 INSPECT_MUTATION_FAIL_LINES=500 \
     bash "$here/check-mutation-debt.sh" 2>&1)" && status=0 || status=$?
-if [ "$status" -eq 0 ] && printf '%s' "$warned" | grep -q "WARN"; then
+if [ "$status" -eq 0 ] && printf '%s' "$warned" | grep -q "WARN:  mutation debt"; then
     echo "ok:   mutation debt warns between the two thresholds without blocking"
 else
     echo "FAIL: mutation debt did not warn between the thresholds (exit $status)"
@@ -283,6 +321,313 @@ printf '# scratch\n%s 40/40 0 %s\n' "0123456789abcdef0123456789abcdef01234567" "
 expect_fail "mutation debt naming a commit this repository does not have" "not in this repository" \
     env INSPECT_MUTATION_RECEIPT="$scratch/mutation-elsewhere.txt" \
     bash "$here/check-mutation-debt.sh"
+
+# --- receipts after a squash-merge ----------------------------------------
+#
+# The owner squash-merges, so the commit a receipt names lives on a branch that
+# never reaches main. What does reach main is the sources it measured. Built as
+# a scratch history:
+#
+#   base (main.rs v1) -> squash (lib.rs added) -> docs -> docs
+#
+# and receipts naming a commit this repository has never had, carrying the Rust
+# fingerprint of `squash` — exactly the shape a fresh clone of main sees.
+
+sq="$scratch/squash"
+mkdir -p "$sq/src"
+git -C "$sq" init -q
+git -C "$sq" config user.email selftest@example.com
+git -C "$sq" config user.name "Gate Self-Test"
+sq_commit() {
+    git -C "$sq" add -A
+    git -C "$sq" -c commit.gpgsign=false commit -qm "$1"
+}
+printf 'fn main() {}\n' > "$sq/src/main.rs"
+sq_commit "base"
+printf 'pub fn measured() {}\n' > "$sq/src/lib.rs"
+sq_commit "squash"
+sq_squash="$(git -C "$sq" rev-parse HEAD)"
+sq_fp="$(cd "$sq" && rust_fingerprint HEAD)"
+printf '# one\n' > "$sq/README.md"
+sq_commit "docs one"
+printf '# two\n' >> "$sq/README.md"
+sq_commit "docs two"
+
+gone="0123456789abcdef0123456789abcdef01234567"
+other_fp="89abcdef0123456789abcdef0123456789abcdef"
+sq_cov="$scratch/squash-coverage.txt"
+sq_mut="$scratch/squash-mutation.txt"
+
+in_sq() {
+    ( cd "$sq" && INSPECT_COVERAGE_FLOOR_FILE="$scratch/floor.txt" \
+        INSPECT_COVERAGE_RECEIPT="$sq_cov" INSPECT_MUTATION_RECEIPT="$sq_mut" "$@" )
+}
+
+# (a) The commit is gone, its sources are here: pass, and say which commit
+# stood in. Three commits carry those sources; the oldest is the one named,
+# because it is the one with the most drift after it.
+printf '# scratch\n%s 99 %s %s\n' "$gone" "$stamp" "$sq_fp" > "$sq_cov"
+printf '# scratch\n%s 40/40 0 %s %s\n' "$gone" "$stamp" "$sq_fp" > "$sq_mut"
+expect_pass_saying "freshness after a squash-merge" \
+    "not in this history; same Rust sources as ${sq_squash:0:12}" \
+    in_sq bash "$here/check-coverage-freshness.sh"
+expect_pass_saying "mutation debt after a squash-merge" \
+    "not in this history; same Rust sources as ${sq_squash:0:12}" \
+    in_sq bash "$here/check-mutation-debt.sh"
+
+# A receipt at a commit whose Rust is HEAD's survives a squash-merge, and the
+# gate does not warn that it would not. The warning's other direction is below,
+# once HEAD has Rust the receipt did not measure.
+printf '# scratch\n%s 99 %s %s\n' "$sq_squash" "$stamp" "$sq_fp" > "$scratch/sq-here.txt"
+checks=$((checks + 1))
+noted="$(in_sq env INSPECT_COVERAGE_RECEIPT="$scratch/sq-here.txt" \
+    bash "$here/check-coverage-freshness.sh" 2>&1)" && status=0 || status=$?
+if [ "$status" -eq 0 ] && ! printf '%s' "$noted" | grep -q "will not survive"; then
+    echo "ok:   no squash-merge warning when HEAD's Rust is the receipt's"
+else
+    echo "FAIL: squash-merge warning (or failure, exit $status) with HEAD's Rust unchanged"
+    echo "$noted" | sed 's/^/      /'
+    failures=$((failures + 1))
+fi
+
+# The substitute is a real base, not a pass: drift past it still blocks.
+printf 'fn added() {\n%s}\n' "$(for _ in $(seq 1 18); do echo '    let _ = 1;'; done)" \
+    > "$sq/src/added.rs"
+expect_fail "mutation debt after a squash-merge, over the line budget" "Rust lines have changed" \
+    in_sq env INSPECT_MUTATION_WARN_LINES=5 INSPECT_MUTATION_FAIL_LINES=10 \
+    bash "$here/check-mutation-debt.sh"
+sq_commit "more rust"
+expect_fail "freshness after a squash-merge, over the commit bound" "Rust-touching commits ago" \
+    in_sq env INSPECT_COVERAGE_MAX_COMMITS=0 bash "$here/check-coverage-freshness.sh"
+
+# The search is bounded, and the bound is a real one, counted in Rust-touching
+# commits like the drift bounds. HEAD now changes Rust, so one deep finds
+# nothing; two reaches `squash` itself, past the two docs commits that a bound
+# over all commits would have spent its depth on.
+expect_fail "freshness with the match past the search depth" "raise INSPECT_RECEIPT_SEARCH_DEPTH" \
+    in_sq env INSPECT_RECEIPT_SEARCH_DEPTH=1 bash "$here/check-coverage-freshness.sh"
+expect_pass_saying "freshness with the match just inside the search depth" \
+    "same Rust sources as ${sq_squash:0:12}" \
+    in_sq env INSPECT_RECEIPT_SEARCH_DEPTH=2 bash "$here/check-coverage-freshness.sh"
+
+# The branch-side warning. A receipt whose commit is here but whose Rust is not
+# HEAD's will not survive a squash-merge, and the gate says so while it can
+# still be fixed — and says nothing when HEAD's Rust is the receipt's.
+printf '# scratch\n%s 99 %s %s\n' "$sq_squash" "$stamp" "$sq_fp" > "$sq_cov"
+expect_pass_saying "freshness with Rust changed after the receipt" "will not survive a squash-merge" \
+    in_sq bash "$here/check-coverage-freshness.sh"
+
+expect_fail "freshness with a non-numeric search depth" "non-negative integer" \
+    in_sq env INSPECT_RECEIPT_SEARCH_DEPTH=banana bash "$here/check-coverage-freshness.sh"
+
+# When the measured sources recur — the Rust is reverted to them — the oldest
+# occurrence is the one drift counts from: two Rust commits after `squash`, not
+# zero after the revert.
+git -C "$sq" rm -q src/added.rs
+sq_commit "revert more rust"
+printf '# scratch\n%s 99 %s %s\n' "$gone" "$stamp" "$sq_fp" > "$sq_cov"
+expect_pass_saying "freshness with the measured sources recurring" \
+    "same Rust sources as ${sq_squash:0:12}), 2/10" \
+    in_sq bash "$here/check-coverage-freshness.sh"
+git -C "$sq" reset -q --hard HEAD~1
+git -C "$sq" reset -q --hard HEAD~1
+
+# A commit that is here but not in HEAD's history — a squash-merged branch
+# whose ref was never deleted — is treated as gone, so main's answer does not
+# depend on that housekeeping. `side` carries the measured Rust off to one side.
+sq_side="$(git -C "$sq" commit-tree -p "$(git -C "$sq" rev-parse HEAD~3)" -m side "$sq_squash^{tree}")"
+printf '# scratch\n%s 99 %s %s\n' "$sq_side" "$stamp" "$sq_fp" > "$sq_cov"
+printf '# scratch\n%s 40/40 0 %s %s\n' "$sq_side" "$stamp" "$sq_fp" > "$sq_mut"
+expect_pass_saying "freshness naming a commit outside HEAD's history" \
+    "not in this history; same Rust sources as ${sq_squash:0:12}" \
+    in_sq bash "$here/check-coverage-freshness.sh"
+expect_pass_saying "mutation debt naming a commit outside HEAD's history" \
+    "not in this history; same Rust sources as ${sq_squash:0:12}" \
+    in_sq bash "$here/check-mutation-debt.sh"
+# And one carrying Rust main never had: no match, so it fails.
+sq_side_other="$(cd "$sq" && GIT_INDEX_FILE="$scratch/side.idx" sh -c "git read-tree HEAD~3 &&
+    git update-index --add --cacheinfo 100644,\$(printf 'pub fn elsewhere() {}\n' | git hash-object -w --stdin),src/elsewhere.rs &&
+    git commit-tree -p HEAD~3 -m side-other \$(git write-tree)")"
+side_fp="$(cd "$sq" && rust_fingerprint "$sq_side_other")"
+printf '# scratch\n%s 99 %s %s\n' "$sq_side_other" "$stamp" "$side_fp" > "$sq_cov"
+printf '# scratch\n%s 40/40 0 %s %s\n' "$sq_side_other" "$stamp" "$side_fp" > "$sq_mut"
+expect_fail "freshness naming a commit outside HEAD's history, sources not here" "not in HEAD's history" \
+    in_sq bash "$here/check-coverage-freshness.sh"
+expect_fail "mutation debt naming a commit outside HEAD's history, sources not here" "not in HEAD's history" \
+    in_sq bash "$here/check-mutation-debt.sh"
+
+# A receipt whose fingerprint is well-formed but is not the Rust at the commit
+# it names is inconsistent, and fails on the branch — not later on main, when
+# the search would find nothing. Its own fingerprint is the passing direction.
+printf '# scratch\n%s 99 %s %s\n' "$sq_squash" "$stamp" "$other_fp" > "$sq_cov"
+printf '# scratch\n%s 40/40 0 %s %s\n' "$sq_squash" "$stamp" "$other_fp" > "$sq_mut"
+expect_fail "freshness with another commit's fingerprint" "internally inconsistent" \
+    in_sq bash "$here/check-coverage-freshness.sh"
+expect_fail "mutation debt with another commit's fingerprint" "internally inconsistent" \
+    in_sq bash "$here/check-mutation-debt.sh"
+printf '# scratch\n%s 99 %s %s\n' "$sq_squash" "$stamp" "$sq_fp" > "$sq_cov"
+printf '# scratch\n%s 40/40 0 %s %s\n' "$sq_squash" "$stamp" "$sq_fp" > "$sq_mut"
+expect_pass "freshness with the commit's own fingerprint" \
+    in_sq bash "$here/check-coverage-freshness.sh"
+expect_pass "mutation debt with the commit's own fingerprint" \
+    in_sq bash "$here/check-mutation-debt.sh"
+
+# A shallow clone is not searched: the commit may be just past its boundary,
+# and the fix is to fetch history. The same receipt passes in the full history
+# — case (a) above.
+git clone -q --depth 1 "file://$sq" "$scratch/shallow"
+printf '# scratch\n%s 99 %s %s\n' "$gone" "$stamp" "$sq_fp" > "$sq_cov"
+expect_fail "freshness in a shallow clone with the commit gone" "this clone is shallow" \
+    bash -c "cd '$scratch/shallow' && INSPECT_COVERAGE_FLOOR_FILE='$scratch/floor.txt' \
+        INSPECT_COVERAGE_RECEIPT='$sq_cov' bash '$here/check-coverage-freshness.sh'"
+
+# A commit the fingerprint cannot read must not hash to a fingerprint: a failed
+# diff-tree piped into hash-object would otherwise produce one. Without
+# pipefail, so it is the function refusing and not the caller's shell options.
+checks=$((checks + 1))
+if (set +o pipefail; cd "$sq" && rust_fingerprint "$gone" >/dev/null 2>&1); then
+    echo "FAIL: rust_fingerprint of a missing commit succeeded"
+    failures=$((failures + 1))
+else
+    echo "ok:   rust_fingerprint refuses a commit it cannot read"
+fi
+
+# (b) The commit is gone and so are its sources.
+printf '# scratch\n%s 99 %s %s\n' "$gone" "$stamp" "$other_fp" > "$sq_cov"
+printf '# scratch\n%s 40/40 0 %s %s\n' "$gone" "$stamp" "$other_fp" > "$sq_mut"
+expect_fail "freshness with the commit and its sources both gone" "has the Rust sources it measured" \
+    in_sq bash "$here/check-coverage-freshness.sh"
+expect_fail "mutation debt with the commit and its sources both gone" "has the Rust sources it measured" \
+    in_sq bash "$here/check-mutation-debt.sh"
+
+# (c) An old-format receipt has nothing to search by: a missing commit fails as
+# it always did, never passes quietly.
+printf '# scratch\n%s 99 %s\n' "$gone" "$stamp" > "$sq_cov"
+printf '# scratch\n%s 40/40 0 %s\n' "$gone" "$stamp" > "$sq_mut"
+expect_fail "freshness, old-format receipt, commit gone" "records no Rust fingerprint" \
+    in_sq bash "$here/check-coverage-freshness.sh"
+expect_fail "mutation debt, old-format receipt, commit gone" "records no Rust fingerprint" \
+    in_sq bash "$here/check-mutation-debt.sh"
+
+# (d) A fingerprint of the wrong shape is a receipt nothing wrote. Checked
+# against the commit that *is* here, so the shape check cannot hide behind the
+# search.
+for bad in "not-hex-at-all" "abc123"; do
+    printf '# scratch\n%s 99 %s %s\n' "$sq_squash" "$stamp" "$bad" > "$sq_cov"
+    printf '# scratch\n%s 40/40 0 %s %s\n' "$sq_squash" "$stamp" "$bad" > "$sq_mut"
+    expect_fail "freshness with fingerprint '$bad'" "Rust fingerprint" \
+        in_sq bash "$here/check-coverage-freshness.sh"
+    expect_fail "mutation debt with fingerprint '$bad'" "Rust fingerprint" \
+        in_sq bash "$here/check-mutation-debt.sh"
+done
+# The fingerprint of no Rust at all would match any commit without Rust; it is
+# refused by name, not found inconsistent by luck.
+printf '# scratch\n%s 99 %s %s\n' "$gone" "$stamp" "$EMPTY_FINGERPRINT" > "$sq_cov"
+printf '# scratch\n%s 40/40 0 %s %s\n' "$gone" "$stamp" "$EMPTY_FINGERPRINT" > "$sq_mut"
+expect_fail "freshness with the fingerprint of no Rust" "no Rust at all" \
+    in_sq bash "$here/check-coverage-freshness.sh"
+expect_fail "mutation debt with the fingerprint of no Rust" "no Rust at all" \
+    in_sq bash "$here/check-mutation-debt.sh"
+printf '# scratch\n%s 99 %s %s extra\n' "$sq_squash" "$stamp" "$sq_fp" > "$sq_cov"
+expect_fail "freshness with a trailing field" "malformed" \
+    in_sq bash "$here/check-coverage-freshness.sh"
+
+# --- mutation re-stamp ----------------------------------------------------
+#
+# `just mutants` with no Rust changed since the receipt has nothing to mutate.
+# It moves a 0-survivor receipt onto HEAD — the same measurement of the same
+# sources — and nothing else. Driven in the squash history: HEAD is two docs
+# commits past `squash`.
+restamp() { in_sq bash "$here/run-mutants.sh"; }
+
+# Refused: survivors were left. The receipt must come out byte-identical.
+printf '# scratch\n%s 38/40 2 %s %s\n' "$sq_squash" "$stamp" "$sq_fp" > "$sq_mut"
+cp "$sq_mut" "$scratch/before.txt"
+expect_pass_saying "re-stamp of a receipt with survivors" "would carry them forward" restamp
+checks=$((checks + 1))
+if cmp -s "$sq_mut" "$scratch/before.txt"; then
+    echo "ok:   a receipt with survivors is not re-stamped"
+else
+    echo "FAIL: a receipt with survivors was re-stamped"
+    failures=$((failures + 1))
+fi
+
+# Refused: the receipt's fingerprint is not the Rust at its commit.
+printf '# scratch\n%s 40/40 0 %s %s\n' "$sq_squash" "$stamp" "$other_fp" > "$sq_mut"
+cp "$sq_mut" "$scratch/before.txt"
+expect_fail "re-stamp of a receipt whose fingerprint disagrees" "internally inconsistent" restamp
+checks=$((checks + 1))
+if cmp -s "$sq_mut" "$scratch/before.txt"; then
+    echo "ok:   a receipt whose fingerprint disagrees is not re-stamped"
+else
+    echo "FAIL: a receipt whose fingerprint disagrees was re-stamped"
+    failures=$((failures + 1))
+fi
+
+# Refused: a receipt the debt gate would reject is not rewritten into one it
+# accepts.
+for bad_line in "$sq_squash 40/40 0 $stamp $sq_fp extra" "$sq_squash 40/40 none $stamp $sq_fp"; do
+    printf '# scratch\n%s\n' "$bad_line" > "$sq_mut"
+    cp "$sq_mut" "$scratch/before.txt"
+    expect_fail "re-stamp of the receipt '${bad_line#* }'" "mutation receipt" restamp
+    checks=$((checks + 1))
+    if cmp -s "$sq_mut" "$scratch/before.txt"; then
+        echo "ok:   a malformed receipt is not re-stamped"
+    else
+        echo "FAIL: a malformed receipt was re-stamped"
+        failures=$((failures + 1))
+    fi
+done
+
+# Refused: the Rust is the same but a build input is not. An allium_parser bump
+# lands in Cargo.lock alone, and changes what the tests see.
+printf 'bumped\n' > "$sq/Cargo.lock"
+sq_commit "bump dep"
+printf '# scratch\n%s 40/40 0 %s %s\n' "$sq_squash" "$stamp" "$sq_fp" > "$sq_mut"
+cp "$sq_mut" "$scratch/before.txt"
+expect_pass_saying "re-stamp across a Cargo.lock change" "inputs the run depended on changed" restamp
+checks=$((checks + 1))
+if cmp -s "$sq_mut" "$scratch/before.txt"; then
+    echo "ok:   a receipt is not re-stamped across a build-input change"
+else
+    echo "FAIL: a receipt was re-stamped across a build-input change"
+    failures=$((failures + 1))
+fi
+git -C "$sq" reset -q --hard HEAD~1
+
+# Accepted: 0 survivors, same sources, commit gone after a squash-merge. The
+# new receipt names HEAD, keeps the score and the time the mutants actually
+# ran, and carries HEAD's fingerprint.
+printf '# scratch\n%s 40/40 0 %s %s\n' "$gone" "$stamp" "$sq_fp" > "$sq_mut"
+expect_pass_saying "re-stamp of a 0-survivor receipt over the same sources" "re-stamped" restamp
+checks=$((checks + 1))
+sq_head="$(git -C "$sq" rev-parse HEAD)"
+if [ "$(receipt_line "$sq_mut")" = "$sq_head 40/40 0 $stamp $sq_fp" ]; then
+    echo "ok:   the re-stamped receipt names HEAD and keeps the measurement"
+else
+    echo "FAIL: the re-stamped receipt reads '$(receipt_line "$sq_mut")'"
+    failures=$((failures + 1))
+fi
+checks=$((checks + 1))
+if grep -q "^# Re-stamped from $gone" "$sq_mut"; then
+    echo "ok:   the re-stamped receipt says where the mutants actually ran"
+else
+    echo "FAIL: the re-stamped receipt does not say where it came from"
+    failures=$((failures + 1))
+fi
+expect_pass_saying "mutation debt reading a re-stamped receipt" "since ${sq_head:0:12}" \
+    in_sq bash "$here/check-mutation-debt.sh"
+
+# Running it again changes nothing: the receipt already names HEAD.
+cp "$sq_mut" "$scratch/before.txt"
+expect_pass "re-stamp of a receipt already at HEAD" restamp
+checks=$((checks + 1))
+if cmp -s "$sq_mut" "$scratch/before.txt"; then
+    echo "ok:   a receipt already at HEAD is left alone"
+else
+    echo "FAIL: a receipt already at HEAD was rewritten"
+    failures=$((failures + 1))
+fi
 
 # --- file sizes -----------------------------------------------------------
 INSPECT_FILE_SOFT=1 INSPECT_FILE_HARD=2 \
@@ -342,6 +687,7 @@ fi
 fixture_results 15 0
 if [ -n "$head_sha" ]; then
     expect_pass "mutation scoring below the survivor baseline" score
+    expect_fingerprint_field "a mutation scoring receipt" "$score_receipt" 5
     checks=$((checks + 1))
     if [ "$(receipt_line "$score_baseline")" = "0" ]; then
         echo "ok:   the survivor baseline ratcheted 2 -> 0"

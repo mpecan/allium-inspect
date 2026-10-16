@@ -1,0 +1,18 @@
+-- allium: 3
+-- press.allium
+--
+-- A module that `use`s `newsroom` and emits a trigger its listener waits on.
+-- `newsroom` does not import this one; the emission is heard all the same.
+
+use "./newsroom.allium" as newsroom
+
+rule Print {
+    when: Print(story)
+    ensures: Published(story)
+}
+
+surface Pressroom {
+    facing s: newsroom/Story
+    provides:
+        Print(s)
+}

@@ -12,8 +12,10 @@
 //! that differs from the surface's own actor — a surface facing a
 //! `membership/Member` and an act taking an `identity/Identity` is either a
 //! small inconsistency or a person being both, and a checker that picks is the
-//! same failure as a simulator that guesses. And it does not check anything
-//! about values, which is the runner's job and needs a world.
+//! same failure as a simulator that guesses. And it does not check values,
+//! which is the runner's job and needs a world — with one exception that needs
+//! none: a bare word, which the walk would read as a state, is checked against
+//! the states the spec declares (`crate::words`, `crate::states`).
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -24,7 +26,10 @@ use inspect_model::{
     graph::{NodeDetail, SurfaceDetail},
 };
 
-use crate::journey::{Cast, Clause, Given, Journey, Step};
+use crate::{
+    journey::{Cast, Clause, Given, Journey, Step},
+    words::{self, Written},
+};
 
 /// What the spec had to say about one line of a journey.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,6 +99,20 @@ pub fn check(
             notes.push(note);
         }
     }
+    // Every value `given` writes, the file's world's included: the walk lays
+    // both out, and a misspelt state in the world is the worst place for one
+    // to hide. The world's lines with the names the walk has bound when it
+    // lays them out, which is before the journey's own cast: read with the
+    // journey's names, a world line naming somebody only the journey casts
+    // was accepted here and then quietly not written by the walk.
+    let world = journey.inherits.as_ref().map(|shared| shared.given.as_slice()).unwrap_or_default();
+    let laid_first = Names::world(journey, everything);
+    for given in world {
+        words::given(given, &laid_first, graph, &mut notes);
+    }
+    for given in &journey.given {
+        words::given(given, &known, graph, &mut notes);
+    }
     for step in &journey.steps {
         check_step(step, graph, program, &mut known, &mut notes);
     }
@@ -103,10 +122,52 @@ pub fn check(
 /// Every name a journey has bound so far, and where.
 struct Names {
     types: BTreeMap<String, String>,
+    /// Names bound only after the lines these names are read for: what the
+    /// journey itself casts, for a line of the file's world.
+    later: std::collections::BTreeSet<String>,
 }
 
 impl Names {
+    /// The names a line of the file's world can use: the journeys this one
+    /// continues from, and the world's own — not this journey's, whose cast
+    /// is laid out after the world is.
+    fn world(journey: &Journey, everything: &[Journey]) -> Self {
+        let mut first = Self::preceding(journey, everything);
+        if let Some(shared) = journey.inherits.as_ref() {
+            first.cast(&shared.cast, &shared.given);
+        }
+        let all = Self::new(journey, everything);
+        first.later = all.types.into_keys().filter(|name| !first.knows(name)).collect();
+        first
+    }
+
     fn new(journey: &Journey, everything: &[Journey]) -> Self {
+        let mut names = Self::preceding(journey, everything);
+        // The file's world first, so a journey's own line of the same name
+        // wins — which is what an override is, and is the order the walk lays
+        // them out in. Read here at all because a name the *file* cast is a
+        // name this journey has, and a checker that said otherwise would
+        // report every inherited actor as nobody.
+        if let Some(shared) = journey.inherits.as_ref() {
+            names.cast(&shared.cast, &shared.given);
+        }
+        names.cast(&journey.cast, &journey.given);
+        names
+    }
+
+    /// Every name cast, and every instance given, in `cast` and `given`.
+    fn cast(&mut self, cast: &[Cast], given: &[Given]) {
+        for member in cast {
+            self.types.insert(member.name.clone(), member.type_expr.clone());
+        }
+        for given in given {
+            if let Given::Instance { name, type_expr, .. } = given {
+                self.types.insert(name.clone(), type_expr.clone());
+            }
+        }
+    }
+
+    fn preceding(journey: &Journey, everything: &[Journey]) -> Self {
         let mut types = BTreeMap::new();
         // The journeys this one continues from, oldest first, so a nearer one
         // wins. A name cast in the journey before this one is a name this one
@@ -130,23 +191,7 @@ impl Names {
                 }
             }
         }
-        // The file's world first, so a journey's own line of the same name
-        // wins — which is what an override is, and is the order the walk lays
-        // them out in. Read here at all because a name the *file* cast is a
-        // name this journey has, and a checker that said otherwise would
-        // report every inherited actor as nobody.
-        let inherited = journey.inherits.as_ref();
-        let cast = inherited.map(|shared| shared.cast.as_slice()).unwrap_or_default();
-        let given = inherited.map(|shared| shared.given.as_slice()).unwrap_or_default();
-        for member in cast.iter().chain(&journey.cast) {
-            types.insert(member.name.clone(), member.type_expr.clone());
-        }
-        for given in given.iter().chain(&journey.given) {
-            if let crate::journey::Given::Instance { name, type_expr, .. } = given {
-                types.insert(name.clone(), type_expr.clone());
-            }
-        }
-        Self { types }
+        Self { types, later: std::collections::BTreeSet::new() }
     }
 
     fn bind(&mut self, caught: &Cast) {
@@ -159,6 +204,20 @@ impl Names {
     }
 }
 
+impl words::Knows for Names {
+    fn now(&self, name: &str) -> bool {
+        self.knows(name)
+    }
+
+    fn later(&self, name: &str) -> bool {
+        self.later.contains(name)
+    }
+
+    fn type_of(&self, name: &str) -> Option<&str> {
+        self.types.get(name).map(String::as_str)
+    }
+}
+
 fn check_step(
     step: &Step,
     graph: &SpecGraph,
@@ -168,10 +227,14 @@ fn check_step(
 ) {
     for clause in &step.clauses {
         match clause {
-            Clause::Does { actor, trigger, arguments, surface, creating, line, .. } => {
+            Clause::Does { actor, trigger, arguments, surface, creating, negated, line } => {
                 check_actor(actor, *line, known, notes);
                 check_act(trigger, surface, *line, graph, notes);
                 check_arity(trigger, arguments.len(), *line, graph, notes);
+                // An act the journey says is refused sets nothing off.
+                if !negated {
+                    crate::reach::check(trigger, *line, graph, program, notes);
+                }
                 crate::states::check(
                     &crate::states::Act { trigger, arguments, line: *line },
                     |name| known.knows(name),
@@ -223,14 +286,25 @@ fn check_step(
                         message: format!("no rule called `{rule}`"),
                     });
                 }
-                crate::journey::Assertion::Within { haystack, .. } => {
+                crate::journey::Assertion::Within { needle, haystack } => {
                     check_collection(haystack, *line, known, graph, notes);
+                    let written = Written { value: needle, into: None, line: *line };
+                    words::check(written, known, graph, notes);
                 }
-                crate::journey::Assertion::Compare { left, .. } => {
+                crate::journey::Assertion::Compare { left, right, .. } => {
                     check_field(left, *line, known, graph, notes);
+                    let written = Written { value: right, into: None, line: *line };
+                    words::written(left, written, known, graph, notes);
                 }
                 _ => {}
             },
+            // A call's arguments and answer are matched against what the spec
+            // spells in that call, not against states: `can(r, code)` names a
+            // word no enumeration need declare.
+            Clause::Stipulate { subject: crate::journey::Subject::Path(path), value, line } => {
+                let written = Written { value, into: None, line: *line };
+                words::written(path, written, known, graph, notes);
+            }
             Clause::Stipulate { .. } | Clause::After { .. } => {}
         }
     }
@@ -261,22 +335,10 @@ fn check_field(
 ) {
     let [field] = path.segments.as_slice() else { return };
     let Some(type_expr) = known.types.get(&path.root) else { return };
-
-    // Qualified names carry their module, and an optional carries a `?`. The
-    // module counts: two modules may each declare an `Order`, with different
-    // fields, and `warehouse/Order` is the one the journey said.
-    let written = type_expr.trim_end_matches('?');
-    let (module, bare) = written.rsplit_once('/').map_or((None, written), |(m, b)| (Some(m), b));
-    let Some(detail) = graph
-        .nodes
-        .iter()
-        .filter(|node| matches!(node.kind, NodeKind::Entity | NodeKind::Value))
-        .filter(|node| module.is_none_or(|module| node.module == module))
-        .find(|node| node.name == bare)
-        .and_then(|node| node.detail.as_entity())
+    // An actor, a variant, or something this graph has no fields for. A name
+    // the spec does not have at all is `missing_type`'s to report.
+    let Some(words::Declared { name: bare, detail, .. }) = words::fields_of(graph, type_expr)
     else {
-        // An actor, a variant, or something this graph has no fields for. A
-        // name the spec does not have at all is `missing_type`'s to report.
         return;
     };
 

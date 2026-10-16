@@ -26,6 +26,8 @@
 mod calls;
 mod iteration;
 
+pub(crate) use iteration::{bound_name, destructured, header, keeps};
+
 use std::collections::BTreeMap;
 
 use allium_parser::ast::{ComparisonOp, Expr};

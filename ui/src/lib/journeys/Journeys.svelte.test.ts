@@ -42,6 +42,7 @@ function walk(
   outcomes: Outcome[],
   stipulated: string[] = [],
   inherited: Walk["inherited"] = [],
+  asides: Outcome[] = [],
 ): Walk {
   return {
     name,
@@ -59,7 +60,14 @@ function walk(
     ends: ["the copy is back on the shelf"],
     line: 6,
     steps: [
-      { number: 1, title: "she borrows it", line: 8, outcomes, world: world() },
+      {
+        number: 1,
+        title: "she borrows it",
+        line: 8,
+        outcomes,
+        asides,
+        world: world(),
+      },
     ],
     stipulated: stipulated.map((said) => ({ said, through: null })),
     inherited,
@@ -139,6 +147,33 @@ describe("Journeys", () => {
     expect(screen.getByText("then loan.status = open")).toBeTruthy();
     expect(screen.getByText("then x = 1")).toBeTruthy();
     expect(screen.getByText("x is 2")).toBeTruthy();
+  });
+
+  it("shows what the checker remarked on a step without marking the step down", () => {
+    // A misspelt word an act hands on is `check`'s remark. The browser shows
+    // walks, so a remark the walk did not carry was one nobody in the browser
+    // ever saw — and the step it sits on still holds.
+    const { container } = render(Journeys, {
+      report: report([
+        walk(
+          "A",
+          [line("specified", "o does Tag(o, urgnet) on Desk")],
+          [],
+          [],
+          [
+            line(
+              "remark",
+              "o does Tag(o, urgnet) on Desk",
+              "`urgnet` is nobody in this journey and no state the spec declares",
+            ),
+          ],
+        ),
+      ]),
+      failure: null,
+    });
+    expect(screen.getByText(/`urgnet` is nobody in this journey/)).toBeTruthy();
+    expect(container.querySelector("ol.steps > li.attention")).toBeNull();
+    expect(container.querySelectorAll("ul.lines > li.aside")).toHaveLength(1);
   });
 
   it("leads with what the journey was told rather than shown", () => {
