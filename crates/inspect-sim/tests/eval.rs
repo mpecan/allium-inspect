@@ -136,6 +136,10 @@ fn set_of(elements: Vec<Expr>) -> Expr {
     Expr::SetLiteral { span: NOWHERE, elements }
 }
 
+fn list_of(elements: Vec<Expr>) -> Expr {
+    Expr::ListLiteral { span: NOWHERE, elements }
+}
+
 fn filtered(source: Expr, condition: Expr) -> Expr {
     Expr::Where { span: NOWHERE, source: Box::new(source), condition: Box::new(condition) }
 }
@@ -1660,6 +1664,25 @@ fn a_set_written_out_beside_a_set_of_states_is_a_set_of_states() {
     assert_eq!(truth_of(&other, &env), Truth::False);
     let unequal = compare(apps(), "NotEq", set_of(vec![ident("a")]));
     assert_eq!(truth_of(&unequal, &env), Truth::True);
+}
+
+/// `config.order = [b, a, b]` beside a list default of the same — a list
+/// written out reads its names as states the way a set does, and keeps its
+/// repeat, so the list written is the list held.
+#[test]
+fn a_list_written_out_beside_a_list_of_states_is_a_list_of_states() {
+    let mut world = library();
+    let held =
+        Value::Set(["b", "a", "b"].iter().map(|state| Value::Enum((*state).to_owned())).collect());
+    world.set_config("lending", "order", held);
+    let env = env(&world, "lending");
+    let node = compare(
+        field(ident("config"), "order"),
+        "Eq",
+        list_of(vec![ident("b"), ident("a"), ident("b")]),
+    );
+    assert_eq!(truth_of(&node, &env), Truth::True);
+    assert!(reasons(&node, &env).is_empty(), "{:?}", reasons(&node, &env));
 }
 
 /// A name that is something else stays what it is, the same test a lone name

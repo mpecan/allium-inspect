@@ -405,6 +405,17 @@ mod tests {
         );
     }
 
+    /// A lone `-` is a sign, not the start of a comment: only `--` is one.
+    #[test]
+    fn a_negative_member_is_a_number_and_not_a_comment() {
+        let world = seeded(&[
+            ("offsets", "Set<Integer>", Some("{-1, 2}")),
+            ("steps", "List<Integer>", Some("[2, -3]")),
+        ]);
+        assert_eq!(world.config("m", "offsets"), Value::Set(vec![Value::Int(-1), Value::Int(2)]));
+        assert_eq!(world.config("m", "steps"), Value::Set(vec![Value::Int(2), Value::Int(-3)]));
+    }
+
     #[test]
     fn a_set_written_with_a_repeat_holds_it_once() {
         let world = seeded(&[("apps", "Set<App>", Some("{a, b, a}"))]);
