@@ -8,6 +8,10 @@
 --
 -- `Burst` is the same, twice over: every spore made makes two more, so the
 -- work doubles each round and a bound on rounds alone is never reached.
+--
+-- `Branch` doubles too, but stops at the tenth generation: a thousand firings
+-- in ten rounds, which is past the bound on firings and well inside the bound
+-- on rounds, so only the count of firings can be what cuts it off.
 
 entity Cell {
     gen: Integer
@@ -48,4 +52,26 @@ surface Petri {
     facing s: Spore
     provides:
         Sow(s)
+}
+
+entity Bud {
+    gen: Integer
+}
+
+rule Plant {
+    when: Plant(b)
+    ensures: Bud.created(gen: 0)
+}
+
+rule Branch {
+    when: b: Bud.created
+    requires: b.gen < 9
+    ensures: Bud.created(gen: b.gen + 1)
+    ensures: Bud.created(gen: b.gen + 1)
+}
+
+surface Pot {
+    facing b: Bud
+    provides:
+        Plant(b)
 }

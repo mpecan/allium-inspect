@@ -629,6 +629,30 @@ mod tests {
         assert_eq!(notes[0].message, "`Settings` does not offer `UseLfs` — switches/Settings does");
     }
 
+    /// And only then: a surface whose name nobody else has is named bare, as
+    /// it always was, because a module on every name is noise to read past.
+    #[test]
+    fn an_act_offered_by_a_surface_whose_name_is_its_own_names_it_bare() {
+        let mut graph = SpecGraph::new("test");
+        for (module, name, offered) in
+            [("grants", "Settings", "Grant"), ("switches", "Switchboard", "UseLfs")]
+        {
+            let mut node = inspect_model::Node::new(module, NodeKind::Surface, name);
+            let mut detail = surface(&[]);
+            detail.provides.push(inspect_model::graph::SurfaceOperation {
+                trigger: offered.to_owned(),
+                parameters: Vec::new(),
+                when: None,
+            });
+            node.detail = inspect_model::graph::NodeDetail::Surface(detail);
+            graph.nodes.push(node);
+        }
+        let mut notes = Vec::new();
+        check_act("UseLfs", "Settings", 3, &graph, &mut notes);
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].message, "`Settings` does not offer `UseLfs` — Switchboard does");
+    }
+
     #[test]
     fn a_surface_that_names_the_field_exposes_it() {
         // A journey writes `loan.status` where the surface writes `Loan.status`

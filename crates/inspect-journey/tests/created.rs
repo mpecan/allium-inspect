@@ -340,3 +340,22 @@ fn a_reaction_that_doubles_every_round_is_cut_off_and_says_so() {
         "{detail}"
     );
 }
+
+/// Ten generations of doubling is about a thousand firings in ten rounds: past
+/// the bound on firings, nowhere near the bound on rounds. Only counting the
+/// firings can stop it, so this is the test that notices the count not being
+/// kept — and, unlike `Burst`, it finishes either way rather than hanging.
+#[test]
+fn a_cascade_wider_than_the_firing_bound_is_cut_off_by_the_count() {
+    let source = "journey J {
+    cast:
+        b: Bud
+    1. a bud that branches nine times
+        b does Plant(b) on Pot
+}";
+    let walk = walked(source, CELLS);
+    let (verdict, detail) = line(&walk, "b does Plant(b) on Pot");
+    assert_eq!(verdict, Verdict::Undecided, "{detail:?}");
+    let detail = detail.expect("it says why");
+    assert!(detail.contains("`Bud.created` was still being set off after 512 firings"), "{detail}");
+}
