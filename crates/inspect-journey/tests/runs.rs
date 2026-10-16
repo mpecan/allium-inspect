@@ -156,7 +156,8 @@ fn a_rule_guarded_by_an_undecided_staleness_is_undecided_and_says_why() {
     let result = walked("CannotTellWhetherStale");
     let (verdict, why) = line(&result, "r does FollowOther(r) on Runner");
     assert_eq!(verdict, Verdict::Undecided, "{why}");
-    assert!(why.contains("`Run#1` has no `other` set"), "{why}");
+    // Said of the cast, as the journey wrote it: `r`, not the world's `Run#1`.
+    assert!(why.contains("`r` has no `other` set"), "{why}");
 }
 
 #[test]

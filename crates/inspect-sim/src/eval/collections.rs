@@ -267,12 +267,19 @@ pub(super) fn filtered(source: &Expr, condition: &Expr, env: &Env<'_>) -> Evalua
         let scope = element_scope(env, item);
         let verdict = eval(condition, &scope);
         let holds = verdict.truth();
-        unresolved.extend(verdict.unresolved);
         // Only a definite yes keeps an element. An undecided predicate leaves
         // the element out *and* leaves a note saying so, rather than silently
         // widening or narrowing the result.
-        if holds == Truth::True {
-            kept.push(item.clone());
+        //
+        // And only an undecided one leaves a note. A collection's notes are
+        // read downstream as "may be missing members" — by a loop over it, by
+        // `all` and `any` — so a note from a member that *was* decided says
+        // something false: `a or b` with `a` true is decided in, and still
+        // carries "has no `b` set" from the side nobody needed (issue #23).
+        match holds {
+            Truth::True => kept.push(item.clone()),
+            Truth::False => {}
+            Truth::Unknown => unresolved.extend(verdict.unresolved),
         }
     }
     Evaluation { value: Value::Set(kept), unresolved }
@@ -388,6 +395,14 @@ pub(crate) fn element_scope<'a>(env: &'a Env<'a>, item: &Value) -> Env<'a> {
         && let Some(instance) = env.world.instance(id)
     {
         scope.element = Some(id.clone());
+        // A bare name the element declares is the element's, whether or not
+        // it holds a value. Inside a definition the bindings already hold
+        // `this`'s stored fields bare, and one spelled like a field the
+        // element computes, or stores and never set, answered for every
+        // element in its place — a definite verdict about the wrong instance.
+        // Unbound here, the element's own lookup answers it: computed in its
+        // scope, or "has no `x` set" (issue #23).
+        scope.bindings.retain(|name, _| name == "this" || !env.has(id, name));
         for (field, value) in &instance.fields {
             scope.bindings.insert(field.clone(), value.clone());
         }

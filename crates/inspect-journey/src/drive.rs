@@ -140,12 +140,14 @@ impl Walker<'_> {
                     // change — or a chain the missing emission would have set
                     // off — so the step is undecided, and says what was not
                     // applied. Kept apart from `undecided`, because it ran.
-                    if let Some(why) = crate::outcome::unapplied(rule) {
+                    // Said of the cast: "`Watch#1` has no `b` set" is `w`'s.
+                    if let Some(note) = crate::outcome::unapplied(rule) {
+                        let why = self.said_of_the_cast(note);
                         self.unapplied.push(crate::answers::noted(rule, why, turn));
                     }
                 }
                 Disposition::Undecided => {
-                    let why = crate::outcome::undecided(rule);
+                    let why = crate::outcome::undecided(rule, |note| self.said_of_the_cast(note));
                     self.undecided.push(crate::answers::noted(rule, why, turn));
                 }
                 Disposition::Refused => self.refused.push(Undecided {

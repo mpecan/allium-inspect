@@ -63,10 +63,18 @@ pub(super) fn answered(
             {
                 return answer;
             }
-            match env.bindings.get("this") {
-                Some(Value::Ref(id)) if defines(id, &called.name, env) => {
-                    defined(whole, id, &called.name, given, env)
-                }
+            // Inside a filter, the element's function before `this`'s: a bare
+            // name there is the element's, as its fields are.
+            let this = match env.bindings.get("this") {
+                Some(Value::Ref(id)) => Some(id),
+                _ => None,
+            };
+            let owner = [env.element.as_ref(), this]
+                .into_iter()
+                .flatten()
+                .find(|id| defines(id, &called.name, env));
+            match owner {
+                Some(id) => defined(whole, id, &called.name, given, env),
                 // Named and never defined: a black box. What would answer it
                 // is a journey saying so, and that is the sentence worth
                 // reading — "not simulated" sent a reader looking for a

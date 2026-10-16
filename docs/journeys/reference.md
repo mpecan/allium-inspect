@@ -611,6 +611,28 @@ c does Poke(c) on Console
 The same goes for a collection nobody settled, `for h in b.hooks` with `b.hooks`
 never stated.
 
+**A filter reads what each member computes, too.** A projection may filter on a
+field the member derives rather than stores — `active_watches: watches where
+is_watching = true` on a repository, with `is_watching: a or b` on the watch.
+Each watch is asked for its own `is_watching`, computed in the watch's scope:
+the watch is `this` there and only its fields are bare, so a field of the
+repository spelled the same way, computed or stored, does not answer for it. A
+watch with `a` true is kept — whether or not anyone stated `b`, because `true
+or` anything is true — and a watch with both false is left out, and a `for w
+in r.active_watches` over them is decided. A watch whose `a` is false and whose
+`b` nobody stated cannot be decided, and the loop says so with that watch's
+reason inside — by the name the journey cast it as:
+
+```text
+r does Poke(r) on S
+  `Poke` fired, but part of what it ensures was not applied: `for w in r.active_watches` may be missing members it could not decide on (`w` has no `b` set), so the clauses inside it were not applied to them — in `r.active_watches`
+```
+
+Only the first reason is shown in the parenthesis, and it is always a member
+that could not be decided — a watch decided by half of its `or` leaves nothing
+to say. It is usually the one to fix, a field the journey did not set on a
+member it cast.
+
 **A `requires` inside the loop is the rule's, for every member the filter
 keeps.** The reading this tool takes: a `requires` is a precondition of the
 rule wherever it is written, and inside a `for` it is quantified over the loop.
@@ -650,8 +672,10 @@ loop's `ensures` are applied to:
 - a collection that may be missing members — `for h in r.hooks` over
   `hooks: Hook with rack = this`, with a hook whose `rack` nobody set — is
   undecided when every hook it holds passes, because the one it may be missing
-  was never asked, and it says so: `` `for h in r.hooks` may be missing members
-  it could not decide on ``. A hook it does hold failing still refuses.
+  was never asked, and it says so, with the first reason it could not decide:
+  `` `for h in r.hooks` may be missing members it could not decide on
+  (`h2` has no `rack` set) ``, naming the hook as the journey cast it. A hook it
+  does hold failing still refuses.
 
 A `let` written inside the loop above the clause is bound per member, so
 `let live = h.active` then `requires: live = true` reads each hook's own.

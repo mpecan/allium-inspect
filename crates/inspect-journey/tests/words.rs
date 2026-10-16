@@ -270,6 +270,7 @@ fn the_fixtures_own_journeys_report_no_word() {
         ("runs", common::RUNS),
         ("switches", common::SWITCHES),
         ("undecided", LENDING),
+        ("watches", common::WATCHES),
     ];
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
     let on_disk = std::fs::read_dir(&directory)

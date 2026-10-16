@@ -1983,10 +1983,11 @@ fn a_rule_nobody_could_decide_is_not_a_rule_that_did_not_run() {
         .cloned()
         .expect("the journey asserts it fires");
     assert_eq!(verdict, Verdict::Undecided);
-    // And why, so the line says what to fix rather than only where.
+    // And why, so the line says what to fix rather than only where — of the
+    // `copy` the journey cast, not the world's `Copy#1`.
     assert_eq!(
         detail.as_deref(),
-        Some("`BorrowCopy` could not be decided: `Copy#1` has no `status` set — in `copy.status`")
+        Some("`BorrowCopy` could not be decided: `copy` has no `status` set — in `copy.status`")
     );
 
     let (_, _, detail) = lines

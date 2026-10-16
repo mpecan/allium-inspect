@@ -85,14 +85,17 @@ impl Application<'_> {
         // on, and says so only in a note. Iterating the rest as if they were
         // all would be reading "undecided" as "not a member" — the clauses
         // were not applied to whatever it left out, and that is said.
-        let incomplete = !evaluated.unresolved.is_empty();
+        let incomplete = (!evaluated.unresolved.is_empty()).then(|| {
+            crate::per_member::missing_members(
+                &header,
+                &evaluated.unresolved,
+                "the clauses inside it were not applied to them",
+            )
+        });
         let mut applied = Applied::note(evaluated.unresolved);
-        if incomplete {
+        if let Some(reason) = incomplete {
             applied.left_undone(Unresolved {
-                reason: format!(
-                    "{header} may be missing members it could not decide on, so the clauses \
-                     inside it were not applied to them"
-                ),
+                reason,
                 expression: span_of(collection)
                     .and_then(|span| span.slice(self.against.source))
                     .map(str::to_owned),

@@ -97,6 +97,10 @@ fn duration(text: &str) -> Expr {
     Expr::DurationLiteral { span: NOWHERE, value: text.to_owned() }
 }
 
+fn boolean(value: bool) -> Expr {
+    Expr::BoolLiteral { span: NOWHERE, value }
+}
+
 fn null() -> Expr {
     Expr::Null { span: NOWHERE }
 }
@@ -2711,4 +2715,230 @@ fn a_definition_s_filter_asks_the_element_for_its_field_not_this() {
         said.iter().any(|reason| reason == &format!("`{doc}` has no `status` set")),
         "{said:?}"
     );
+}
+
+/// Issue #23's shape: a repo whose `active_watches` are its `watches where
+/// is_watching = true`, and a watch whose `is_watching` is computed — `a or b`
+/// — rather than stored. `extra` adds definitions to either entity.
+fn watched_repo(
+    a: Option<bool>,
+    b: Option<bool>,
+    extra: &[(&str, &str, Expr)],
+) -> (World, EntityId, EntityId, inspect_model::Derivations) {
+    let mut world = World::new();
+    let repo = world.create("Repo", "ci");
+    let watch = world.create("Watch", "ci");
+    world.set_field(&watch, "repo", Value::Ref(repo.clone()));
+    for (name, value) in [("a", a), ("b", b)] {
+        if let Some(value) = value {
+            world.set_field(&watch, name, Value::Bool(value));
+        }
+    }
+    let mut derived = inspect_model::Derivations::default();
+    for stored in ["repo", "a", "b"] {
+        derived.stored.insert(inspect_model::derived_key("ci", "Watch", stored));
+    }
+    let watches = Expr::With {
+        span: NOWHERE,
+        source: Box::new(ident("Watch")),
+        predicate: Box::new(compare(ident("repo"), "Eq", ident("this"))),
+    };
+    let active = filtered(ident("watches"), compare(ident("is_watching"), "Eq", boolean(true)));
+    let definitions = [
+        ("Repo", "watches", watches),
+        ("Repo", "active_watches", active),
+        ("Watch", "is_watching", logical(ident("a"), "Or", ident("b"))),
+    ];
+    for (entity, name, definition) in definitions {
+        derived.fields.insert(inspect_model::derived_key("ci", entity, name), definition);
+    }
+    for (entity, name, definition) in extra {
+        derived.fields.insert(inspect_model::derived_key("ci", entity, name), definition.clone());
+    }
+    (world, repo, watch, derived)
+}
+
+#[test]
+fn a_filter_on_a_computed_field_computes_it_for_each_element() {
+    // `active_watches: watches where is_watching = true`, with `is_watching:
+    // a or b` and both set. `true or false` is `true`, so the projection is
+    // the one watch — decided, with nothing left to say. Before, the element's
+    // computed field was never asked for, and the projection came back empty
+    // and "may be missing members".
+    let (world, repo, watch, derived) = watched_repo(Some(true), Some(false), &[]);
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(repo));
+    let node = field(ident("r"), "active_watches");
+    let evaluation = eval(&node, &env);
+    assert_eq!(evaluation.value, Value::Set(vec![Value::Ref(watch)]));
+    assert!(evaluation.unresolved.is_empty(), "{:?}", evaluation.unresolved);
+}
+
+#[test]
+fn a_filter_on_a_computed_field_leaves_out_an_element_it_computes_false() {
+    // Both set false: decided, and decided *out* — the other half of
+    // computing it rather than guessing it.
+    let (world, repo, _, derived) = watched_repo(Some(false), Some(false), &[]);
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(repo));
+    let evaluation = eval(&field(ident("r"), "active_watches"), &env);
+    assert_eq!(evaluation.value, Value::Set(Vec::new()));
+    assert!(evaluation.unresolved.is_empty(), "{:?}", evaluation.unresolved);
+}
+
+#[test]
+fn an_element_s_undecided_computed_field_names_the_element_and_what_it_lacks() {
+    // `a` false and `b` never set: `false or ?` is undecided, and the reason
+    // is the watch's own — which watch, and which field it is missing.
+    let (world, repo, watch, derived) = watched_repo(Some(false), None, &[]);
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(repo));
+    let node = field(ident("r"), "active_watches");
+    let evaluation = eval(&node, &env);
+    assert_eq!(evaluation.value, Value::Set(Vec::new()));
+    let said: Vec<_> = evaluation.unresolved.iter().map(|note| note.reason.clone()).collect();
+    assert_eq!(said, [format!("`{watch}` has no `b` set")]);
+    assert_eq!(truth_of(&field(node, "count"), &env), Truth::Unknown);
+}
+
+#[test]
+fn an_element_s_computed_field_is_its_own_not_this_one_s() {
+    // The repo computes an `is_watching` of its own, `false`. Inside the
+    // filter the name is the element's: the watch is asked, in the watch's
+    // scope, and the repo's same-spelled field does not answer for it.
+    let extra = [("Repo", "is_watching", boolean(false))];
+    let (world, repo, watch, derived) = watched_repo(Some(true), Some(false), &extra);
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(repo));
+    let evaluation = eval(&field(ident("r"), "active_watches"), &env);
+    assert_eq!(evaluation.value, Value::Set(vec![Value::Ref(watch)]));
+}
+
+#[test]
+fn a_member_decided_in_by_half_its_definition_leaves_the_projection_complete() {
+    // `a` true and `b` never set: `true or ?` is `true`, so the watch is in,
+    // decided. The `or` still carries a note about `b`, and that note is about
+    // a member that was decided — it is not a member the projection may be
+    // missing, and carried on the collection it made a loop over it read as
+    // undecided and told the author to set a field that does not matter.
+    let (world, repo, watch, derived) = watched_repo(Some(true), None, &[]);
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(repo));
+    let evaluation = eval(&field(ident("r"), "active_watches"), &env);
+    assert_eq!(evaluation.value, Value::Set(vec![Value::Ref(watch)]));
+    assert!(evaluation.unresolved.is_empty(), "{:?}", evaluation.unresolved);
+}
+
+#[test]
+fn a_member_decided_out_by_half_its_definition_leaves_the_projection_complete() {
+    // The other way round: `a and b` with `a` false is `false` whatever `b`
+    // is. Decided out, and nothing is missing.
+    let extra = [("Watch", "is_watching", logical(ident("a"), "And", ident("b")))];
+    let (world, repo, _, derived) = watched_repo(Some(false), None, &extra);
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(repo));
+    let evaluation = eval(&field(ident("r"), "active_watches"), &env);
+    assert_eq!(evaluation.value, Value::Set(Vec::new()));
+    assert!(evaluation.unresolved.is_empty(), "{:?}", evaluation.unresolved);
+}
+
+#[test]
+fn an_element_s_computed_field_shadows_a_field_this_stores_under_the_same_name() {
+    // The repo *stores* an `is_watching`, `false`. Inside the filter the bare
+    // name is still the watch's, computed `true`: the repo's stored field,
+    // bound bare in the repo's definitions, must not answer for every watch.
+    let (mut world, repo, watch, mut derived) = watched_repo(Some(true), Some(false), &[]);
+    derived.stored.insert(inspect_model::derived_key("ci", "Repo", "is_watching"));
+    world.set_field(&repo, "is_watching", Value::Bool(false));
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(repo));
+    let evaluation = eval(&field(ident("r"), "active_watches"), &env);
+    assert_eq!(evaluation.value, Value::Set(vec![Value::Ref(watch)]));
+    assert!(evaluation.unresolved.is_empty(), "{:?}", evaluation.unresolved);
+}
+
+#[test]
+fn an_element_s_unset_stored_field_is_not_answered_by_one_this_stores() {
+    // The watch declares `a` and never set it; the repo stores an `a` of its
+    // own. Inside the filter `a` is the watch's, and unset — not the repo's.
+    let extra = [("Watch", "is_watching", ident("a"))];
+    let (mut world, repo, watch, mut derived) = watched_repo(None, None, &extra);
+    derived.stored.insert(inspect_model::derived_key("ci", "Repo", "a"));
+    world.set_field(&repo, "a", Value::Bool(true));
+    let active = filtered(ident("watches"), compare(ident("a"), "Eq", boolean(true)));
+    derived.fields.insert(inspect_model::derived_key("ci", "Repo", "active_watches"), active);
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(repo));
+    let evaluation = eval(&field(ident("r"), "active_watches"), &env);
+    assert_eq!(evaluation.value, Value::Set(Vec::new()));
+    let said: Vec<_> = evaluation.unresolved.iter().map(|note| note.reason.clone()).collect();
+    assert_eq!(said, [format!("`{watch}` has no `a` set")]);
+}
+
+#[test]
+fn an_element_s_computed_field_reads_this_as_the_element() {
+    // `is_watching: this.a` — `this` inside the watch's definition is the
+    // watch, not the repo whose filter asked for it.
+    let extra = [("Watch", "is_watching", field(ident("this"), "a"))];
+    let (world, repo, watch, derived) = watched_repo(Some(true), None, &extra);
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(repo));
+    let evaluation = eval(&field(ident("r"), "active_watches"), &env);
+    assert_eq!(evaluation.value, Value::Set(vec![Value::Ref(watch)]));
+    assert!(evaluation.unresolved.is_empty(), "{:?}", evaluation.unresolved);
+}
+
+#[test]
+fn a_cyclic_computed_field_inside_a_filter_is_unknown_with_a_reason_not_a_stack_overflow() {
+    // `is_watching: not is_watching` — the guard that stops a definition
+    // computing itself holds inside a filter's element too.
+    let extra = [("Watch", "is_watching", not(ident("is_watching")))];
+    let (world, repo, _, derived) = watched_repo(Some(true), None, &extra);
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(repo));
+    let evaluation = eval(&field(ident("r"), "active_watches"), &env);
+    assert_eq!(evaluation.value, Value::Set(Vec::new()));
+    assert!(!evaluation.unresolved.is_empty(), "undecided, with a reason");
+}
+
+#[test]
+fn an_element_s_function_named_bare_in_a_filter_is_the_element_s() {
+    // `is_watching` is a function on the watch, and read bare. It takes an
+    // argument, and says so — about the watch's function, not "nothing is
+    // bound".
+    let (world, repo, _, mut derived) = watched_repo(Some(true), None, &[]);
+    let key = inspect_model::derived_key("ci", "Watch", "is_watching");
+    derived.fields.remove(&key);
+    derived
+        .functions
+        .insert(key, inspect_model::Function { params: vec!["x".to_owned()], body: ident("x") });
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(repo));
+    let evaluation = eval(&field(ident("r"), "active_watches"), &env);
+    let said: Vec<_> = evaluation.unresolved.iter().map(|note| note.reason.clone()).collect();
+    assert_eq!(said, ["`is_watching` takes an argument, and was read without one"]);
+}
+
+#[test]
+fn an_element_s_function_called_in_a_filter_is_the_element_s() {
+    // `watches where is_watching(true)`, with `is_watching(x): x and a` on
+    // the watch: called for each watch, in the watch's scope.
+    let (world, repo, watch, mut derived) = watched_repo(Some(true), None, &[]);
+    derived.functions.insert(
+        inspect_model::derived_key("ci", "Watch", "is_watching"),
+        inspect_model::Function {
+            params: vec!["x".to_owned()],
+            body: logical(ident("x"), "And", ident("a")),
+        },
+    );
+    let active = filtered(ident("watches"), call(ident("is_watching"), vec![boolean(true)]));
+    derived.fields.insert(inspect_model::derived_key("ci", "Repo", "active_watches"), active);
+    derived.fields.remove(&inspect_model::derived_key("ci", "Watch", "is_watching"));
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(repo));
+    let evaluation = eval(&field(ident("r"), "active_watches"), &env);
+    assert_eq!(evaluation.value, Value::Set(vec![Value::Ref(watch)]));
+    assert!(evaluation.unresolved.is_empty(), "{:?}", evaluation.unresolved);
+}
+
+#[test]
+fn of_two_undecided_members_the_first_by_id_is_the_one_named() {
+    // Both watches `false or ?`: the projection's first reason is the first
+    // watch's, in id order, every time.
+    let (mut world, repo, watch, derived) = watched_repo(Some(false), None, &[]);
+    let second = world.create("Watch", "ci");
+    world.set_field(&second, "repo", Value::Ref(repo.clone()));
+    world.set_field(&second, "a", Value::Bool(false));
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(repo));
+    let evaluation = eval(&field(ident("r"), "active_watches"), &env);
+    let said: Vec<_> = evaluation.unresolved.iter().map(|note| note.reason.clone()).collect();
+    assert_eq!(said, [format!("`{watch}` has no `b` set"), format!("`{second}` has no `b` set")]);
 }

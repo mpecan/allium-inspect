@@ -425,6 +425,10 @@ fn ident(ident: &Ident, env: &Env<'_>) -> Evaluation {
     if let Some(read) = words::unset_element_field(ident, env) {
         return read;
     }
+    // Or one it computes, in its own scope (issue #23).
+    if let Some(read) = words::computed_element_field(ident, env) {
+        return read;
+    }
     // A computed field of whatever `this` is, named bare. `is_stranded:
     // active_devices.count = 0` reads `active_devices` with nothing between,
     // and the definition it needs is one level further down the same chain.

@@ -68,6 +68,35 @@ pub(super) fn unset_element_field(ident: &Ident, env: &Env<'_>) -> Option<Evalua
     unset_stored(element, ident, env)
 }
 
+/// `name`, unbound, read inside a `where` or `with` filter: a field the element
+/// being looked at computes rather than stores.
+///
+/// Computed the way any computed field is — [`super::field_of`]'s way — in the
+/// element's own scope: `this` is the element and only its fields are bare.
+/// `active_watches: watches where is_watching = true`, with `is_watching: a or
+/// b` on the watch, asks each watch for its `a` and `b`; when one is unset the
+/// reason is that watch's, naming it and the field. Before this, nothing asked
+/// the element: the name fell through to `this`, the repo, which has no such
+/// field, and every member came back "nothing is bound" however fully the
+/// world described it (issue #23).
+///
+/// Asked before `this`'s computed fields, for the reason the element's stored
+/// fields shadow `this`'s: inside the filter, a bare name is the element's.
+/// `this`'s *stored* fields, bound bare inside its definitions, are unbound
+/// for any name the element declares by `element_scope`, so they do not
+/// answer first either.
+///
+/// A function the element defines, named bare, is the element's too: it takes
+/// an argument, and says so, as [`super::field_of`] does for `watch.f`.
+pub(super) fn computed_element_field(ident: &Ident, env: &Env<'_>) -> Option<Evaluation> {
+    let element = env.world.instance(env.element.as_ref()?)?;
+    if let Some((definition, key)) = env.derivation(element, &ident.name) {
+        return Some(super::eval(definition, &env.computing(element, key)));
+    }
+    let (function, _) = env.function(element, &ident.name)?;
+    Some(super::calls::read_bare(&ident.name, function, env))
+}
+
 /// "`instance` has no `name` set", when `name` is a field its entity stores.
 fn unset_stored(instance: &Instance, ident: &Ident, env: &Env<'_>) -> Option<Evaluation> {
     let name = &ident.name;
@@ -110,7 +139,7 @@ impl Env<'_> {
 
     /// Whether the entity `id` is an instance of stores, computes or defines
     /// `name` — whether or not it holds a value for it.
-    fn has(&self, id: &EntityId, name: &str) -> bool {
+    pub(crate) fn has(&self, id: &EntityId, name: &str) -> bool {
         let Some(instance) = self.world.instance(id) else { return false };
         let key = inspect_model::derived_key(&instance.module, &instance.entity, name);
         self.derived.stored.contains(&key)

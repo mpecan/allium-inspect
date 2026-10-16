@@ -455,7 +455,7 @@ impl Walker<'_> {
                         line,
                         verdict: verdict_of(&outcome),
                         about,
-                        detail: Some(match refusal(&outcome) {
+                        detail: Some(match refusal(&outcome, |note| self.said_of_the_cast(note)) {
                             Some(why) => format!("{missing} — {why}"),
                             None => missing,
                         }),
@@ -476,7 +476,12 @@ impl Walker<'_> {
         {
             return Outcome { line, verdict: Verdict::Undecided, about, detail: Some(why) };
         }
-        Outcome { line, verdict, about, detail: refusal(&outcome) }
+        Outcome {
+            line,
+            verdict,
+            about,
+            detail: refusal(&outcome, |note| self.said_of_the_cast(note)),
+        }
     }
 
     /// What a `cannot do` came to: the verdicts, mirrored.
@@ -491,7 +496,9 @@ impl Walker<'_> {
     /// clause exists for exactly the cases somebody is relying on.
     fn blocked(&self, outcome: &StepOutcome, line: usize, about: String) -> Outcome {
         let (verdict, detail) = match verdict_of(outcome) {
-            Verdict::Refused => (Verdict::Specified, refusal(outcome)),
+            Verdict::Refused => {
+                (Verdict::Specified, refusal(outcome, |note| self.said_of_the_cast(note)))
+            }
             Verdict::Specified => (
                 Verdict::Refused,
                 Some(format!(
@@ -499,7 +506,7 @@ impl Walker<'_> {
                     self.fired.first().map_or("the act", String::as_str)
                 )),
             ),
-            other => (other, refusal(outcome)),
+            other => (other, refusal(outcome, |note| self.said_of_the_cast(note))),
         };
         Outcome { line, verdict, about, detail }
     }

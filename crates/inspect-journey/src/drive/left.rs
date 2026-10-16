@@ -37,7 +37,7 @@ impl Walker<'_> {
                     .iter()
                     .find(|it| it.rule == rule.rule && it.disposition == Disposition::Undecided);
                 if let Some(woken) = woken {
-                    let why = crate::outcome::undecided(woken);
+                    let why = crate::outcome::undecided(woken, |note| self.said_of_the_cast(note));
                     self.undecided.push(crate::answers::noted(woken, why, self.firings));
                     break;
                 }

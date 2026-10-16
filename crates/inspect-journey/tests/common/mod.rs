@@ -76,6 +76,10 @@ pub const DEADLINES: &[&str] = &["deadlines"];
 /// the state rules that were watching it (issue #22).
 pub const CLEANUP: &[&str] = &["cleanup"];
 
+/// The watches fixture, alone: a relationship filtered on a field each member
+/// computes, and a loop over it (issue #23).
+pub const WATCHES: &[&str] = &["watches"];
+
 /// The fanout fixture, alone: a rule that iterates an entity collection and
 /// emits once per member, and the rule chained from that emission.
 pub const FANOUT: &[&str] = &["fanout"];
