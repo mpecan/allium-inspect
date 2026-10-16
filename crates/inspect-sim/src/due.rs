@@ -181,6 +181,9 @@ mod tests {
         assert_eq!(read(&due), (Truth::True, 0));
         let not_yet = compare(plus(name("started"), name("ttl")), ComparisonOp::Gt, now());
         assert_eq!(read(&not_yet), (Truth::False, 0));
+        // Moved back, a set deadline is still never read as absent.
+        let back = compare(minus(name("started"), name("ttl")), ComparisonOp::LtEq, now());
+        assert_eq!(read(&back), (Truth::True, 0));
     }
 
     /// Whether a `null` is still ahead is not a question it answers.
@@ -214,6 +217,11 @@ mod tests {
         let (truth, reasons) = read(&stamp);
         assert_eq!(truth, Truth::Unknown);
         assert!(reasons > 0, "an unknown with no reason");
+        // A timestamp is no offset whichever side it is on, or moved back by.
+        let first = compare(plus(name("stamp"), name("stopped")), ComparisonOp::LtEq, now());
+        assert_eq!(read(&first).0, Truth::Unknown);
+        let back = compare(minus(name("stopped"), name("stamp")), ComparisonOp::LtEq, now());
+        assert_eq!(read(&back).0, Truth::Unknown);
     }
 
     /// Only the clock: `stopped <= started` is not asking whether anything is

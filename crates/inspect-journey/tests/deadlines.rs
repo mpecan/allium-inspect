@@ -126,3 +126,18 @@ fn two_unanswered_offers_name_the_rule_once() {
     let detail = detail.clone().expect("it says why");
     assert!(detail.contains("`Offer.opens_at > now`"), "{detail}");
 }
+
+/// Two different rules the clock could not settle in one step: a task nobody
+/// gave a `started_at` and an offer with no opening. One rule already said is
+/// no reason to stay quiet about another — each is named, once.
+#[test]
+fn two_rules_the_clock_left_undecided_are_both_named() {
+    let walk = walked("TwoUnansweredRulesAreBothNamed");
+    let all = outcomes(&walk);
+    let (verdict, _, detail) =
+        all.iter().find(|(_, about, _)| about == "after 1.day").expect("the line");
+    assert_eq!(*verdict, Verdict::Undecided, "{all:#?}");
+    let detail = detail.clone().expect("it says why");
+    assert_eq!(detail.matches("`Withdraw` could not be decided").count(), 1, "{detail}");
+    assert_eq!(detail.matches("`Zombie` could not be decided").count(), 1, "{detail}");
+}

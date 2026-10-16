@@ -102,3 +102,17 @@ journey AnInviteSentWithNoExpiryNeverLapses {
         then Escalate fires
         then Lapse does not fire
 }
+
+journey TwoUnansweredRulesAreBothNamed {
+    cast:
+        t: Task
+        o: Offer
+    given:
+        t.stopped_at = null
+        t.status = running
+        t.expired = false
+        o.opens_at = null
+        o.withdrawn = false
+    1. a day passes over a task nobody started and an offer with no opening
+        after 1.day
+}
