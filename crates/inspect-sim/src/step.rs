@@ -489,7 +489,7 @@ fn run_rule(
 
     let applied = if disposition == Disposition::Fired {
         crate::siblings::apply(
-            Against { spec, module, source, sources, derived: program.derivations() },
+            (Against { spec, module, source, sources, derived: program.derivations() }, name),
             (world, next),
             (bindings, told),
             &ast.ensures,

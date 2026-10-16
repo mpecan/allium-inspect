@@ -117,6 +117,10 @@ pub const QUALIFIED: &[&str] = &["parcels", "tally"];
 /// spelled with a bare word, naming the wrong module (issue #32).
 pub const GRANTS_AND_PARCELS: &[&str] = &["grants", "parcels"];
 
+/// The uploads fixture, alone: a rule that removes an instance and reads it
+/// in another `ensures`, in either order (issue #33).
+pub const UPLOADS: &[&str] = &["uploads"];
+
 /// The siblings fixture, alone: rules woken by one trigger, each reading the
 /// world as the trigger found it (issue #24).
 pub const SIBLINGS: &[&str] = &["siblings"];

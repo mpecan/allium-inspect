@@ -25,6 +25,7 @@ mod gone;
 mod listing;
 mod per_member;
 mod reads;
+mod removals;
 pub mod seed;
 mod siblings;
 pub mod step;

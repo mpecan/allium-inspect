@@ -1013,6 +1013,81 @@ A rule that **should** see another's work is a rule that listens for what the
 other emits, not for the same trigger: `ensures: Boxed(box)` and `when:
 Boxed(box)`.
 
+### What a rule removes has nothing left to read
+
+A rule's `ensures` clauses are a set of postconditions about the state the
+rule leaves, not a sequence, so the order they are written in does not change
+a verdict. That matters most for a rule that removes something and, in another
+line, says something about it:
+
+```allium
+rule Complete {
+    when: Complete(upload)
+    ensures: not exists upload
+    ensures: Blob.created(name: upload.name)
+}
+```
+
+A creation's parameters, an emission's arguments and an assigned value are
+all read **in the state the rule leaves**, where the upload is gone. So
+`upload.name` is undecided — written above the removal or below it, the same
+verdict in the same words — and the act says so too, because the rule fired
+and part of what it ensures is not in the world:
+
+```text
+up does Complete(up) on Desk
+  `Complete` fired, but part of what it ensures was not applied: rule `Complete` removes `upload` (`up`) with `not exists upload`, so `upload.name` has nothing to read in the state it leaves, whichever line comes first; to keep what it held, bind `let name = upload.name` beside the `when` — a `let` inside `ensures` reads the state the rule leaves too
+```
+
+That is said on the act even when no line of the journey reads the value: an
+emission's argument reaches its listener as nothing settled, and the listener
+cannot say why. It used to depend on the order: removed first, the read was
+undecided ("`up` is not in this world"); read first, it took the name and the
+step held. The fix the reason names is the one to write — a `let` beside the
+`when` is read before the rule changes anything, so it keeps the value the
+upload had:
+
+```allium
+rule Complete {
+    when: Complete(upload)
+    let name = upload.name
+    ensures: not exists upload
+    ensures: Blob.created(name: name)
+}
+```
+
+A `let` written **inside** `ensures` does not do that. It is a name for a
+read, and it reads what the read would wherever the name is used: in the state
+the rule leaves where a value is left behind, and as below where something is
+decided.
+
+What **decides** which postconditions apply reads the world the rule found —
+with what it removes as it was before any of its lines ran: an `if`'s
+condition, a `for`'s collection and filter, and what a `not exists` or an
+assignment is about. `if upload.big: not exists upload` asks whether to remove
+it, and asked of the state the removal produces the question has no answer.
+So a small upload stays and its name is read; a big one goes, decided, and its
+name is not there to read. `not exists upload` and `not exists upload.thumb`
+remove both, in either order, and `for t in upload.thumbs: not exists t`
+removes every thumb the upload had.
+
+A relationship read in the state the rule leaves has none of what the rule
+removes: after `for t in upload.thumbs: not exists t`, `upload.thumbs.name` is
+empty, written above the loop or below it. `exists upload` is false there.
+
+Which instances a rule removes is found before any of its lines is applied,
+by reading them through until two readings agree — a removal decided from an
+instance another line removes is found too. A rule written so that the answer
+never settles — a value left behind, read from what it removes, deciding
+whether it is removed — is not answered by whichever reading came last.
+Everything any reading removed reads as gone, and the act is undecided,
+saying whether the rule removes it is undecided and where to bind what
+decides it.
+
+Only what the rule itself removes. An instance a **sibling** woken by the same
+firing removes is the race described above, and an instance the world never
+held is still "not in this world".
+
 ### `cannot do` — the spec refuses, and that is the point
 
 ```

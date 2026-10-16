@@ -43,19 +43,26 @@ use crate::{
 /// continues `next`'s ids, so what it creates does not take a name a sibling
 /// already took. What it did is then replayed into `next` effect by effect.
 pub(crate) fn apply(
-    against: Against<'_>,
+    (against, rule): (Against<'_>, &str),
     (world, next): (&World, &mut World),
     (bindings, told): (BTreeMap<String, Value>, Told),
     ensures: &[Expr],
 ) -> Applied {
     let mut own = world.clone();
     own.next_ordinal.clone_from(&next.next_ordinal);
+    let (removed, unsettled) =
+        crate::removals::removed_by((against, rule), &own, (&bindings, &told), ensures);
     let mut applied = Applied::default();
     {
-        let mut application = Application::new(against, &mut own, bindings).telling(told);
+        let mut application =
+            Application::new(against, &mut own, bindings).telling(told).removing(removed);
         for clause in ensures {
             applied.merge(application.apply(clause));
         }
+    }
+    if let Some(why) = unsettled {
+        applied.unresolved.insert(0, why.clone());
+        applied.unapplied.push(why);
     }
     next.next_ordinal.clone_from(&own.next_ordinal);
     for effect in &applied.effects {

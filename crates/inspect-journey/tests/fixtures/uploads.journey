@@ -1,0 +1,167 @@
+-- Issue #33, as it was filed, and around it: a rule that removes an instance
+-- and reads one of its fields in another `ensures`. The two orders of the same
+-- two lines get the same answer — undecided, saying which clause removes the
+-- upload and how to keep its name — and the `let` that keeps it holds.
+
+journey ReadAfterRemove {
+    cast:
+        up: Upload
+    given:
+        up.name = "x"
+
+    1. complete it
+        up does CompleteRemovingFirst(up) on Desk
+            creating b: Blob
+        then up does not exist
+        then b.name = "x"
+}
+
+journey ReadBeforeRemove {
+    cast:
+        up: Upload
+    given:
+        up.name = "x"
+
+    1. complete it
+        up does CompleteReadingFirst(up) on Desk
+            creating b: Blob
+        then up does not exist
+        then b.name = "x"
+}
+
+journey TheNameKeptBeforeTheRule {
+    cast:
+        up: Upload
+    given:
+        up.name = "x"
+
+    1. complete it
+        up does CompleteKeepingTheName(up) on Desk
+            creating b: Blob
+        then up does not exist
+        then b.name = "x"
+}
+
+journey AnArchivedNameIsReadAfterTheUploadIsGone {
+    cast:
+        up: Upload
+        sh: Shelf
+    given:
+        up.name = "x"
+        sh.last = "none"
+
+    1. archive it
+        up does Archive(up, sh) on ShelfDesk
+        then up does not exist
+        then sh.last = "x"
+}
+
+-- A small upload is not removed, so its name is there to read.
+journey ASmallUploadStaysAndHasItsName {
+    cast:
+        up: Upload
+    given:
+        up.name = "x"
+        up.big = false
+
+    1. tidy it
+        up does Tidy(up) on Desk
+            creating b: Blob
+        then up exists
+        then b.name = "x"
+}
+
+-- A big upload is removed, decided from the upload as the rule found it, and
+-- its name is then gone with it.
+journey ABigUploadGoesAndTakesItsName {
+    cast:
+        up: Upload
+    given:
+        up.name = "x"
+        up.big = true
+
+    1. tidy it
+        up does Tidy(up) on Desk
+            creating b: Blob
+        then up does not exist
+        then b.name = "x"
+}
+
+-- An emission's argument read from what the rule removes: the listener is
+-- handed nothing settled, and the act that emitted it says why.
+journey ADiscardedNameReachesNobody {
+    cast:
+        up: Upload
+    given:
+        up.name = "x"
+
+    1. discard it
+        up does Discard(up) on Desk
+            creating b: Blob
+        then up does not exist
+        then b.name = "x"
+}
+
+-- Whether to remove decided through a `let` inside `ensures`: the same
+-- verdict, in the same words, whichever line comes first.
+journey ABigUploadGoesByLetReadingFirst {
+    cast:
+        up: Upload
+    given:
+        up.name = "x"
+        up.big = true
+
+    1. tidy it
+        up does TidyByLetReadingFirst(up) on Desk
+            creating b: Blob
+        then up does not exist
+        then b.name = "x"
+}
+
+journey ABigUploadGoesByLetReadingLast {
+    cast:
+        up: Upload
+    given:
+        up.name = "x"
+        up.big = true
+
+    1. tidy it
+        up does TidyByLetReadingLast(up) on Desk
+            creating b: Blob
+        then up does not exist
+        then b.name = "x"
+}
+
+-- The thumbs' names through a relationship, in the state the rule leaves:
+-- none are left, in either order.
+journey NamesReadAfterTheThumbsGo {
+    cast:
+        up: Upload
+        th: Thumb
+    given:
+        up.name = "x"
+        th.name = "a"
+        th.upload = up
+
+    1. name them
+        up does NamesAfter(up) on Desk
+            creating b: Blob
+        then th does not exist
+        then b.name = "a"
+}
+
+journey NamesReadBeforeTheThumbsGo {
+    cast:
+        up: Upload
+        th: Thumb
+    given:
+        up.name = "x"
+        th.name = "a"
+        th.upload = up
+
+    1. name them
+        up does NamesBefore(up) on Desk
+            creating b: Blob
+        then th does not exist
+        then b.name = "a"
+}

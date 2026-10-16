@@ -250,8 +250,12 @@ fn defined(
     given: Vec<Value>,
     env: &Env<'_>,
 ) -> Evaluation {
-    let Some(instance) = env.world.instance(id) else {
-        return Evaluation::unknown(format!("`{id}` is not in this world"), whole, env.source);
+    let instance = match env.instance(id) {
+        Ok(Some(instance)) => instance,
+        Ok(None) => {
+            return Evaluation::unknown(format!("`{id}` is not in this world"), whole, env.source);
+        }
+        Err(removal) => return super::removed::removed_here(id, removal, whole, env),
     };
     let Some((function, key)) = env.function(instance, name) else {
         // Neither stipulated nor defined, or defined in terms of itself and

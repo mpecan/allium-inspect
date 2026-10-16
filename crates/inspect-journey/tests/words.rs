@@ -279,6 +279,7 @@ fn the_fixtures_own_journeys_report_no_word() {
         ("siblings", common::SIBLINGS),
         ("switches", common::SWITCHES),
         ("undecided", LENDING),
+        ("uploads", common::UPLOADS),
         ("watches", common::WATCHES),
     ];
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");

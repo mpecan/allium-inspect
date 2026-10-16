@@ -35,6 +35,7 @@ mod lambdas;
 mod literals;
 mod member;
 mod ops;
+mod removed;
 mod told;
 mod words;
 
@@ -51,6 +52,8 @@ use ast::{literal_text, truth_value};
 pub use calls::answers_only;
 pub(crate) use collections::element_scope;
 use inspect_model::{Derivations, Function, Span};
+use removed::NOTHING_REMOVED;
+pub use removed::Removal;
 use serde::{Deserialize, Serialize};
 use std::ops::Not;
 pub(crate) use told::remember;
@@ -180,6 +183,9 @@ pub struct Env<'a> {
     /// the outer doc is still a field of something in scope, not a word: read
     /// off the innermost element alone, it passed for the state it spells.
     enclosing: Vec<EntityId>,
+    /// What the rule whose `ensures` this reads removes: see
+    /// [`Env::removing`]. Empty everywhere but there.
+    removed_here: &'a BTreeMap<EntityId, Removal>,
 }
 
 /// The empty set of definitions, for an environment given none.
@@ -204,6 +210,7 @@ impl<'a> Env<'a> {
             parameters: BTreeSet::new(),
             element: None,
             enclosing: Vec::new(),
+            removed_here: &NOTHING_REMOVED,
         }
     }
 
@@ -273,6 +280,7 @@ impl<'a> Env<'a> {
             parameters: self.parameters.clone(),
             element: self.element.clone(),
             enclosing: self.enclosing.clone(),
+            removed_here: self.removed_here,
         }
     }
 
@@ -320,6 +328,9 @@ impl<'a> Env<'a> {
             parameters: BTreeSet::new(),
             element: None,
             enclosing: Vec::new(),
+            // Still the state the rule leaves: a definition read from an
+            // `ensures` reads the world that clause describes.
+            removed_here: self.removed_here,
         };
         // Bare, and each undecided one saying why: `shown: out + "!"` over an
         // `out` a rule could not settle names what it could not settle.

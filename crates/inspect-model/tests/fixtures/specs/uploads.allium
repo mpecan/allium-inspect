@@ -1,0 +1,332 @@
+-- allium: 3
+-- uploads.allium
+--
+-- A rule that removes an instance and, in another `ensures`, reads one of its
+-- fields (issue #33). `ensures` clauses are a set of postconditions about the
+-- state the rule leaves, not a sequence, so the two orders below mean the same
+-- thing — and in that state the upload is gone. A `let` beside the `when`
+-- reads the state the rule found, which is what keeping the name takes.
+
+entity Upload {
+    name: String
+    big: Boolean
+    thumb: Thumb?
+    thumbs: Thumb with upload = this
+    status: pending | done
+    is_named(who): name = who
+}
+
+entity Thumb {
+    name: String
+    upload: Upload?
+}
+
+entity Flag {
+    had: Boolean
+}
+
+entity Blob {
+    name: String
+}
+
+entity Shelf {
+    last: String
+    latest: Upload?
+    latest_name: latest.name
+}
+
+-- Removed, then read.
+rule CompleteRemovingFirst {
+    when: CompleteRemovingFirst(upload)
+    ensures: not exists upload
+    ensures: Blob.created(name: upload.name)
+}
+
+-- Read, then removed: the same two postconditions.
+rule CompleteReadingFirst {
+    when: CompleteReadingFirst(upload)
+    ensures: Blob.created(name: upload.name)
+    ensures: not exists upload
+}
+
+-- The name kept before anything changes.
+rule CompleteKeepingTheName {
+    when: CompleteKeepingTheName(upload)
+    let name = upload.name
+    ensures: Blob.created(name: name)
+    ensures: not exists upload
+}
+
+-- An assignment's value read from what the rule removes.
+rule Archive {
+    when: Archive(upload, shelf)
+    ensures: shelf.last = upload.name
+    ensures: not exists upload
+}
+
+-- Removed only when it is big: a small upload stays, and has its name.
+rule Tidy {
+    when: Tidy(upload)
+    ensures:
+        if upload.big:
+            not exists upload
+    ensures: Blob.created(name: upload.name)
+}
+
+-- An emission's argument read from what the rule removes.
+rule Discard {
+    when: Discard(upload)
+    ensures: not exists upload
+    ensures: UploadDiscarded(name: upload.name)
+}
+
+rule Remember {
+    when: UploadDiscarded(name)
+    ensures: Blob.created(name: name)
+}
+
+-- A `let` inside `ensures` is a postcondition's read as well.
+rule Shred {
+    when: Shred(upload)
+    ensures:
+        not exists upload
+        let left = upload.name
+        Blob.created(name: left)
+}
+
+-- What a `not exists` is about is read as the rule found it, so the thumb
+-- goes in both orders.
+rule ClearRemovingFirst {
+    when: ClearRemovingFirst(upload)
+    ensures: not exists upload
+    ensures: not exists upload.thumb
+}
+
+rule ClearReadingFirst {
+    when: ClearReadingFirst(upload)
+    ensures: not exists upload.thumb
+    ensures: not exists upload
+}
+
+-- Whether the thumb goes is decided by the upload as the rule found it, even
+-- below the line that removes the upload; and once it goes, its name is gone
+-- too, though the line reading it comes first of all.
+rule Sweep {
+    when: Sweep(upload, thumb)
+    ensures: Blob.created(name: thumb.name)
+    ensures: not exists upload
+    ensures:
+        if upload.big:
+            not exists thumb
+}
+
+-- Whether to remove decided through a `let` inside `ensures`: a name for
+-- the same read, so the removal is decided as `if upload.big:` decides it,
+-- in either order.
+rule TidyByLetReadingFirst {
+    when: TidyByLetReadingFirst(upload)
+    ensures:
+        Blob.created(name: upload.name)
+        let big = upload.big
+        if big:
+            not exists upload
+}
+
+rule TidyByLetReadingLast {
+    when: TidyByLetReadingLast(upload)
+    ensures:
+        let big = upload.big
+        if big:
+            not exists upload
+        Blob.created(name: upload.name)
+}
+
+-- What decides reads the upload as the rule found it, not as a line above the
+-- removal left it: the flag is still set when the `if` asks, in either order.
+rule FlagThenRemove {
+    when: FlagThenRemove(upload)
+    ensures:
+        if upload.big:
+            Blob.created(name: "big")
+        upload.big = false
+        not exists upload
+}
+
+rule RemoveThenFlag {
+    when: RemoveThenFlag(upload)
+    ensures:
+        if upload.big:
+            Blob.created(name: "big")
+        not exists upload
+        upload.big = false
+}
+
+-- Through what the rule removes, to what it does not: the thumb is renamed.
+rule Retag {
+    when: Retag(upload)
+    ensures: not exists upload
+    ensures: upload.thumb.name = "z"
+}
+
+-- Every thumb goes with the upload, read through the upload as the rule
+-- found it; and only the one named "a", by a filter, two ways.
+rule Purge {
+    when: Purge(upload)
+    ensures: not exists upload
+    ensures:
+        for t in upload.thumbs:
+            not exists t
+}
+
+rule PurgeA {
+    when: PurgeA(upload)
+    ensures: not exists upload
+    ensures:
+        for t in upload.thumbs where t.name = "a":
+            not exists t
+}
+
+rule PurgeBareA {
+    when: PurgeBareA(upload)
+    ensures: not exists upload
+    ensures:
+        for t in upload.thumbs where name = "a":
+            not exists t
+}
+
+-- The thumbs' names, read through a relationship in the state the rule
+-- leaves — where the upload has no thumbs left — in either order.
+rule NamesAfter {
+    when: NamesAfter(upload)
+    ensures:
+        for t in upload.thumbs:
+            not exists t
+    ensures: Blob.created(name: upload.thumbs.name)
+}
+
+rule NamesBefore {
+    when: NamesBefore(upload)
+    ensures: Blob.created(name: upload.thumbs.name)
+    ensures:
+        for t in upload.thumbs:
+            not exists t
+}
+
+-- The same thumbs, held from before the rule: what they were is gone with them.
+rule NamesHeld {
+    when: NamesHeld(upload)
+    let thumbs = upload.thumbs
+    ensures:
+        for t in thumbs:
+            not exists t
+    ensures: Blob.created(name: thumbs.name)
+}
+
+-- A function the removed upload defines, asked in the state the rule leaves.
+rule Ask {
+    when: Ask(upload)
+    ensures: not exists upload
+    ensures: Flag.created(had: upload.is_named("x"))
+}
+
+-- Whether the upload is there, in the state the rule leaves: it is not.
+rule Check {
+    when: Check(upload)
+    ensures: Flag.created(had: exists upload)
+    ensures: not exists upload
+}
+
+-- A removal decided by a value read from what it removes: removed, the value
+-- is undecided and nothing removes it; kept, the value says to remove it.
+rule Paradox {
+    when: Paradox(upload, shelf)
+    ensures: shelf.last = upload.name
+    ensures:
+        if shelf.last = "x":
+            not exists upload
+}
+
+-- A loop's name is the member, in what decides, even where a `let` inside
+-- `ensures` named something else the same: only the thumb named "a" goes.
+rule ShadowedByLoop {
+    when: ShadowedByLoop(upload)
+    ensures:
+        not exists upload
+        let t = upload.thumb
+        for t in upload.thumbs:
+            if t.name = "a":
+                not exists t
+}
+
+-- An assignment to what the rule removes is still checked against what it
+-- held: `done` is a state of `status`, written above the removal or below.
+rule FinishRemovingFirst {
+    when: FinishRemovingFirst(upload)
+    ensures: not exists upload
+    ensures: upload.status = done
+}
+
+-- What a live instance computes from what the rule removes is read in the
+-- state the rule leaves too, and says which rule removed it.
+rule Recall {
+    when: Recall(upload, shelf)
+    ensures: not exists upload
+    ensures: Blob.created(name: shelf.latest_name)
+}
+
+-- Not about removal: an emitted argument nothing settled says why on the
+-- rule that emitted it, and a state word handed on says nothing.
+rule Announce {
+    when: Announce(upload)
+    ensures: UploadAnnounced(name: upload.name, state: done)
+}
+
+rule Heard {
+    when: UploadAnnounced(name, state)
+    ensures: Blob.created(name: name)
+}
+
+surface Desk {
+    facing u: Upload
+    provides:
+        CompleteRemovingFirst(u)
+        CompleteReadingFirst(u)
+        CompleteKeepingTheName(u)
+        Tidy(u)
+        Discard(u)
+        Shred(u)
+        ClearRemovingFirst(u)
+        ClearReadingFirst(u)
+        TidyByLetReadingFirst(u)
+        TidyByLetReadingLast(u)
+        FlagThenRemove(u)
+        RemoveThenFlag(u)
+        Retag(u)
+        Purge(u)
+        PurgeA(u)
+        PurgeBareA(u)
+        NamesAfter(u)
+        NamesBefore(u)
+        NamesHeld(u)
+        Ask(u)
+        Check(u)
+        Announce(u)
+        ShadowedByLoop(u)
+        FinishRemovingFirst(u)
+}
+
+surface ShelfDesk {
+    facing u: Upload
+    context s: Shelf
+    provides:
+        Archive(u, s)
+        Paradox(u, s)
+        Recall(u, s)
+}
+
+surface SweepDesk {
+    facing u: Upload
+    context t: Thumb
+    provides:
+        Sweep(u, t)
+}

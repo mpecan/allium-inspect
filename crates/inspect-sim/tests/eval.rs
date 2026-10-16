@@ -3504,3 +3504,69 @@ fn a_definition_is_quoted_from_its_own_module_s_text_and_no_other() {
     let elsewhere = Env::new(&world, "catalogue", other).deriving(&derived).bind("hub", member);
     assert_eq!(inner(&elsewhere).expression, None);
 }
+
+// --- what a rule's `ensures` removes (issue #33) ---------------------------
+
+/// A value read from an instance the rule removes is undecided whether the
+/// world still holds it or not — the order of `ensures` lines decides only
+/// that — and says which rule removed it, by which clause, and the `let` that
+/// keeps the value. The read is quoted by byte offset, past a multi-byte
+/// character, as the parser counts.
+#[test]
+fn an_instance_the_rule_removes_is_undecided_wherever_the_world_holds_it() {
+    use inspect_sim::eval::Removal;
+
+    let prefix = "— ";
+    let source = format!("{prefix}member.name");
+    let at = prefix.len();
+    let held = library();
+    let member = EntityId::new("Member", 1);
+    let found = held.instance(&member).cloned().expect("the member");
+    let mut gone = held.clone();
+    gone.remove(&member);
+    let removed = std::collections::BTreeMap::from([(
+        member.clone(),
+        Removal {
+            rule: "Leave".to_owned(),
+            subject: "member".to_owned(),
+            clause: "not exists member".to_owned(),
+            found,
+        },
+    )]);
+    let node = Expr::MemberAccess {
+        span: AstSpan { start: at, end: at + 11 },
+        object: Box::new(Expr::Ident(Ident {
+            span: AstSpan { start: at, end: at + 6 },
+            name: "member".to_owned(),
+        })),
+        field: Ident { span: AstSpan { start: at + 7, end: at + 11 }, name: "name".to_owned() },
+    };
+
+    for world in [&held, &gone] {
+        let scope = Env::new(world, "lending", &source)
+            .removing(&removed)
+            .bind("member", Value::Ref(member.clone()));
+        let evaluated = eval(&node, &scope);
+        assert_eq!(evaluated.value, Value::Unknown);
+        assert_eq!(evaluated.unresolved.len(), 1, "{evaluated:#?}");
+        let note = &evaluated.unresolved[0];
+        assert!(
+            note.reason.contains(
+                "rule `Leave` removes `member` (`Member#1`) with `not exists member`, so \
+                 `member.name` has nothing to read"
+            ) && note.reason.contains("whichever line comes first")
+                && note.reason.contains("`let name = member.name`"),
+            "{}",
+            note.reason
+        );
+        assert_eq!(note.expression.as_deref(), Some("member.name"));
+        assert_eq!(note.span, Some(inspect_model::Span::new(at, at + 11)));
+    }
+
+    // Told nothing, the world answers as it always did.
+    let told_nothing =
+        Env::new(&held, "lending", &source).bind("member", Value::Ref(member.clone()));
+    assert_eq!(value_of(&node, &told_nothing), Value::Str("Ada".to_owned()));
+    let plain = env(&gone, "lending").bind("member", Value::Ref(member));
+    assert!(reasons(&node, &plain).iter().any(|it| it.contains("is not in this world")));
+}
