@@ -174,19 +174,17 @@ fn caught_and_answering(text: &str, line: usize) -> Result<(Cast, Vec<Where>), P
 /// `"a where b"` stays one answer.
 fn unquoted<'a>(text: &'a str, separator: &str) -> Vec<&'a str> {
     let mut parts = Vec::new();
-    let mut quoted = false;
     let mut start = 0;
-    let mut at = 0;
-    while at < text.len() {
-        if text[at..].starts_with('"') {
-            quoted = !quoted;
-        } else if !quoted && text[at..].starts_with(separator) {
-            parts.push(&text[start..at]);
-            at += separator.len();
-            start = at;
-            continue;
+    let mut offset = 0;
+    // Split on quotes first: every other piece is inside a string literal.
+    for (n, piece) in text.split('"').enumerate() {
+        if n % 2 == 0 {
+            for (at, _) in piece.match_indices(separator) {
+                parts.push(&text[start..offset + at]);
+                start = offset + at + separator.len();
+            }
         }
-        at += text[at..].chars().next().map_or(1, char::len_utf8);
+        offset += piece.len() + 1;
     }
     parts.push(&text[start..]);
     parts

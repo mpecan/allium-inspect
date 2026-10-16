@@ -129,6 +129,18 @@ journey TheDoorMightBeClosed {
             where audience(issue) = {}
 }
 
+-- Unsure whether the door is open, what the act would have woken is unsure
+-- too, and a `then … fires` about it says which rule and why.
+journey WhatTheDoorMightHaveWoken {
+    cast:
+        repo: Repo
+    1. a repo nobody named opens an issue
+        repo does Open(repo, "crash") on CoreTracker
+            creating issue: Issue
+            where audience(issue) = {}
+        then Open fires
+}
+
 journey TheDoorIsOpen {
     cast:
         repo: Repo

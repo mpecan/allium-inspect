@@ -192,6 +192,24 @@ fn an_answer_in_an_act_the_surface_does_not_let_through_is_not_listed() {
     assert_eq!(said(&open), ["audience(issue) = {}"]);
 }
 
+/// Undone at an unsettled door, what the act woke is still named: a `then
+/// … fires` about it is told that rule could not be decided, not that it
+/// did not run.
+#[test]
+fn what_an_unsettled_door_woke_is_named_when_asked_about() {
+    let walk = walked("WhatTheDoorMightHaveWoken");
+    let text = render(std::slice::from_ref(&walk));
+    assert_eq!(walk.steps[0].verdict(), Verdict::Undecided, "{text}");
+    let fires = walk.steps[0]
+        .outcomes
+        .iter()
+        .find(|outcome| outcome.about == "then Open fires")
+        .unwrap_or_else(|| panic!("the fires line: {text}"));
+    assert_eq!(fires.verdict, Verdict::Undecided, "{text}");
+    let detail = fires.detail.as_deref().unwrap_or_default();
+    assert!(detail.starts_with("`Open` could not be decided: "), "{text}");
+}
+
 /// Caught, answered, then removed by what the act set off: the name names
 /// nothing afterwards, as it would have without the `where`.
 #[test]

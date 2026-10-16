@@ -1212,3 +1212,26 @@ fn a_where_whose_answer_quotes_where_parses() {
     assert_eq!(answering.len(), 1);
     assert_eq!(answering[0].value, Term::Literal(Value::Str("x where y".to_owned())));
 }
+
+/// A quoted answer does not throw off where the next `where` begins.
+#[test]
+fn a_where_after_a_quoted_answer_is_split_where_it_begins() {
+    let journeys = parse(
+        "journey J {\n    1. she opens one\n        repo does Open(repo) on Tracker\n            \
+         creating issue: Issue\n            where label(issue) = \"a \u{e9}\"\n            \
+         where tag(issue) = \"b\"\n}\n",
+    )
+    .expect("parses");
+    let Clause::Does { answering, .. } = &journeys[0].steps[0].clauses[0] else {
+        panic!("expected an act");
+    };
+    let read: Vec<(String, &Term)> =
+        answering.iter().map(|answer| (answer.as_written(), &answer.value)).collect();
+    assert_eq!(
+        read,
+        [
+            ("label(issue)".to_owned(), &Term::Literal(Value::Str("a \u{e9}".to_owned()))),
+            ("tag(issue)".to_owned(), &Term::Literal(Value::Str("b".to_owned()))),
+        ]
+    );
+}
