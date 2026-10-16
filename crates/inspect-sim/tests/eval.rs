@@ -2868,6 +2868,22 @@ fn an_element_s_unset_stored_field_is_not_answered_by_one_this_stores() {
 }
 
 #[test]
+fn a_filter_still_reads_an_enclosing_name_the_element_does_not_declare() {
+    // `r.watches where a = wanted`, with `wanted` bound by the rule. Only the
+    // names the watch declares are taken from it; `wanted` is the rule's, and
+    // unbinding it as well would leave every watch undecided.
+    let (world, repo, watch, derived) = watched_repo(Some(true), None, &[]);
+    let env = env(&world, "ci")
+        .deriving(&derived)
+        .bind("r", Value::Ref(repo))
+        .bind("wanted", Value::Bool(true));
+    let wanted = filtered(field(ident("r"), "watches"), compare(ident("a"), "Eq", ident("wanted")));
+    let evaluation = eval(&wanted, &env);
+    assert_eq!(evaluation.value, Value::Set(vec![Value::Ref(watch)]));
+    assert!(evaluation.unresolved.is_empty(), "{:?}", evaluation.unresolved);
+}
+
+#[test]
 fn an_element_s_computed_field_reads_this_as_the_element() {
     // `is_watching: this.a` — `this` inside the watch's definition is the
     // watch, not the repo whose filter asked for it.
