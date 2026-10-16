@@ -1,0 +1,25 @@
+-- allium: 3
+-- migrations.allium
+--
+-- Emits a trigger into another module's namespace (issue #17):
+-- `admin/FailureReported(…)` is `failures`' trigger, named through the alias
+-- this module imported it under. The alias is not the module's own name on
+-- purpose, so it has to be read through the `use` to find `failures`.
+
+use "./failures.allium" as admin
+
+entity Migration {
+    failed: Boolean
+}
+
+rule Fail {
+    when: Fail(m)
+    ensures: m.failed = true
+    ensures: admin/FailureReported(kind: "migration", description: "boom")
+}
+
+surface MigrationPage {
+    facing m: Migration
+    provides:
+        Fail(m)
+}

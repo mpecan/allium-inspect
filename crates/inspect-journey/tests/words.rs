@@ -252,6 +252,7 @@ fn the_fixtures_own_journeys_report_no_word() {
         ("audience", common::AUDIENCE),
         ("chains", common::CHAINS),
         ("facing", common::FACING),
+        ("failures", common::FAILURES),
         ("fanout", common::FANOUT),
         ("forms", LENDING),
         ("given_answers", common::GRANTS),

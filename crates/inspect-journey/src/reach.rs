@@ -89,7 +89,12 @@ fn reached(trigger: &str, graph: &SpecGraph, program: &Program) -> BTreeSet<Node
             let Some(ast) = program.rule(rule.as_str()) else { continue };
             let module = graph.node(rule).map(|node| node.module.clone()).unwrap_or_default();
             for emission in listening::emissions(&ast.ensures) {
-                pending.push((emission.trigger.to_owned(), Some(module.clone())));
+                // `admin/FailureReported(…)` is heard from `admin`; an alias
+                // leading nowhere is heard by nobody, as in the walk.
+                let Some(from) = listening::emitted_from(graph, &module, emission.qualifier) else {
+                    continue;
+                };
+                pending.push((emission.trigger.to_owned(), Some(from)));
             }
         }
     }
@@ -204,6 +209,59 @@ rule Elsewhere {
         assert_eq!(said.len(), 1, "{said:?}");
         assert!(
             said[0].starts_with("`Hear` emits `Heard(note: doc)` without binding `doc` for `Log`")
+        );
+    }
+
+    /// `admin/Reported(…)` is followed into the module the alias leads to,
+    /// and heard there by a rule waiting on its own bare `Reported` (#17) —
+    /// whose unbound parameter is remarked on — and in `u`, which imports `a`
+    /// but not the emitter. A module that imports neither side is not
+    /// reached, and an alias leading nowhere reaches nobody.
+    #[test]
+    fn a_qualified_emission_is_followed_into_the_module_it_names() {
+        let (graph, program) = ingested_all(&[
+            (
+                "a",
+                "-- allium: 3\nentity Doc { seen: Boolean }\n\
+                 rule Report {\n    when: Reported(doc, why)\n    ensures: doc.seen = true\n}\n",
+            ),
+            (
+                "b",
+                "-- allium: 3\nrule Stranger {\n    when: Reported(doc)\n    ensures: doc.seen = true\n}\n",
+            ),
+            (
+                "m",
+                "-- allium: 3\nuse \"./a.allium\" as admin\nuse \"./gone.allium\" as gone\n\
+                 rule Go {\n    when: Go(doc)\n    ensures: admin/Reported(doc: doc)\n}\n\
+                 rule Lost {\n    when: Lost(doc)\n    ensures: gone/Reported(doc: doc)\n}\n",
+            ),
+            (
+                "u",
+                "-- allium: 3\nuse \"./a.allium\" as a\n\
+                 rule Hears {\n    when: Reported(doc, why)\n    ensures: doc.seen = true\n}\n",
+            ),
+        ]);
+        let reached_from = |act: &str| -> Vec<String> {
+            reached(act, &graph, &program).iter().map(ToString::to_string).collect()
+        };
+        // `u` imports `a` and not `m`: it hears `a` emitting, not `m`.
+        assert_eq!(reached_from("Go"), ["a::rule::Report", "m::rule::Go", "u::rule::Hears"]);
+        assert_eq!(reached_from("Lost"), ["m::rule::Lost"]);
+        let mut notes = Vec::new();
+        check("Go", 3, &graph, &program, &mut notes);
+        let said: Vec<&str> = notes.iter().map(|note| note.message.as_str()).collect();
+        assert_eq!(said.len(), 2, "{said:?}");
+        assert!(
+            said[0].starts_with(
+                "`Go` emits `admin/Reported(doc: doc)` without binding `why` for `a/Report`"
+            ),
+            "{said:?}"
+        );
+        assert!(
+            said[1].starts_with(
+                "`Go` emits `admin/Reported(doc: doc)` without binding `why` for `u/Hears`"
+            ),
+            "{said:?}"
         );
     }
 

@@ -46,6 +46,10 @@ pub const ORDERS: &[&str] = &["orders"];
 /// The pinboard fixture and the module whose entity it creates.
 pub const PINBOARD: &[&str] = &["notes", "pinboard"];
 
+/// The migrations fixture and the module it emits a trigger into, written
+/// `admin/FailureReported(…)` (issue #17).
+pub const FAILURES: &[&str] = &["failures", "migrations"];
+
 /// The cells fixture, alone: a reaction that makes another of its own kind.
 pub const CELLS: &[&str] = &["cells"];
 

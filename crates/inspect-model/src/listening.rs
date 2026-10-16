@@ -10,8 +10,9 @@
 //! **The same answer the walk gives, by construction.** Which calls are
 //! emissions is the simulator's own test ([`emitted`]), found in the places the
 //! simulator applies a postcondition ([`emissions`]); which rules an emission
-//! wakes is the simulator's own match ([`hears`]), on the trigger's name and
-//! the modules the two rules are in; the listener's parameters are read off its `when` by
+//! wakes is the simulator's own match ([`hears`]), on the trigger's name, the
+//! module the emission is heard from ([`emitted_from`]) and the module the
+//! listener is in; the listener's parameters are read off its `when` by
 //! [`crate::RuleAst::parameters`]; and what binds them is
 //! [`crate::binding::plan`], which the simulator binds values by. A parameter
 //! the listener's own `let` gives a value is bound at run time too, and is not
@@ -41,6 +42,8 @@ pub const CODE: &str = "inspect.trigger.unbound";
 pub struct Emission<'a> {
     /// The trigger's name, as written.
     pub trigger: &'a str,
+    /// The alias it is qualified with, `admin` in `admin/FailureReported(…)`.
+    pub qualifier: Option<&'a str>,
     /// What it passed, named and by position.
     pub args: &'a [CallArg],
     /// The call, `Published(item: doc)`.
@@ -65,17 +68,48 @@ impl Emission<'_> {
     }
 }
 
-/// The trigger a call in an `ensures` emits, when it emits one: a bare name.
+/// The trigger a call in an `ensures` emits, when it emits one, and the alias
+/// it is qualified with: `Published` from `Published(…)`, and `FailureReported`
+/// with `admin` from `admin/FailureReported(…)`.
 ///
 /// `Entity.created(…)` is a creation and `memo/Note.created(…)` one across a
-/// boundary; anything else that is not a bare name is a call the simulator
-/// does not apply. The simulator asks this same function.
+/// boundary; anything else that is neither a name nor a qualified name is a
+/// call the simulator does not apply. The simulator asks this same function.
+///
+/// A qualified emission hands work to the module that owns it (#17): read as
+/// neither a creation nor a trigger, the rule in `admin` waiting on
+/// `FailureReported` never ran. Which module the alias leads to is
+/// [`emitted_from`]'s to say.
 #[must_use]
-pub fn emitted(function: &Expr) -> Option<&str> {
+pub fn emitted(function: &Expr) -> Option<(&str, Option<&str>)> {
     match function {
-        Expr::Ident(ident) => Some(ident.name.as_str()),
+        Expr::Ident(ident) => Some((ident.name.as_str(), None)),
+        Expr::QualifiedName(name) => Some((name.name.as_str(), name.qualifier.as_deref())),
         _ => None,
     }
+}
+
+/// The module an emission written in `module` is heard as coming from.
+///
+/// A bare `Published(…)` is `module`'s own. `admin/FailureReported(…)` is the
+/// trigger of the module `module` imported `as admin`, and is heard as though
+/// that module had emitted it — by its own rules, by the modules that `use` it,
+/// and by a rule written `when: admin/FailureReported(…)` (see [`hears`]).
+///
+/// `None` when the alias leads to no module in this spec set: whose trigger it
+/// is was not said, and guessing would wake rules the spec never pointed at.
+#[must_use]
+pub fn emitted_from(graph: &SpecGraph, module: &str, qualifier: Option<&str>) -> Option<String> {
+    let Some(alias) = qualifier else { return Some(module.to_owned()) };
+    graph
+        .modules
+        .iter()
+        .find(|it| it.name == module)?
+        .imports
+        .iter()
+        .find(|import| import.alias == alias)?
+        .target
+        .clone()
 }
 
 /// Every emission in `ensures`, in the order written: a clause, the items of
@@ -97,8 +131,9 @@ pub fn emissions(ensures: &[Expr]) -> Vec<Emission<'_>> {
 fn collect<'a>(clause: &'a Expr, found: &mut Vec<Emission<'a>>) {
     match clause {
         Expr::Call { function, args, span } => {
-            if let Some(trigger) = emitted(function) {
-                found.push(Emission { trigger, args, span: Span::new(span.start, span.end) });
+            if let Some((trigger, qualifier)) = emitted(function) {
+                let span = Span::new(span.start, span.end);
+                found.push(Emission { trigger, qualifier, args, span });
             }
         }
         Expr::Block { items, .. } => items.iter().for_each(|item| collect(item, found)),
@@ -145,8 +180,11 @@ pub fn unbindable(graph: &SpecGraph, program: &Program) -> Vec<Unbindable> {
         let Some(ast) = program.rule(emitter.id.as_str()) else { continue };
         for emission in emissions(&ast.ensures) {
             let carried = emission.carried();
-            let from = Some(emitter.module.as_str());
-            for listener in listeners(graph, program, emission.trigger, from) {
+            // An alias that leads nowhere wakes nobody, here as in the walk.
+            let Some(from) = emitted_from(graph, &emitter.module, emission.qualifier) else {
+                continue;
+            };
+            for listener in listeners(graph, program, emission.trigger, Some(&from)) {
                 let Some(heard) = program.rule(listener.as_str()) else { continue };
                 let parameters = heard.parameters();
                 for (parameter, bound) in binding::plan(&carried, &parameters) {
@@ -578,8 +616,75 @@ mod tests {
         assert_eq!(said.node.as_deref(), Some("m::rule::A"));
     }
 
+    /// `admin/B(…)` is `a`'s trigger, emitted from `m` (#17): its listener
+    /// in `a` is reported for the parameter it leaves unbound, named with its
+    /// module, and the emission is quoted as written — and so is the one in
+    /// `u`, which imports `a` but not the emitter.
     #[test]
-    fn a_call_that_is_not_a_bare_name_is_not_an_emission() {
+    fn a_qualified_emission_is_checked_against_the_module_it_names() {
+        let emitter = "-- allium: 3\nuse \"./a.allium\" as admin\n\
+                       rule E {\n    when: E(doc)\n    ensures: admin/B(item: doc)\n}\n";
+        let it = ingested(&[
+            (
+                "a",
+                "-- allium: 3\nentity Doc { seen: Boolean }\nrule L {\n    when: B(doc)\n    ensures: doc.seen = true\n}\n",
+            ),
+            ("m", emitter),
+            // Imports `a` and not `m`: it hears `a` emitting, so it hears this.
+            (
+                "u",
+                "-- allium: 3\nuse \"./a.allium\" as a\nrule U {\n    when: B(doc)\n    ensures: doc.seen = true\n}\n",
+            ),
+        ]);
+        let found = unbindable(&it.graph, &it.program);
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert_eq!(found[0].trigger, "B");
+        assert!(
+            found[1]
+                .message(&it.graph, Some(emitter))
+                .starts_with("`E` emits `admin/B(item: doc)` without binding `doc` for `u/U`"),
+            "{}",
+            found[1].message(&it.graph, Some(emitter))
+        );
+        assert!(
+            found[0]
+                .message(&it.graph, Some(emitter))
+                .starts_with("`E` emits `admin/B(item: doc)` without binding `doc` for `a/L`"),
+            "{}",
+            found[0].message(&it.graph, Some(emitter))
+        );
+    }
+
+    /// The module a qualified emission is heard from is the alias's; a bare
+    /// one's is the emitter's; an alias imported from nowhere in the set, or
+    /// never imported, is nobody's — and nothing is reported against it.
+    #[test]
+    fn which_module_an_emission_is_heard_from() {
+        let it = ingested(&[
+            (
+                "a",
+                "-- allium: 3\nrule L {\n    when: B(doc, why)\n    ensures: doc.seen = true\n}\n",
+            ),
+            (
+                "m",
+                "-- allium: 3\nuse \"./a.allium\" as admin\nuse \"./gone.allium\" as gone\n\
+                 rule E {\n    when: E(doc)\n    ensures: gone/B(doc)\n    ensures: ghost/B(doc)\n}\n",
+            ),
+        ]);
+        assert_eq!(emitted_from(&it.graph, "m", None).as_deref(), Some("m"));
+        assert_eq!(emitted_from(&it.graph, "m", Some("admin")).as_deref(), Some("a"));
+        assert_eq!(emitted_from(&it.graph, "m", Some("gone")), None);
+        assert_eq!(emitted_from(&it.graph, "m", Some("ghost")), None);
+        assert_eq!(emitted_from(&it.graph, "nowhere", Some("admin")), None);
+        let ast = it.program.rule("m::rule::E").unwrap_or_else(|| panic!("E"));
+        let qualifiers: Vec<_> =
+            emissions(&ast.ensures).iter().map(|it| (it.trigger, it.qualifier)).collect();
+        assert_eq!(qualifiers, [("B", Some("gone")), ("B", Some("ghost"))]);
+        assert_eq!(unbindable(&it.graph, &it.program), []);
+    }
+
+    #[test]
+    fn a_creation_is_not_an_emission() {
         let it = ingested(&[(
             "m",
             &spec("rule A {\n    when: A(doc)\n    ensures: Doc.created(seen: false)\n}\n"),

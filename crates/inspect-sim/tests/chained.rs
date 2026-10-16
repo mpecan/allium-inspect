@@ -304,11 +304,17 @@ fn unrelated() -> (SpecGraph, Program, Sources) {
              rule MarkPullClosed {\n    when: Closed(pull)\n    ensures: pull.closed = true\n}\n",
         ),
     ];
+    from_source(&modules)
+}
+
+/// `modules`, ingested from their source alone: `model` and `plan` replayed
+/// empty, because nothing here reads what they carry.
+fn from_source(modules: &[(&str, &str)]) -> (SpecGraph, Program, Sources) {
     let mut runner = MapRunner::new("test");
     let mut reader = MemoryReader::default();
     let mut sources: Sources = BTreeMap::new();
     let mut paths = Vec::new();
-    for (module, text) in modules {
+    for &(module, text) in modules {
         let path = PathBuf::from(format!("{module}.allium"));
         for command in [Command::Model, Command::Plan] {
             runner = runner.with(command, &path, serde_json::json!({}));
@@ -346,4 +352,179 @@ fn a_firing_nobody_emitted_still_wakes_every_listener_of_that_name() {
     let outcome = step(&graph, &program, &sources, &World::new(), &event);
     let woken: Vec<&str> = outcome.rules.iter().map(|rule| rule.name.as_str()).collect();
     assert_eq!(woken, ["MarkIssueClosed", "MarkPullClosed"]);
+}
+
+/// `failures` and `migrations`, ingested exactly as the server does.
+fn failures() -> (SpecGraph, Program, Sources) {
+    let root = fixtures();
+    let mut runner = MapRunner::new(read(&root.join("cli/VERSION")).trim());
+    let mut reader = MemoryReader::default();
+    let mut sources: Sources = BTreeMap::new();
+    let mut paths = Vec::new();
+    for module in ["failures", "migrations"] {
+        let path = root.join(format!("specs/{module}.allium"));
+        for command in Command::ALL {
+            let document = read(&root.join(format!("cli/{module}.{command}.json")));
+            runner = runner.with(command, &path, serde_json::from_str(&document).expect("JSON"));
+        }
+        let text = read(&path);
+        sources.insert(module.to_owned(), text.clone());
+        reader = reader.with(&path, text);
+        paths.push(path);
+    }
+    let Ingestion { graph, program } = ingest(&runner, &reader, &paths).expect("ingests");
+    (graph, program, sources)
+}
+
+/// `admin/FailureReported(…)` is `failures`' trigger, emitted from
+/// `migrations` through the alias it imported it under (issue #17). It is
+/// emitted as that module's, and the rule there waiting on `FailureReported`
+/// is woken by it and makes its notice — where it was read as neither a
+/// creation nor a trigger, and `Fail` left part of what it ensures undone.
+#[test]
+fn an_emission_qualified_with_another_module_is_that_module_s_trigger() {
+    let (graph, program, sources) = failures();
+    let mut world = World::new();
+    let migration = world.create("Migration", "migrations");
+    world.set_field(&migration, "failed", Value::Bool(false));
+    let event = Event::new("Fail", "migrations").passing(Value::Ref(migration.clone()));
+    let outcome = step(&graph, &program, &sources, &world, &event);
+
+    let fail = rule(&outcome, "Fail");
+    assert_eq!(fail.disposition, Disposition::Fired, "{fail:#?}");
+    assert!(fail.unapplied.is_empty(), "{:#?}", fail.unapplied);
+    let next = emitted(&outcome, "Fail");
+    assert_eq!(next.trigger, "FailureReported");
+    assert_eq!(next.module, "failures", "the alias's module, not the emitter's");
+    assert_eq!(next.arguments["description"], Value::Str("boom".to_owned()));
+
+    let after = step(&graph, &program, &sources, &outcome.world, &next);
+    let record = rule(&after, "Record");
+    assert_eq!(record.disposition, Disposition::Fired, "{record:#?}");
+    let Some(Effect::Created { id, entity }) = record.effects.first() else {
+        panic!("Record creates a notice: {:?}", record.effects)
+    };
+    assert_eq!(entity, "Notice");
+    let notice = after.world.instance(id).expect("the notice exists");
+    assert_eq!(notice.module, "failures");
+    assert_eq!(notice.field("kind"), Value::Str("migration".to_owned()));
+    assert_eq!(notice.field("text"), Value::Str("boom".to_owned()));
+}
+
+/// Heard as `failures` emitting it: by a module that imports `failures`, and
+/// not by one that imports neither side and happens to wait on the same word.
+#[test]
+fn a_qualified_emission_is_heard_where_the_aliased_module_s_own_would_be() {
+    let listener = |name: &str| {
+        format!(
+            "rule {name} {{\n    when: Reported(what)\n    ensures: Seen.created(what: what)\n}}\n"
+        )
+    };
+    let owner = format!("-- allium: 3\nentity Seen {{ what: String }}\n{}", listener("Own"));
+    let user = format!(
+        "-- allium: 3\nuse \"./owner.allium\" as o\nentity Seen {{ what: String }}\n{}",
+        listener("Imports")
+    );
+    let stranger =
+        format!("-- allium: 3\nentity Seen {{ what: String }}\n{}", listener("Stranger"));
+    let emitter = "-- allium: 3\nuse \"./owner.allium\" as o\n\
+                   rule Go {\n    when: Go(what)\n    ensures: o/Reported(what: what)\n}\n";
+    let (graph, program, sources) = from_source(&[
+        ("emitter", emitter),
+        ("owner", &owner),
+        ("stranger", &stranger),
+        ("user", &user),
+    ]);
+    let event = Event::new("Go", "emitter").with("what", Value::Str("x".to_owned()));
+    let outcome = step(&graph, &program, &sources, &World::new(), &event);
+    let next = emitted(&outcome, "Go");
+    assert_eq!(next.module, "owner");
+    let after = step(&graph, &program, &sources, &outcome.world, &next);
+    let woken: Vec<&str> = after.rules.iter().map(|rule| rule.name.as_str()).collect();
+    assert_eq!(woken, ["Own", "Imports"]);
+}
+
+/// A rule written `when: o/Reported(…)` hears `owner` emitting when its `o`
+/// is `owner`, and not when its `o` is some other module — the same alias,
+/// leading elsewhere.
+#[test]
+fn a_qualified_emission_wakes_a_qualified_listener_whose_alias_leads_to_the_same_module() {
+    let listener = |name: &str| {
+        format!(
+            "entity Seen {{ what: String }}\n\
+             rule {name} {{\n    when: o/Reported(what)\n    ensures: Seen.created(what: what)\n}}\n"
+        )
+    };
+    let owner = "-- allium: 3\nentity Seen { what: String }\n";
+    let qualified = format!("-- allium: 3\nuse \"./owner.allium\" as o\n{}", listener("Qualified"));
+    let elsewhere =
+        format!("-- allium: 3\nuse \"./stranger.allium\" as o\n{}", listener("Elsewhere"));
+    let stranger = "-- allium: 3\nentity Seen { what: String }\n";
+    let emitter = "-- allium: 3\nuse \"./owner.allium\" as o\n\
+                   rule Go {\n    when: Go(what)\n    ensures: o/Reported(what: what)\n}\n";
+    let (graph, program, sources) = from_source(&[
+        ("elsewhere", &elsewhere),
+        ("emitter", emitter),
+        ("owner", owner),
+        ("qualified", &qualified),
+        ("stranger", stranger),
+    ]);
+    let event = Event::new("Go", "emitter").with("what", Value::Str("x".to_owned()));
+    let outcome = step(&graph, &program, &sources, &World::new(), &event);
+    let next = emitted(&outcome, "Go");
+    let after = step(&graph, &program, &sources, &outcome.world, &next);
+    let woken: Vec<&str> = after.rules.iter().map(|rule| rule.name.as_str()).collect();
+    assert_eq!(woken, ["Qualified"]);
+}
+
+/// The step `Go` takes in `emitter`, and the one reason it left undone.
+fn left_undone(emitter: &str) -> inspect_sim::Unresolved {
+    let (graph, program, sources) = from_source(&[("emitter", emitter)]);
+    let event = Event::new("Go", "emitter").with("what", Value::Str("x".to_owned()));
+    let outcome = step(&graph, &program, &sources, &World::new(), &event);
+    let go = rule(&outcome, "Go");
+    assert!(
+        !go.effects.iter().any(|effect| matches!(effect, Effect::Emitted { .. })),
+        "{:#?}",
+        go.effects
+    );
+    assert_eq!(go.unapplied.len(), 1, "{:#?}", go.unapplied);
+    go.unapplied[0].clone()
+}
+
+/// An alias that leads to no module in the set names nobody's trigger. Nothing
+/// is emitted — waking every rule of that name would be a guess — and the rule
+/// says what it left undone and which of the two mistakes it is: a `use` whose
+/// file is not in the set, or an alias never imported. The emission is quoted
+/// and located by byte span, past a comment where bytes and characters differ.
+#[test]
+fn an_emission_through_an_alias_that_leads_nowhere_is_left_undone_and_says_why() {
+    let emitter = "-- allium: 3\nuse \"./missing.allium\" as gone\n\
+                   rule Go {\n    when: Go(what)\n    -- a failure — handed off\n    \
+                   ensures: gone/Reported(what: what)\n}\n\
+                   rule Hears {\n    when: Reported(what)\n    ensures: Seen.created(what: what)\n}\n\
+                   entity Seen { what: String }\n";
+    let why = left_undone(emitter);
+    assert!(
+        why.reason.starts_with(
+            "`emitter` imports `gone` from \"./missing.allium\", which is not in this spec \
+             set, so `gone/Reported` is no known module's trigger and was not emitted"
+        ),
+        "{why:?}"
+    );
+    assert_eq!(why.expression.as_deref(), Some("gone/Reported"));
+    let span = why.span.unwrap_or_else(|| panic!("located: {why:?}"));
+    assert_eq!(Some(span.start), emitter.find("gone/Reported"));
+    assert_eq!(&emitter[span.start..span.end], "gone/Reported");
+
+    let never = "-- allium: 3\n\
+                 rule Go {\n    when: Go(what)\n    ensures: ghost/Reported(what: what)\n}\n";
+    let why = left_undone(never);
+    assert!(
+        why.reason.starts_with(
+            "`emitter` imports nothing as `ghost`, so `ghost/Reported` is no known \
+             module's trigger and was not emitted"
+        ),
+        "{why:?}"
+    );
 }

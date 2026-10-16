@@ -1,0 +1,1 @@
+{"diagnostics":[],"entities":[{"fields":[{"name":"kind","type_expr":"String"},{"name":"text","type_expr":"String"}],"kind":"internal","name":"Notice"}],"version":3}

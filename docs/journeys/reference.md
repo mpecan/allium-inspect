@@ -495,6 +495,19 @@ what a rule two hops away made, and `then <Rule> fires` can ask about it. The
 Simulate view in the browser stops at the first rule and offers you the emission
 to follow, because there a person is picking. A journey has already picked.
 
+That includes a trigger handed to another module. `ensures:
+admin/FailureReported(kind: "migration", description: "boom")` is the trigger
+of the module this one imported `as admin` — here `failures`, from `use
+"./failures.allium" as admin` — and wakes the rules that would hear that module
+emit it: its own `when: FailureReported(kind, description)`, and any module
+that `use`s it. A journey names what that rule made by the module, not by the
+alias: `creating n: failures/Notice`. An alias leading to no module in the set
+wakes nobody, and the step is **undecided** saying which mistake it is —
+`` `migrations` imports `admin` from "./failures.allium", which is not in this
+spec set `` when that file was not walked, or `` `migrations` imports nothing as
+`ghost` `` when the alias was never imported — rather than waking every rule of
+that name on a guess.
+
 **The surface has to face whoever acts.** A surface's `facing` names who is on
 the other side of it, and an actor's `identified_by` says who that is:
 
@@ -787,16 +800,22 @@ binds by (one function answers all three, so they cannot disagree):
 
 The reading this takes of the language, where the reference is silent:
 
-- **What an emission is.** A call to a bare name in an `ensures:` — at the top
+- **What an emission is.** A call to a name, bare or qualified, in an
+  `ensures:` — at the top
   of the clause, in a block, in either branch of an `if`, in the body of a
   `for` that names its member once, or as the value of a `let` — a `for (a,
   b) in …` is never applied, so nothing inside one is reached.
   `Entity.created(…)` is a creation, and a
-  call inside a value (`x.n = f(y)`) is evaluated rather than emitted. A
-  qualified emission, `other/Published(…)`, is not applied by the walk at all
-  (it reports it as a form it does not model), so it is not checked here.
+  call inside a value (`x.n = f(y)`) is evaluated rather than emitted.
+- **Whose trigger it is.** A bare `Published(…)` is the emitting module's. A
+  qualified one, `admin/FailureReported(…)`, hands work to another module: it
+  is the trigger of the module this one imported `as admin`, and is heard
+  exactly as though that module had emitted it. An alias this module does not
+  import, or whose `use` leads to no module in the set, names nobody's
+  trigger: nothing is emitted, the walk reports the emitting rule's step
+  **undecided** naming the alias, and nothing is checked here.
 - **Which rules it wakes.** A rule whose `when:` calls that trigger name and
-  *hears* the module the emission is written in: an unqualified `when:
+  *hears* the module the emission is from: an unqualified `when:
   Published(doc)` hears its own module, every module it `use`s and every
   module that `use`s it — whose bare `Published(…)` may be this module's
   trigger — and a qualified `when: chains/Published(doc)` hears only the

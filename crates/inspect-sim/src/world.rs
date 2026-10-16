@@ -32,7 +32,9 @@ pub struct Event {
     /// The trigger's name, as the spec spells it.
     pub trigger: String,
     /// Where the trigger is declared, or, for an emission, the module whose
-    /// rule emitted it.
+    /// trigger it is: the emitting rule's for a bare `Published(…)`, and the
+    /// module imported `as admin` for `admin/FailureReported(…)`
+    /// ([`inspect_model::listening::emitted_from`]).
     ///
     /// A label for a firing nobody emitted: an act wakes every rule waiting on
     /// its name, because which module's trigger a person meant is not
