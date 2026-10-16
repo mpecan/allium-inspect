@@ -166,9 +166,10 @@ pub(crate) trait Knows {
         false
     }
     /// The type `name` was bound under, as the journey wrote it.
-    fn type_of(&self, _name: &str) -> Option<&str> {
-        None
-    }
+    ///
+    /// No default: every caller that reads a path needs the answer, and a
+    /// default of "none" would quietly check a field against every state.
+    fn type_of(&self, name: &str) -> Option<&str>;
 }
 
 /// The words one `given` line writes, against the fields it writes them to.
@@ -427,6 +428,9 @@ mod tests {
         impl Knows for Ada {
             fn now(&self, name: &str) -> bool {
                 name == "ada"
+            }
+            fn type_of(&self, _name: &str) -> Option<&str> {
+                None
             }
         }
         check(Written { value: term, into, line: 7 }, &Ada, &graph, &mut notes);
