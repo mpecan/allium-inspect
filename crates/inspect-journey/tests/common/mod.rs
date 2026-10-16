@@ -109,6 +109,14 @@ pub const RUNS: &[&str] = &["runs"];
 /// box about the instance just made (issue #18).
 pub const AUDIENCE: &[&str] = &["audience"];
 
+/// Two modules that each ask a black box called `watchers` about one new tag:
+/// what a module-qualified answer answers (issue #32).
+pub const QUALIFIED: &[&str] = &["parcels", "tally"];
+
+/// `grants` beside a module that asks no `can`: a qualified answer to a call
+/// spelled with a bare word, naming the wrong module (issue #32).
+pub const GRANTS_AND_PARCELS: &[&str] = &["grants", "parcels"];
+
 /// The siblings fixture, alone: rules woken by one trigger, each reading the
 /// world as the trigger found it (issue #24).
 pub const SIBLINGS: &[&str] = &["siblings"];

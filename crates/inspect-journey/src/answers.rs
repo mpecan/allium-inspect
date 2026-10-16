@@ -21,7 +21,10 @@
 //! the act makes nothing of that kind, nothing was answered and nothing is
 //! listed: a receipt for an answer no call could have read is a false one.
 
+mod whose;
+
 use inspect_sim::{Value, step::RuleOutcome, value::EntityId, world::Answer};
+use whose::{asked_of, no_module, reaches, shadowed};
 
 use crate::{
     Outcome,
@@ -56,6 +59,8 @@ pub(crate) struct Landed {
     call: String,
     /// `audience(issue) = {}`, as the ledger lists it.
     said: String,
+    /// `audience(issue)`: the call alone, as the journey wrote it.
+    written: String,
     /// The name `creating` caught, and the instance it named when it landed.
     name: String,
     id: EntityId,
@@ -109,18 +114,14 @@ pub(crate) fn unsettled<'a>(
 
 /// A rule left unsettled in engine turn `turn`, with the calls it asked.
 pub(crate) fn noted(rule: &RuleOutcome, why: String, turn: usize) -> Undecided {
-    Undecided { rule: rule.name.clone(), why, asked: asked(rule), turn }
-}
-
-/// Whether `expression` is a call to `call`: `reach(issue)` is one to `reach`,
-/// and `outreach(issue)` is not.
-fn calls(expression: &str, call: &str) -> bool {
-    expression.split_once('(').is_some_and(|(name, _)| name.trim() == call)
-}
-
-/// The first call `rule` left unanswered that is a call to `call`.
-fn asked_of<'a>(rule: &'a Undecided, call: &str) -> Option<&'a str> {
-    rule.asked.iter().find(|expression| calls(expression, call)).map(String::as_str)
+    Undecided {
+        rule: rule.name.clone(),
+        module: rule.module.clone(),
+        why,
+        asked: asked(rule),
+        reasons: rule.unresolved.iter().map(|note| note.reason.clone()).collect(),
+        turn,
+    }
 }
 
 /// The answers an act in progress will give once the instances they are
@@ -273,6 +274,13 @@ impl Walker<'_> {
     /// One line's `where` answers, now that `id` is the instance it caught.
     fn answer_for(&mut self, caught: &Cast, id: &EntityId, answering: Vec<Where>) {
         for answer in answering {
+            if let Some(why) = self.no_module(&answer.call) {
+                self.unheard.push(format!(
+                    "{why}, so `where {}` answers no call the specification can ask",
+                    answer.as_written()
+                ));
+                continue;
+            }
             let arguments: Vec<Value> =
                 answer.arguments.iter().map(|term| self.value_of(term)).collect();
             let value = self.value_of(&answer.value);
@@ -296,6 +304,7 @@ impl Walker<'_> {
             self.landed.push(Landed {
                 call: answer.call.clone(),
                 said: said.clone(),
+                written: answer.as_written(),
                 name: caught.name.clone(),
                 id: id.clone(),
                 turn: self.firings,
@@ -319,6 +328,18 @@ impl Walker<'_> {
     /// `given` takes its place in the ledger. Decided by what was replaced,
     /// not by the words, which may read the same and be about another value.
     pub(crate) fn answer_from_the_start(&mut self, answer: &Where, line: usize, listed: bool) {
+        if let Some(why) = self.no_module(&answer.call) {
+            self.notes.push(Outcome {
+                line,
+                verdict: Verdict::Undecided,
+                about: format!("given {}", answer.as_written()),
+                detail: Some(format!("{why}, so this answers no call the specification can ask")),
+            });
+            if !listed {
+                self.refused_in_the_world.push(line);
+            }
+            return;
+        }
         let arguments: Vec<Value> =
             answer.arguments.iter().map(|term| self.value_of(term)).collect();
         let value = self.value_of(&answer.value);
@@ -412,6 +433,16 @@ impl Walker<'_> {
             // the whole reason it needs saying. It is remembered and
             // answered from when the specification asks.
             Subject::Call { name, arguments: terms } => {
+                if let Some(why) = self.no_module(name) {
+                    return Outcome {
+                        line,
+                        verdict: Verdict::Undecided,
+                        about,
+                        detail: Some(format!(
+                            "{why}, so this answers no call the specification can ask"
+                        )),
+                    };
+                }
                 let arguments: Vec<Value> = terms.iter().map(|term| self.value_of(term)).collect();
                 // Refused, as `given` refuses it, and not listed.
                 if let Some((term, consequence)) =
@@ -427,7 +458,10 @@ impl Walker<'_> {
                         )),
                     };
                 }
-                let detail = self.too_late(name, terms);
+                let detail = [self.too_late(name, terms), shadowed(&self.world, name, &arguments)]
+                    .into_iter()
+                    .flatten()
+                    .reduce(|first, then| format!("{first}; {then}"));
                 self.world.tell(Answer { call: name.clone(), arguments, value });
                 // In the journey's words, as every answer to a call is
                 // listed, wherever it is said.
@@ -436,6 +470,11 @@ impl Walker<'_> {
                 Outcome { line, verdict: Verdict::Specified, about, detail }
             }
         }
+    }
+
+    /// See [`whose::no_module`].
+    fn no_module(&self, call: &str) -> Option<String> {
+        no_module(self.spec, call)
     }
 
     /// Why a call a `where` answered was still left unanswered by this act.
@@ -453,7 +492,12 @@ impl Walker<'_> {
                 let Some(expression) = asked_of(rule, &landed.call) else {
                     continue;
                 };
-                let remark = if rule.turn <= landed.turn {
+                let remark = if !reaches(&landed.call, rule) {
+                    // Another module's call of the same name: the qualifier
+                    // said this answer was not about it, and the reader who
+                    // sees it unsettled should be told that is why.
+                    whose::elsewhere(rule, expression, &landed.written, &landed.call)
+                } else if rule.turn <= landed.turn {
                     format!(
                         "`{}` asked `{expression}` as it made `{}`, before `where {}` was in \
                          force — a `where` answers what that creation sets off, not the rule \
@@ -488,7 +532,11 @@ impl Walker<'_> {
     /// answers. Something else left unsettled is not this line's doing, and
     /// pointing at it would send the reader to a fix that changes nothing.
     pub(crate) fn too_late(&self, call: &str, arguments: &[Term]) -> Option<String> {
-        if !self.undecided.iter().chain(&self.unapplied).any(|rule| asked_of(rule, call).is_some())
+        if !self
+            .undecided
+            .iter()
+            .chain(&self.unapplied)
+            .any(|rule| reaches(call, rule) && asked_of(rule, call).is_some())
         {
             return None;
         }

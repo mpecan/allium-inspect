@@ -14,6 +14,8 @@
 /// that read a computed field would be a different test.
 static NOTHING: std::sync::LazyLock<inspect_model::Derivations> =
     std::sync::LazyLock::new(inspect_model::Derivations::default);
+/// No module's text: these postconditions read no definition another module wrote.
+static NO_SOURCES: inspect_sim::step::Sources = inspect_sim::step::Sources::new();
 
 use std::collections::BTreeMap;
 
@@ -128,7 +130,13 @@ fn apply(clause: &Expr, bindings: &[(&str, Value)]) -> (Vec<Effect>, Vec<String>
 
     let applied = {
         let mut application = Application::new(
-            Against { spec: &graph, module: "lending", source: "", derived: &NOTHING },
+            Against {
+                spec: &graph,
+                module: "lending",
+                source: "",
+                sources: &NO_SOURCES,
+                derived: &NOTHING,
+            },
             &mut world,
             scope,
         );
@@ -181,7 +189,13 @@ fn a_creation_binds_its_own_name_for_the_clause_after_it() {
     let graph = spec();
     let (mut world, _) = world();
     let mut application = Application::new(
-        Against { spec: &graph, module: "lending", source: "", derived: &NOTHING },
+        Against {
+            spec: &graph,
+            module: "lending",
+            source: "",
+            sources: &NO_SOURCES,
+            derived: &NOTHING,
+        },
         &mut world,
         BTreeMap::new(),
     );
@@ -249,7 +263,13 @@ fn a_refusal_out_of_a_terminal_state_says_it_is_terminal() {
     let scope = BTreeMap::from([("copy".to_owned(), Value::Ref(copy))]);
     let applied = {
         let mut application = Application::new(
-            Against { spec: &graph, module: "lending", source: "", derived: &NOTHING },
+            Against {
+                spec: &graph,
+                module: "lending",
+                source: "",
+                sources: &NO_SOURCES,
+                derived: &NOTHING,
+            },
             &mut world,
             scope,
         );
@@ -283,7 +303,13 @@ fn a_field_with_no_lifecycle_takes_any_value() {
     let scope = BTreeMap::from([("loan".to_owned(), Value::Ref(loan.clone()))]);
     let applied = {
         let mut application = Application::new(
-            Against { spec: &graph, module: "lending", source: "", derived: &NOTHING },
+            Against {
+                spec: &graph,
+                module: "lending",
+                source: "",
+                sources: &NO_SOURCES,
+                derived: &NOTHING,
+            },
             &mut world,
             scope,
         );
@@ -474,7 +500,13 @@ fn an_iteration_applies_its_body_once_per_element() {
     let clause = iteration("c", ident("Copy"), emission("CopySeen"));
     let applied = {
         let mut application = Application::new(
-            Against { spec: &graph, module: "lending", source: "", derived: &NOTHING },
+            Against {
+                spec: &graph,
+                module: "lending",
+                source: "",
+                sources: &NO_SOURCES,
+                derived: &NOTHING,
+            },
             &mut world,
             BTreeMap::new(),
         );
@@ -494,7 +526,13 @@ fn an_iteration_restores_the_binding_it_shadowed() {
     let clause = iteration("c", ident("Copy"), emission("Seen"));
     let bindings = {
         let mut application = Application::new(
-            Against { spec: &graph, module: "lending", source: "", derived: &NOTHING },
+            Against {
+                spec: &graph,
+                module: "lending",
+                source: "",
+                sources: &NO_SOURCES,
+                derived: &NOTHING,
+            },
             &mut world,
             scope,
         );
@@ -523,7 +561,13 @@ fn an_iteration_over_an_unsettled_collection_quotes_it_as_never_settled() {
     let graph = spec();
     let mut world = World::new();
     let mut application = Application::new(
-        Against { spec: &graph, module: "lending", source, derived: &NOTHING },
+        Against {
+            spec: &graph,
+            module: "lending",
+            source,
+            sources: &NO_SOURCES,
+            derived: &NOTHING,
+        },
         &mut world,
         BTreeMap::new(),
     );
@@ -563,7 +607,13 @@ fn a_member_from_another_module_is_still_read_against_its_own_entity() {
         seen_for("c"),
     );
     let mut application = Application::new(
-        Against { spec: &graph, module: "lending", source: "", derived: &NOTHING },
+        Against {
+            spec: &graph,
+            module: "lending",
+            source: "",
+            sources: &NO_SOURCES,
+            derived: &NOTHING,
+        },
         &mut world,
         bound,
     );
@@ -586,7 +636,13 @@ fn apply_in(world: &mut World, clause: &Expr) -> (Vec<Effect>, Vec<String>) {
 fn applied_in(world: &mut World, bound: BTreeMap<String, Value>, clause: &Expr) -> Applied {
     let graph = spec();
     let mut application = Application::new(
-        Against { spec: &graph, module: "lending", source: "", derived: &NOTHING },
+        Against {
+            spec: &graph,
+            module: "lending",
+            source: "",
+            sources: &NO_SOURCES,
+            derived: &NOTHING,
+        },
         world,
         bound,
     );
@@ -888,7 +944,13 @@ fn a_filtered_iteration_restores_the_binding_it_shadowed() {
     );
     let bindings = {
         let mut application = Application::new(
-            Against { spec: &graph, module: "lending", source: "", derived: &NOTHING },
+            Against {
+                spec: &graph,
+                module: "lending",
+                source: "",
+                sources: &NO_SOURCES,
+                derived: &NOTHING,
+            },
             &mut world,
             scope,
         );
@@ -1029,7 +1091,13 @@ fn a_state_is_read_by_name_when_the_instances_module_does_not_declare_it() {
     let scope = BTreeMap::from([("loan".to_owned(), Value::Ref(loan.clone()))]);
     let applied = {
         let mut application = Application::new(
-            Against { spec: &graph, module: "lending", source: "", derived: &NOTHING },
+            Against {
+                spec: &graph,
+                module: "lending",
+                source: "",
+                sources: &NO_SOURCES,
+                derived: &NOTHING,
+            },
             &mut world,
             scope,
         );
@@ -1112,7 +1180,13 @@ fn spec_with_alias() -> SpecGraph {
 fn apply_qualified(graph: &SpecGraph, clause: &Expr) -> (Vec<Effect>, World) {
     let (mut world, _) = world();
     let mut application = Application::new(
-        Against { spec: graph, module: "lending", source: "", derived: &NOTHING },
+        Against {
+            spec: graph,
+            module: "lending",
+            source: "",
+            sources: &NO_SOURCES,
+            derived: &NOTHING,
+        },
         &mut world,
         BTreeMap::new(),
     );
@@ -1124,7 +1198,13 @@ fn apply_qualified(graph: &SpecGraph, clause: &Expr) -> (Vec<Effect>, World) {
 fn unresolved_of(graph: &SpecGraph, clause: &Expr) -> Vec<String> {
     let (mut world, _) = world();
     let mut application = Application::new(
-        Against { spec: graph, module: "lending", source: "", derived: &NOTHING },
+        Against {
+            spec: graph,
+            module: "lending",
+            source: "",
+            sources: &NO_SOURCES,
+            derived: &NOTHING,
+        },
         &mut world,
         BTreeMap::new(),
     );
@@ -1233,7 +1313,13 @@ fn apply_over(clause: &Expr, source: &str) -> Vec<Effect> {
     let graph = spec();
     let (mut world, _) = world();
     let mut application = Application::new(
-        Against { spec: &graph, module: "lending", source, derived: &NOTHING },
+        Against {
+            spec: &graph,
+            module: "lending",
+            source,
+            sources: &NO_SOURCES,
+            derived: &NOTHING,
+        },
         &mut world,
         BTreeMap::new(),
     );
@@ -1290,7 +1376,13 @@ fn a_let_applies_the_creation_it_binds() {
     let graph = spec();
     let mut world = World::new().at(1_000);
     let mut application = Application::new(
-        Against { spec: &graph, module: "lending", source: "", derived: &NOTHING },
+        Against {
+            spec: &graph,
+            module: "lending",
+            source: "",
+            sources: &NO_SOURCES,
+            derived: &NOTHING,
+        },
         &mut world,
         BTreeMap::new(),
     );
@@ -1310,7 +1402,13 @@ fn a_let_binds_what_it_created_under_the_name_it_was_given() {
     let graph = spec();
     let mut world = World::new().at(1_000);
     let mut application = Application::new(
-        Against { spec: &graph, module: "lending", source: "", derived: &NOTHING },
+        Against {
+            spec: &graph,
+            module: "lending",
+            source: "",
+            sources: &NO_SOURCES,
+            derived: &NOTHING,
+        },
         &mut world,
         BTreeMap::new(),
     );
@@ -1329,7 +1427,13 @@ fn a_second_creation_can_point_at_what_the_let_bound() {
     let graph = spec();
     let mut world = World::new().at(1_000);
     let mut application = Application::new(
-        Against { spec: &graph, module: "lending", source: "", derived: &NOTHING },
+        Against {
+            spec: &graph,
+            module: "lending",
+            source: "",
+            sources: &NO_SOURCES,
+            derived: &NOTHING,
+        },
         &mut world,
         BTreeMap::new(),
     );

@@ -1375,6 +1375,56 @@ then the call is about a value nobody knows rather than about a word:
   reads `level` as the repo's field, and a field nobody set is not bound — so
   inside an entity no word is read, and the call stays undecided.
 
+**Whose call: a module before the name.** Two modules may each name a black
+box the same — `parcels` and `tally` each asking `watchers(t)` of a new tag —
+and those are two questions. Written bare, an answer is every module's:
+`watchers(tag) = {}` answers both. Written with a module, it is that module's
+alone, wherever it is said — `given`, a file's `world`, `stipulate`, or a
+`where`:
+
+```no-check
+ada does Pack("x") on Desk
+    creating tag: parcels/Tag
+    where tally/watchers(tag) = {}
+    where parcels/watchers(tag) = {ada}
+```
+
+The module is the one a journey names a type by — the spec file's name, as in
+`parcels/Tag` — not the alias a `use` gives it; an alias is refused, and the
+refusal names the module it stands for. Where a bare and a qualified answer are
+both about the same arguments, a rule in the named module reads the qualified
+one and every other module reads the bare one; neither replaces the other in
+the ledger, because they are not about the same call. A bare answer said while
+a qualified one stands says so on its line, since it does not reach that
+module.
+
+A call is the module's that **wrote** it. One inside an entity's definition —
+`open: is_open(this)` in `parcels` — is `parcels`'s wherever the field is read
+from, so a rule in `tally` reading `crate.open` is answered by
+`parcels/is_open(crate)`, and `tally/is_open(crate)` answers nothing there.
+
+A rule in another module that asks a call of that name is not answered, and
+when the act set it off the walk says so beside the act rather than leaving the
+ledger line to read as if it should have been:
+
+```text
+        remark  ada does Pack("x") on Desk
+          `Stamp` asked `watchers(t)`, which `where tally/watchers(tag)` does not answer — it answers `tally`'s `watchers` and no other module's
+```
+
+The rule's own reason says the same of every answer — `given` and `stipulate`
+too — that named another module than the one asking: "nothing defines
+`watchers`, and no stipulation answers this call; `tally/watchers` answers
+`tally`'s `watchers`, and this one is `parcels`'s".
+
+A module the specification does not have is **undecided** on the line and not
+listed, since no rule could ever ask it:
+
+```text
+        stipulate ghost/watchers(ada) = {}
+          the specification has no module `ghost`, so this answers no call the specification can ask
+```
+
 **About what the act makes: `where`.** A reaction to a creation often asks a
 black box about the new instance — who hears about an issue, `audience(issue)`,
 the moment it is opened. `stipulate` cannot answer that: before the act there is

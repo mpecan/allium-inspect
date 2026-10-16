@@ -515,7 +515,9 @@ impl Walker<'_> {
         stored: Option<&Instance>,
     ) -> Result<(Value, Option<String>), String> {
         let source = self.sources.get(module).map_or("", String::as_str);
-        let mut env = Env::new(&self.world, module, source).deriving(self.program.derivations());
+        let mut env = Env::new(&self.world, module, source)
+            .deriving(self.program.derivations())
+            .quoting(self.sources);
         for (name, value) in bindings {
             env = env.bind(name.clone(), value.clone());
         }

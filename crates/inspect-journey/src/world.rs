@@ -432,8 +432,9 @@ impl Walker<'_> {
     /// which reads as a bug in whichever the reader trusts less.
     fn field(&self, instance: &Instance, name: &str) -> Evaluation {
         let source = self.sources.get(&instance.module).map_or("", String::as_str);
-        let env =
-            Env::new(&self.world, &instance.module, source).deriving(self.program.derivations());
+        let env = Env::new(&self.world, &instance.module, source)
+            .deriving(self.program.derivations())
+            .quoting(self.sources);
         field_of(instance, name, &env)
     }
 }

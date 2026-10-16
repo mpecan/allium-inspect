@@ -150,6 +150,8 @@ pub struct Against<'a> {
     pub spec: &'a SpecGraph,
     pub module: &'a str,
     pub source: &'a str,
+    /// Every module's text, for quoting a definition another module wrote.
+    pub sources: &'a crate::step::Sources,
     /// What the spec computes, so a postcondition reading a derived value gets
     /// the same answer a precondition would.
     pub derived: &'a inspect_model::Derivations,
@@ -429,7 +431,8 @@ impl<'a> Application<'a> {
     /// every name the rule has bound so far.
     fn scope(&self) -> Env<'_> {
         let mut scope = Env::new(self.world, self.against.module, self.against.source)
-            .deriving(self.against.derived);
+            .deriving(self.against.derived)
+            .quoting(self.against.sources);
         scope.bindings.clone_from(&self.bindings);
         scope.told.clone_from(&self.told);
         scope

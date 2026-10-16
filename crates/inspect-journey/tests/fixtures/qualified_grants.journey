@@ -1,0 +1,23 @@
+-- Issue #32 against `grants`, beside `parcels`: `can(repo, code)` is called
+-- with a word nothing binds, and a qualified answer is read the same way.
+
+journey QualifiedSpelling {
+    cast:
+        r: grants/Repo
+    given:
+        grants/can(r, code) = true
+    1. a rule asks with a bare word
+        r does Grant(r) on Settings
+        then r.flag = true
+}
+
+-- `parcels` asks no `can`; this answers no call `grants` makes, and is told so.
+journey AnotherModulesSpelling {
+    cast:
+        r: grants/Repo
+    given:
+        parcels/can(r, code) = true
+    1. a rule asks with a bare word
+        r does Grant(r) on Settings
+        then r.flag = true
+}

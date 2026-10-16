@@ -1,0 +1,51 @@
+-- allium: 3
+-- parcels.allium
+--
+-- A fixture with `tally.allium` beside it (issue #32): two modules that each
+-- ask a black box called `watchers` about the same new `Tag`. Neither defines
+-- it, so a journey answers it, and `parcels/watchers(tag)` and
+-- `tally/watchers(tag)` are two questions — the qualifier says whose.
+--
+-- `Crate` asks its black boxes inside its own definitions, and `tally` is the
+-- module that reads them. A call is the module's that wrote it, so
+-- `parcels/is_open(c)` answers `open` wherever `open` is read from.
+
+entity Box { label: String }
+
+entity Tag {
+    box: Box
+    stamped: Boolean
+}
+
+entity Person { name: String }
+
+entity Crate {
+    label: String
+    open: is_open(this)
+    ships_to(who): may_ship(this, who)
+}
+
+surface Desk {
+    provides:
+        Pack(label)
+        Seal(label)
+}
+
+rule Pack {
+    when: Pack(label)
+    ensures:
+        let b = Box.created(label: label)
+        Tag.created(box: b, stamped: false)
+}
+
+rule Stamp {
+    when: t: Tag.created
+    ensures:
+        for w in watchers(t):
+            t.stamped = true
+}
+
+rule Seal {
+    when: Seal(label)
+    ensures: Crate.created(label: label)
+}

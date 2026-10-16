@@ -136,10 +136,15 @@ pub fn walk(
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Undecided {
     pub(crate) rule: String,
+    /// The module the rule is in: whose call a qualified answer is about.
+    pub(crate) module: String,
     pub(crate) why: String,
     /// The calls nothing answered when it ran, as the spec wrote them:
     /// `audience(issue)`. What a remark about an answer matches against.
     pub(crate) asked: Vec<String>,
+    /// Every reason the simulator gave, as it gave it: what tells a call
+    /// read from another module's definition from one the rule wrote.
+    pub(crate) reasons: Vec<String>,
     /// The engine turn of its act it ran in.
     pub(crate) turn: usize,
 }

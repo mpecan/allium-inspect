@@ -56,7 +56,7 @@ pub(super) fn answered(
         // `may_invite(group, issuer)`, or `is_used_by(m)` inside the entity
         // that defines it — where `this` is the instance it is asked of.
         Expr::Ident(called) => {
-            if let Some(answer) = env.world.answer(&called.name, &given) {
+            if let Some(answer) = env.world.answer_in(env.module, &called.name, &given) {
                 return told(&called.name, answer, unresolved, whole, env);
             }
             if let Some(answer) = answered_by_spelling(&called.name, whole, &nodes, &evaluated, env)
@@ -79,14 +79,7 @@ pub(super) fn answered(
                 // is a journey saying so, and that is the sentence worth
                 // reading — "not simulated" sent a reader looking for a
                 // missing feature when what was missing was a stipulation.
-                _ => Evaluation::unknown(
-                    format!(
-                        "nothing defines `{}`, and no stipulation answers this call",
-                        called.name
-                    ),
-                    whole,
-                    env.source,
-                ),
+                _ => Evaluation::unknown(unanswered(&called.name, env), whole, env.source),
             }
             .carrying(unresolved)
         }
@@ -112,6 +105,35 @@ pub(super) fn answered(
         }
         _ => unsupported("a function call", whole, env).carrying(unresolved),
     }
+}
+
+/// Why a black box came back unanswered.
+///
+/// A journey may have answered a call of the same name in another module:
+/// `where b/watchers(tag)` read by `a`'s `watchers` answers nothing, and the
+/// ledger lists it. Saying no more than "no stipulation answers this call"
+/// beside that line reads as the tool contradicting itself (issue #32), so the
+/// reason names which module asked and which the answer was about.
+fn unanswered(name: &str, env: &Env<'_>) -> String {
+    let nothing = format!("nothing defines `{name}`, and no stipulation answers this call");
+    let elsewhere = env.world.answered_elsewhere(env.module, name);
+    if elsewhere.is_empty() {
+        return nothing;
+    }
+    let answers: Vec<String> = elsewhere.iter().map(|call| answers_only(call)).collect();
+    format!("{nothing}; {}, and this one is `{}`'s", answers.join("; "), env.module)
+}
+
+/// "`b/watchers` answers `b`'s `watchers`": what a qualified answer is about,
+/// in the words a reason uses for it.
+///
+/// One spelling, shared, because the journey walk reads it back to tell a
+/// call answered in the wrong module from one answered too late, and a copy
+/// of the wording there would drift from this one without a sound.
+#[must_use]
+pub fn answers_only(qualified: &str) -> String {
+    let (module, bare) = qualified.rsplit_once('/').unwrap_or(("", qualified));
+    format!("`{qualified}` answers `{module}`'s `{bare}`")
 }
 
 /// `can(repo, code)` answered by a stipulation that names the same word.
@@ -159,7 +181,7 @@ fn answered_by_spelling(
     if !read_any {
         return None;
     }
-    let answer = env.world.answer(name, &spelled)?;
+    let answer = env.world.answer_in(env.module, name, &spelled)?;
     Some(told(name, answer, unresolved, whole, env))
 }
 
