@@ -1,0 +1,12 @@
+-- allium: 3
+-- hush.allium
+--
+-- Discarding, across a module boundary, an argument `discards` passes by
+-- name (issue #16).
+
+use "./discards.allium" as discards
+
+rule Hush {
+    when: discards/Published(doc, _)
+    ensures: doc.hushed = true
+}

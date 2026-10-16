@@ -699,6 +699,29 @@ surface MyLoans {
         assert_eq!(parameters, [("loan".to_owned(), false), ("note".to_owned(), true)]);
     }
 
+    /// Issue #16: `_` keeps its place and names nothing, so nothing has to
+    /// bind it — an argument handed to it by name or by position is
+    /// discarded, and it is never reported unbound. `_?` is the same, and
+    /// `_note` is an ordinary name.
+    #[test]
+    fn a_discard_parameter_keeps_its_place_and_names_nothing() {
+        let parameters = parameters_of(
+            "rule ReportCopyLost {\n    when: MemberReportsLoss(_, loan, _?, _note)\n    \
+             ensures: loan.status = returned\n}\n",
+            "ReportCopyLost",
+        );
+        assert_eq!(
+            parameters,
+            [
+                (String::new(), false),
+                ("loan".to_owned(), false),
+                (String::new(), false),
+                ("_note".to_owned(), false)
+            ],
+            "`_?` is a discard as much as `_` is, and only the bare `_` is one"
+        );
+    }
+
     /// A state rule's `when` is a condition, not a call, and names none.
     #[test]
     fn a_state_rule_has_no_parameters() {

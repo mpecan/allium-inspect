@@ -90,6 +90,9 @@ pub struct PerMember {
     pub lets: Vec<(String, Expr)>,
 }
 
+/// The name a `when` gives a parameter it does not need: `when: X(_, slot)`.
+const DISCARD: &str = "_";
+
 impl RuleAst {
     /// The trigger's parameters as this rule's `when` names them, in order,
     /// each with whether it is declared `name?`.
@@ -97,13 +100,24 @@ impl RuleAst {
     /// Positional, so a parameter this cannot read as a name is an empty one
     /// rather than a gap that shifts the rest. Empty for a state rule, whose
     /// `when` is a condition rather than a call.
+    ///
+    /// `_` is a discard, as is `_?`, and is empty too: it keeps its place, so
+    /// the parameters after it are still bound by position from theirs, and
+    /// it names nothing, so nothing reads it and nothing has to bind it. A
+    /// firing that passes it an argument by position drops that argument, and
+    /// one that names an argument no other parameter has — `by` against
+    /// `when: Published(doc, _)` — is not waited on (issue #16).
     #[must_use]
     pub fn parameters(&self) -> Vec<(String, bool)> {
         let Some(Expr::Call { args, .. }) = &self.when else { return Vec::new() };
         args.iter()
             .map(|argument| match argument {
+                CallArg::Positional(Expr::Ident(ident)) if ident.name == DISCARD => {
+                    (String::new(), false)
+                }
                 CallArg::Positional(Expr::Ident(ident)) => (ident.name.clone(), false),
                 CallArg::Positional(Expr::TypeOptional { inner, .. }) => match inner.as_ref() {
+                    Expr::Ident(ident) if ident.name == DISCARD => (String::new(), false),
                     Expr::Ident(ident) => (ident.name.clone(), true),
                     _ => (String::new(), true),
                 },

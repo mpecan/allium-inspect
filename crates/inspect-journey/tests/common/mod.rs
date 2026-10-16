@@ -60,6 +60,10 @@ pub const SHOPS: &[&str] = &["shop", "warehouse"];
 /// emitted triggers, and how what they carry reaches a listener's names.
 pub const CHAINS: &[&str] = &["chains", "relay"];
 
+/// The discards fixture and the module that listens to it across a boundary:
+/// listeners that discard a parameter with `_` (issue #16).
+pub const DISCARDS: &[&str] = &["discards", "hush"];
+
 /// The fanout fixture, alone: a rule that iterates an entity collection and
 /// emits once per member, and the rule chained from that emission.
 pub const FANOUT: &[&str] = &["fanout"];

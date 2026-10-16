@@ -579,8 +579,10 @@ fn an_emission_a_listener_can_never_bind_is_reported_where_it_is_written() {
 }
 
 /// Every fixture spec, ingested as one set: the two in `chains` and the one
-/// across the boundary in `relay` above, `grants`' `Prod` emitting `Ask(repo)`
-/// a parameter short of `when: Ask(repo, kind)` — and nothing else. The check
+/// across the boundary in `relay` above, `discards`' `Annotate` leaving the
+/// `cause?` beside a `_` unbound, `grants`' `Prod` emitting `Ask(repo)` a
+/// parameter short of `when: Ask(repo, kind)` — and nothing else: no `_` is
+/// ever waited on. The check
 /// reports a mismatch, not every chain.
 #[test]
 fn only_an_emission_a_listener_cannot_bind_is_reported() {
@@ -609,12 +611,19 @@ fn only_an_emission_a_listener_cannot_bind_is_reported() {
             "chains::rule::Note",
             "chains::rule::Publish",
             "chains::rule::Publish",
+            "discards::rule::Annotate",
             "grants::rule::Prod"
         ],
         "{found:#?}"
     );
     assert_eq!(
         found[3].1,
+        "`Annotate` emits `Noted(doc: doc, reason: doc)` without binding `cause` for `Mark`, \
+         which listens for `Noted(doc, _, cause?)`: it was handed `reason` by name, and a named \
+         argument binds only the parameter it names"
+    );
+    assert_eq!(
+        found[4].1,
         "`Prod` emits `Ask(repo)` without binding `kind` for `Ask`, which listens for `Ask(repo, \
          kind)`: it carried 1 argument by position, and none in that place"
     );

@@ -731,6 +731,15 @@ binds what it carries on its own terms, whether the firing was an act or an
   argument the rule has no parameter for: `Noted(doc: d, reason: d)` against
   `when: Noted(doc, cause?)` may have meant `reason` for `cause`, so `cause`
   is left unbound and the reason names `reason`.
+- **`_` takes its place and binds nothing.** A discard is never read, so it is
+  never waited on. `when: Moved(_, to)` drops the first argument passed by
+  position and binds the second as `to`. `ensures: Published(doc: doc, by:
+  doc)` against `when: Published(doc, _)` binds `doc`, and `by` goes to no
+  one, which is what the `_` is there to say. `_?` is a discard the same way;
+  `_by` is an ordinary name. A `_` does not make an optional
+  parameter beside it `null`, though: against `when: Noted(doc, _, cause?)`
+  the unmatched `reason` may be meant for the `_` or for `cause`, misnamed. That
+  is a guess, so `cause` stays unbound, as above.
 
 A parameter nothing bound is the rule run about nothing, so the rule is
 **undecided** — not run, and not refused — and says which name it waited for

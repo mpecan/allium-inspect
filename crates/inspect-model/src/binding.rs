@@ -258,6 +258,24 @@ mod tests {
         assert_eq!(plan(&carried(&[], 2), &parameters), [("to", Bound::Positional(1))]);
     }
 
+    /// Issue #16: a discard reads as a parameter with no name, so a name
+    /// it may have been handed is not waited on — `doc` binds and nothing is
+    /// unbound.
+    #[test]
+    fn a_discard_beside_a_name_no_parameter_has_leaves_nothing_unbound() {
+        let parameters = [("doc".to_owned(), false), (String::new(), false)];
+        assert_eq!(plan(&carried(&["by", "doc"], 0), &parameters), [("doc", Bound::Named)]);
+    }
+
+    /// But it does not make an optional beside it `null`: `by` may be meant
+    /// for the `_` or may be `cause` misnamed, and choosing would be a guess.
+    #[test]
+    fn a_discard_does_not_make_an_optional_beside_an_unmatched_name_null() {
+        let parameters =
+            [("doc".to_owned(), false), (String::new(), false), ("cause".to_owned(), true)];
+        assert_eq!(unbound(&plan(&carried(&["by", "doc"], 0), &parameters)), ["cause"]);
+    }
+
     #[test]
     fn the_reason_names_the_trigger_and_the_parameter() {
         let parameters = required(&["doc"]);
