@@ -3426,3 +3426,81 @@ fn arithmetic_over_an_operand_undecided_in_silence_still_says_why() {
     assert_eq!(value_of(&node, &env), Value::Unknown);
     assert!(!reasons(&node, &env).is_empty());
 }
+
+// --- whose call: a module before the name (issue #32) ----------------------
+
+/// A call answered only for another module is unanswered here, and the reason
+/// says so in exactly these words: the journey walk reads them back to tell an
+/// answer in the wrong module from one given too late, so a change to the
+/// wording that is not a change to the reader has to be seen here first.
+#[test]
+fn an_answer_for_another_module_is_named_in_the_reason_word_for_word() {
+    let mut world = library();
+    world.tell(inspect_sim::world::Answer {
+        call: "catalogue/watchers".to_owned(),
+        arguments: vec![Value::Int(1)],
+        value: Value::Set(Vec::new()),
+    });
+    let asked = call(ident("watchers"), vec![number("1")]);
+
+    let lending = env(&world, "lending");
+    assert_eq!(truth_of(&asked, &lending), Truth::Unknown);
+    assert_eq!(
+        reasons(&asked, &lending),
+        vec![
+            "nothing defines `watchers`, and no stipulation answers this call; \
+             `catalogue/watchers` answers `catalogue`'s `watchers`, and this one is \
+             `lending`'s"
+        ]
+    );
+    assert_eq!(
+        inspect_sim::eval::answers_only("catalogue/watchers"),
+        "`catalogue/watchers` answers `catalogue`'s `watchers`"
+    );
+
+    // In the module it names it is simply the answer.
+    assert_eq!(value_of(&asked, &env(&world, "catalogue")), Value::Set(Vec::new()));
+}
+
+/// `quiet: nobody()` on `lending`'s `Member`, the call spanning `nobody()`
+/// in `source`.
+fn quiet_reads_nobody(source: &str) -> inspect_model::Derivations {
+    let start = source.find("nobody()").expect("present");
+    let mut derived = inspect_model::Derivations::default();
+    derived.fields.insert(
+        inspect_model::derived_key("lending", "Member", "quiet"),
+        Expr::Call {
+            span: AstSpan { start, end: start + 8 },
+            function: Box::new(ident("nobody")),
+            args: Vec::new(),
+        },
+    );
+    derived
+}
+
+/// A definition read from the module that wrote it is quoted from the text the
+/// environment already holds, with no map of every module's text needed; read
+/// from another module with no such map, it quotes nothing rather than a
+/// slice of the wrong file at the right offsets.
+#[test]
+fn a_definition_is_quoted_from_its_own_module_s_text_and_no_other() {
+    let source = "quiet: nobody()";
+    let world = library();
+    let derived = quiet_reads_nobody(source);
+    let member = Value::Ref(EntityId::new("Member", 1));
+    let read = field(ident("hub"), "quiet");
+
+    let own = Env::new(&world, "lending", source).deriving(&derived).bind("hub", member.clone());
+    let inner = |env: &Env<'_>| {
+        eval(&read, env)
+            .unresolved
+            .into_iter()
+            .find(|note| note.reason.starts_with("nothing defines `nobody`"))
+            .expect("the definition's own note")
+    };
+    assert_eq!(inner(&own).expression.as_deref(), Some("nobody()"));
+
+    let other = "zzzzzzzzzzzzzzzzzzzzzz";
+    let elsewhere = Env::new(&world, "catalogue", other).deriving(&derived).bind("hub", member);
+    assert_eq!(inner(&elsewhere).expression, None);
+}
