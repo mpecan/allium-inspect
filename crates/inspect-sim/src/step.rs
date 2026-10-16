@@ -226,9 +226,12 @@ pub fn step(
     // state rule whose instance a sibling removes gets the same answer whether
     // it is declared before that sibling or after it (see `gone`). Each reads
     // the world the trigger found, so a first pass on a copy says what each
-    // would remove; only two rules or more can race.
+    // would remove. Only two rules or more can race, but a lone rule is read
+    // the same either way — one that removes its own instance is read as
+    // usual — so it is not a case of its own: a branch that changes nothing a
+    // test can see is one a mutation run cannot hold to anything.
     let mut removed = Removed::new(world);
-    if woken.len() > 1 {
+    {
         let (nobody, mut scratch) = (Removed::new(world), world.clone());
         for node in &woken {
             if let Some(outcome) = run(node, &mut scratch, &nobody) {
