@@ -81,6 +81,10 @@ pub const QUEUE: &[&str] = &["drafts", "queue"];
 /// own `let` binds what its `when` names.
 pub const NEWSROOM: &[&str] = &["newsroom", "press"];
 
+/// The runs fixture, alone: a status derived from words and compared against
+/// the stored one (issue #21).
+pub const RUNS: &[&str] = &["runs"];
+
 /// `modules`, replayed from their recordings, with each module's source.
 pub fn library(modules: &[&str]) -> (SpecGraph, Program, Sources) {
     let root = fixtures();

@@ -261,6 +261,7 @@ fn the_fixtures_own_journeys_report_no_word() {
         ("packing", common::PACKING),
         ("pinboard", common::PINBOARD),
         ("reservations", LENDING),
+        ("runs", common::RUNS),
         ("switches", common::SWITCHES),
         ("undecided", LENDING),
     ];

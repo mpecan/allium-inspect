@@ -827,10 +827,18 @@ then loan in Loans
 `==` is not this grammar and is refused rather than read as `=`.
 
 Two things to expect. A **derived** field — `open_loan_count` is
-`open_loans.count` — comes back `undecided` rather than computed, because the
-simulator cannot settle; `stipulate` is how a journey gets
-past that deliberately. And an assertion about a path nothing has set is
-`undecided` **both ways round**: `exists` does not refuse it and `does not
+`open_loans.count` — is computed from its definition, and when that cannot be
+settled it comes back `undecided` with the simulator's reason on the line:
+
+```text
+then r.ne = true
+  r.ne is unknown — `r` has no `other` set
+```
+
+The reason names the cast member the way the journey did, not by the
+simulator's id for it. `stipulate` is how a journey gets past that
+deliberately. And an assertion about a path nothing has set is `undecided`
+**both ways round**: `exists` does not refuse it and `does not
 exist` does not hold, because neither is something the world said.
 
 ### `sees` — what a boundary shows
@@ -1057,6 +1065,30 @@ cancel | fail }`, or a field's inline `cancel | fail` — the rule waiting on
 A word the spec does **not** declare stays undecided: a trigger's parameters
 carry no types, so nothing else says the word is a state rather than something
 this simulator does not model. Declare the enumeration and the chain decides.
+
+**A word a definition returns.** `status_now: if status = waiting: waiting
+else: running` returns a bare word, and inside an entity's definition a word
+the spec declares as a state — in any enumeration, or any field's inline
+`waiting | running` — is that state. So `status_now` is `waiting`, and
+`stale: status_now != status` is decided. A word no enumeration declares stays
+undecided and names itself (*nothing is bound to `paused`*). Outside a
+definition a bare word is still read as a state only where a comparison's
+other side is one, or a rule hands it on as above — with one exception that
+follows from how a filter is read: inside `Runs where …` in a rule or an
+invariant, each run is `this`, so the run's own unset fields and declared
+words are read there exactly as in a definition.
+
+**A comparison with an undecided side is undecided.** `copy.status =
+available` reads `available` as a state because the other side is one. That
+reading is never given to a name that already means something: one of the
+entity's own fields nobody set, a computed field that came back undecided, a
+rule parameter nobody passed, or a name bound to something undecided — nor,
+inside a filter, one of the *element's* fields: on a shelf, `docs where status
+= active` over a doc with no `status` is undecided, not a doc whose status is
+the state `status`. Each of those is a value nobody knows, so `other != status`
+with `other` unset is undecided and says *`` `r` has no `other` set ``* — not
+`true` because the state `other` is not `waiting`. A field spelled like a state
+is still the field.
 
 **What an act set off counts too.** A rule one hop down a chain that could not
 be decided is on no line of the journey, so the act that set it off is

@@ -54,14 +54,21 @@ pub fn compare(
     let mut left = eval(left_node, env);
     let mut right = eval(right_node, env);
 
+    // Only a name that could mean nothing else: an unset field, an undecided
+    // computed one, a parameter nobody passed or a name bound to something
+    // undecided is a value nobody knows, and a comparison with an unknown side
+    // is unknown. Read as the state it spells, `stale: agg != status` with
+    // `agg` undecided came out `true` (issue #21).
     if matches!(left.value, Value::Enum(_))
         && right.value.is_unknown()
         && let Some(state) = bare_name(right_node)
+        && env.could_be_a_state(state)
     {
         right = Evaluation::known(Value::Enum(state.to_owned()));
     } else if matches!(right.value, Value::Enum(_))
         && left.value.is_unknown()
         && let Some(state) = bare_name(left_node)
+        && env.could_be_a_state(state)
     {
         left = Evaluation::known(Value::Enum(state.to_owned()));
     }

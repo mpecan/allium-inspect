@@ -202,6 +202,12 @@ fn derived(
         return;
     };
 
+    for field in &detail.fields {
+        if !field.derived && !field.relationship {
+            program.add_stored(module, entity, &field.name);
+        }
+    }
+
     for item in &block.items {
         match &item.kind {
             BlockItemKind::Assignment { name, value } => {
@@ -440,6 +446,16 @@ entity Member {
             !program.derivations().fields.contains_key(&derived_key("lending", "Member", "name"))
         );
         assert_eq!(program.derivations().fields.len(), 2);
+    }
+
+    /// And recorded as stored, so a definition reading one nobody set says so
+    /// rather than taking it for a word (issue #21). Only this entity's, and
+    /// only the stored ones: the decoys share a name or a module, not both.
+    #[test]
+    fn a_stored_field_is_recorded_as_stored() {
+        let program = against(MEMBER, &member_graph());
+        let stored: Vec<&str> = program.derivations().stored.iter().map(String::as_str).collect();
+        assert_eq!(stored, [derived_key("lending", "Member", "name").as_str()]);
     }
 
     /// The graph is what knows. Without it nothing is computed, which is the

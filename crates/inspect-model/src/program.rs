@@ -15,7 +15,7 @@
 //! simulator runs against it in process, and what crosses the wire is a world
 //! and a step outcome.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use allium_parser::ast::{CallArg, Expr, ForBinding};
 
@@ -156,6 +156,23 @@ pub struct Derivations {
     /// to call and others evaluated, and "a lambda is not simulated" is a
     /// sentence about this tool rather than about the spec.
     pub functions: BTreeMap<String, Function>,
+    /// Every field an entity *stores*, by [`derived_key`].
+    ///
+    /// Inside a definition the stored fields an instance holds are in scope
+    /// bare, and the ones nobody set are not — so without this list `other !=
+    /// status`, with `other` unset, reads `other` as a word nothing binds, and
+    /// a comparison against a state takes it for the state `other`. The answer
+    /// was `true`, about a field nobody had set (issue #21).
+    pub stored: BTreeSet<String>,
+    /// Every word the spec set declares as a state, in any enumeration.
+    ///
+    /// What a bare word in a definition means when it names nothing in scope:
+    /// `agg: if status = waiting: waiting else: running` returns the state
+    /// `waiting`, and before this was undecided because nothing was bound to
+    /// it. The same set [`crate::SpecGraph::declared_states`] gives the
+    /// emission path and the journey checker, filled once the whole set is
+    /// read.
+    pub states: BTreeSet<String>,
 }
 
 /// A derived value with parameters.
@@ -271,6 +288,16 @@ impl Program {
     /// Record `function` as the derived value `name` on `entity`.
     pub fn add_function(&mut self, module: &str, entity: &str, name: &str, function: Function) {
         self.derived.functions.insert(derived_key(module, entity, name), function);
+    }
+
+    /// Record `field` as a field `entity` stores rather than computes.
+    pub fn add_stored(&mut self, module: &str, entity: &str, field: &str) {
+        self.derived.stored.insert(derived_key(module, entity, field));
+    }
+
+    /// Record `states` as every state the spec set declares.
+    pub fn declare_states<'a>(&mut self, states: impl IntoIterator<Item = &'a str>) {
+        self.derived.states.extend(states.into_iter().map(str::to_owned));
     }
 
     /// Everything computed, for the evaluator.

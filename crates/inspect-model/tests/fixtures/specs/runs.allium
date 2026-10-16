@@ -1,0 +1,61 @@
+-- allium: 3
+-- runs.allium
+--
+-- A status derived from words, and compared against the stored one
+-- (issue #21).
+--
+-- `agg_d` and `agg_e` return a bare word the spec declares as a state, so
+-- each is that state. `agg_u` asks about `other`, which nobody sets, so it is
+-- undecided — and so is `stale_u`, which compares it. `ne` compares `other`
+-- itself, and `ne_r` the same the other way round. A comparison with an
+-- undecided side is undecided; neither name is a state called `other` or
+-- `agg_u`.
+--
+-- `Pipeline` ranges over its runs, the way a Forgejo run ranges over its
+-- jobs. A run that never set `status` is neither running nor not: `status`
+-- there is the run's own field, unset, not a word — so `has_running` is
+-- undecided and names the run's field, not `false`.
+--
+-- `Follow` is Forgejo's `RunStatusFollowsJobs` in miniature: it moves the
+-- status to the derived one, and only when the two disagree.
+
+entity Pipeline {
+    runs: Run with pipeline = this
+    running_runs: runs where status = running
+    has_running: running_runs.count > 0
+}
+
+entity Run {
+    pipeline: Pipeline
+    status: waiting | running
+    other: waiting | running
+    agg_d:
+        if status = waiting: waiting
+        else: running
+    agg_e: if status = waiting: waiting else: running
+    agg_u: if other = waiting: waiting else: running
+    stale: agg_d != status
+    stale_u: agg_u != status
+    ne: other != status
+    ne_r: status != other
+}
+
+rule Follow {
+    when: Follow(run)
+    requires: run.stale
+    ensures: run.status = run.agg_d
+}
+
+rule FollowOther {
+    when: FollowOther(run)
+    requires: run.stale_u
+    ensures: run.status = run.agg_u
+}
+
+surface Runner {
+    facing run: Run
+
+    provides:
+        Follow(run)
+        FollowOther(run)
+}

@@ -2408,3 +2408,267 @@ fn an_unanswered_black_box_says_a_stipulation_would_answer_it() {
         "{said:?}"
     );
 }
+
+// --- words in a definition (issue #21) ---------------------------------------
+
+/// `if condition: then else: otherwise`.
+fn if_else(condition: Expr, then: Expr, otherwise: Expr) -> Expr {
+    Expr::Conditional {
+        span: NOWHERE,
+        branches: vec![allium_parser::ast::CondBranch { span: NOWHERE, condition, body: then }],
+        else_body: Some(Box::new(otherwise)),
+    }
+}
+
+/// A run, `status: waiting | running` and `other: waiting | running`, with
+/// whatever `definitions` it computes, and `waiting`, `running` declared.
+fn run_spec(definitions: Vec<(&str, Expr)>) -> inspect_model::Derivations {
+    let mut derived = inspect_model::Derivations::default();
+    for stored in ["status", "other"] {
+        derived.stored.insert(inspect_model::derived_key("ci", "Run", stored));
+    }
+    derived.states.extend(["waiting".to_owned(), "running".to_owned()]);
+    for (name, definition) in definitions {
+        derived.fields.insert(inspect_model::derived_key("ci", "Run", name), definition);
+    }
+    derived
+}
+
+/// One run, waiting, with `other` unset.
+fn waiting_run() -> (World, EntityId) {
+    let mut world = World::new();
+    let run = world.create("Run", "ci");
+    world.set_field(&run, "status", Value::Enum("waiting".to_owned()));
+    (world, run)
+}
+
+fn waiting_or_running() -> Expr {
+    if_else(compare(ident("status"), "Eq", ident("waiting")), ident("waiting"), ident("running"))
+}
+
+#[test]
+fn a_word_a_definition_returns_is_the_state_the_spec_declares() {
+    // `agg: if status = waiting: waiting else: running`. The condition always
+    // read `waiting` as a state, because `status` on the other side said so;
+    // the branch it chose had nothing beside it and came back undecided.
+    let (world, run) = waiting_run();
+    let derived = run_spec(vec![("agg", waiting_or_running())]);
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(run));
+    let node = field(ident("r"), "agg");
+    assert_eq!(value_of(&node, &env), Value::Enum("waiting".to_owned()));
+    assert!(reasons(&node, &env).is_empty(), "and nothing about it was undecided");
+}
+
+#[test]
+fn a_word_no_enumeration_declares_stays_undecided_in_a_definition() {
+    // Only a declared state. `paused` is in no enumeration, so it may be
+    // something this simulator does not model, and it says which word.
+    let (world, run) = waiting_run();
+    let derived = run_spec(vec![("agg", ident("paused"))]);
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(run));
+    let node = field(ident("r"), "agg");
+    assert_eq!(value_of(&node, &env), Value::Unknown);
+    assert!(
+        reasons(&node, &env).iter().any(|reason| reason == "nothing is bound to `paused`"),
+        "{:?}",
+        reasons(&node, &env)
+    );
+}
+
+#[test]
+fn a_word_outside_a_definition_is_still_read_only_beside_a_state() {
+    // The new reading is for a definition, where `this` is in scope. A rule's
+    // bare word with nothing beside it is still a name nothing binds.
+    let (world, _) = waiting_run();
+    let derived = run_spec(Vec::new());
+    let env = env(&world, "ci").deriving(&derived);
+    assert_eq!(value_of(&ident("waiting"), &env), Value::Unknown);
+}
+
+#[test]
+fn a_stored_field_nobody_set_is_not_taken_for_a_state() {
+    // `ne: other != status`. `other` is unset, so it is not bound inside the
+    // definition — and `status` beside it made the comparison read it as the
+    // state `other`, which is not `waiting`, so `true`. A field nobody set is
+    // undecided, and says which.
+    let (world, run) = waiting_run();
+    let ne = compare(ident("other"), "NotEq", ident("status"));
+    let derived = run_spec(vec![("ne", ne)]);
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(run.clone()));
+    let node = field(ident("r"), "ne");
+    assert_eq!(truth_of(&node, &env), Truth::Unknown);
+    let said = reasons(&node, &env);
+    assert!(said.iter().any(|reason| reason == &format!("`{run}` has no `other` set")), "{said:?}");
+}
+
+#[test]
+fn a_stored_field_nobody_set_is_undecided_even_when_it_is_spelled_like_a_state() {
+    // A field called the same as a state is still the field. Reading the word
+    // would answer a question about the field with its own name.
+    let (world, run) = waiting_run();
+    let mut derived = run_spec(vec![("same", compare(ident("running"), "Eq", ident("status")))]);
+    derived.stored.insert(inspect_model::derived_key("ci", "Run", "running"));
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(run));
+    assert_eq!(truth_of(&field(ident("r"), "same"), &env), Truth::Unknown);
+}
+
+#[test]
+fn an_undecided_derived_value_is_not_taken_for_a_state() {
+    // `stale: agg != status` with `agg` undecided — here because it reads
+    // `other`, which nobody set. Kleene logic makes the comparison undecided;
+    // the name `agg` is not a state called `agg`.
+    let (world, run) = waiting_run();
+    let agg = if_else(
+        compare(ident("other"), "Eq", ident("waiting")),
+        ident("waiting"),
+        ident("running"),
+    );
+    let stale = compare(ident("agg"), "NotEq", ident("status"));
+    let derived = run_spec(vec![("agg", agg), ("stale", stale)]);
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(run.clone()));
+    let node = field(ident("r"), "stale");
+    assert_eq!(truth_of(&node, &env), Truth::Unknown);
+    let said = reasons(&node, &env);
+    assert!(said.iter().any(|reason| reason == &format!("`{run}` has no `other` set")), "{said:?}");
+}
+
+#[test]
+fn a_decided_derived_value_compares_as_the_state_it_is() {
+    // And the issue's own case, end to end: `stale: agg != status` is false
+    // once `agg` is `waiting`.
+    let (world, run) = waiting_run();
+    let stale = compare(ident("agg"), "NotEq", ident("status"));
+    let derived = run_spec(vec![("agg", waiting_or_running()), ("stale", stale)]);
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(run));
+    let node = field(ident("r"), "stale");
+    assert_eq!(truth_of(&node, &env), Truth::False);
+    assert!(reasons(&node, &env).is_empty());
+}
+
+#[test]
+fn a_rule_parameter_nobody_passed_is_not_taken_for_a_state() {
+    // `copy.status = how` with `how` a parameter of the rule that nobody
+    // passed. Read as the state `how`, the comparison answered `false` about
+    // an argument it never saw.
+    let world = library();
+    let env = env(&world, "catalogue")
+        .declaring(["how".to_owned()])
+        .bind("copy", Value::Ref(EntityId::new("Copy", 1)));
+    let node = compare(field(ident("copy"), "status"), "Eq", ident("how"));
+    assert_eq!(truth_of(&node, &env), Truth::Unknown);
+    assert_eq!(reasons(&node, &env), ["nothing is bound to `how`"]);
+}
+
+#[test]
+fn a_name_bound_to_an_undecided_value_is_not_taken_for_a_state() {
+    // `copy.status != x` with `x` a `let` the rule could not decide. Read as
+    // the state `x`, it is not `available`, so `true` — an answer about a
+    // value nobody knows.
+    let world = library();
+    let env = env(&world, "catalogue")
+        .bind("x", Value::Unknown)
+        .bind("copy", Value::Ref(EntityId::new("Copy", 1)));
+    let node = compare(field(ident("copy"), "status"), "NotEq", ident("x"));
+    assert_eq!(truth_of(&node, &env), Truth::Unknown);
+}
+
+#[test]
+fn a_function_read_bare_is_not_taken_for_a_state() {
+    // `odd: f != status` with `f(x)` a function of the run. Read without its
+    // argument it is undecided; read as the state `f` it was `true`.
+    let (world, run) = waiting_run();
+    let mut derived = run_spec(vec![("odd", compare(ident("f"), "NotEq", ident("status")))]);
+    derived.functions.insert(
+        inspect_model::derived_key("ci", "Run", "f"),
+        inspect_model::Function { params: vec!["x".to_owned()], body: ident("x") },
+    );
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(run));
+    let node = field(ident("r"), "odd");
+    assert_eq!(truth_of(&node, &env), Truth::Unknown);
+    let said = reasons(&node, &env);
+    assert!(
+        said.iter().any(|reason| reason == "`f` takes an argument, and was read without one"),
+        "{said:?}"
+    );
+}
+
+#[test]
+fn a_stored_field_nobody_set_is_undecided_on_either_side() {
+    // `status != other` as well as `other != status`: the state reading is
+    // tried from both sides, so both are refused it.
+    let (world, run) = waiting_run();
+    let derived = run_spec(vec![("ne_r", compare(ident("status"), "NotEq", ident("other")))]);
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(run.clone()));
+    let node = field(ident("r"), "ne_r");
+    assert_eq!(truth_of(&node, &env), Truth::Unknown);
+    let said = reasons(&node, &env);
+    assert!(said.iter().any(|reason| reason == &format!("`{run}` has no `other` set")), "{said:?}");
+}
+
+#[test]
+fn a_filter_in_a_rule_leaves_out_an_element_whose_field_nobody_set_and_says_so() {
+    // `Runs where other != status` in a rule: each run is `this` inside the
+    // filter, so an unset `other` is that run's field, not the state `other`.
+    // The run is neither kept nor counted out, and the note says why.
+    let (world, run) = waiting_run();
+    let derived = run_spec(Vec::new());
+    let env = env(&world, "ci").deriving(&derived);
+    let node = filtered(ident("Runs"), compare(ident("other"), "NotEq", ident("status")));
+    let evaluation = eval(&node, &env);
+    assert_eq!(evaluation.value, Value::Set(Vec::new()));
+    let said: Vec<_> = evaluation.unresolved.iter().map(|note| note.reason.clone()).collect();
+    assert_eq!(said, [format!("`{run}` has no `other` set")]);
+    let counted = field(node, "count");
+    assert_eq!(value_of(&counted, &env), Value::Unknown, "and so its count is not known");
+}
+
+#[test]
+fn a_rule_parameter_spelled_like_a_state_is_not_read_as_one_in_a_filter() {
+    // `Runs where status = waiting` in a rule that declares, and was not
+    // passed, a parameter called `waiting`. The filter makes each run `this`,
+    // which is where a declared word becomes a state — but not one the rule
+    // has given another meaning.
+    let (world, _) = waiting_run();
+    let derived = run_spec(Vec::new());
+    let env = env(&world, "ci").deriving(&derived).declaring(["waiting".to_owned()]);
+    let node = filtered(ident("Runs"), compare(ident("status"), "Eq", ident("waiting")));
+    let evaluation = eval(&node, &env);
+    assert_eq!(evaluation.value, Value::Set(Vec::new()));
+    let said: Vec<_> = evaluation.unresolved.iter().map(|note| note.reason.clone()).collect();
+    assert_eq!(said, ["nothing is bound to `waiting`"]);
+}
+
+#[test]
+fn a_definition_s_filter_asks_the_element_for_its_field_not_this() {
+    // On a shelf, `live: docs where status = active`, over a doc that never set
+    // `status`. `this` is the shelf, which has no `status`; the doc does, and
+    // it is unset. Read off the shelf alone, `status` passed for a word, the
+    // state `status` is not `active`, and `has_live` was a definite false.
+    let mut world = World::new();
+    let shelf = world.create("Shelf", "ci");
+    let doc = world.create("Doc", "ci");
+    world.set_field(&doc, "shelf", Value::Ref(shelf.clone()));
+    let mut derived = inspect_model::Derivations::default();
+    for stored in ["shelf", "status"] {
+        derived.stored.insert(inspect_model::derived_key("ci", "Doc", stored));
+    }
+    derived.states.extend(["active".to_owned(), "archived".to_owned()]);
+    let docs = Expr::With {
+        span: NOWHERE,
+        source: Box::new(ident("Docs")),
+        predicate: Box::new(compare(ident("shelf"), "Eq", ident("this"))),
+    };
+    let live = filtered(ident("docs"), compare(ident("status"), "Eq", ident("active")));
+    let has_live = compare(field(ident("live"), "count"), "Gt", number("0"));
+    for (name, definition) in [("docs", docs), ("live", live), ("has_live", has_live)] {
+        derived.fields.insert(inspect_model::derived_key("ci", "Shelf", name), definition);
+    }
+    let env = env(&world, "ci").deriving(&derived).bind("s", Value::Ref(shelf));
+    let node = field(ident("s"), "has_live");
+    assert_eq!(truth_of(&node, &env), Truth::Unknown);
+    let said = reasons(&node, &env);
+    assert!(
+        said.iter().any(|reason| reason == &format!("`{doc}` has no `status` set")),
+        "{said:?}"
+    );
+}

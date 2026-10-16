@@ -34,6 +34,7 @@ mod collections;
 mod lambdas;
 mod literals;
 mod ops;
+mod words;
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -49,12 +50,13 @@ pub(crate) use collections::element_scope;
 use inspect_model::{Derivations, Function, Span};
 use serde::{Deserialize, Serialize};
 use std::ops::Not;
+pub use words::unset_field;
 
 use ts_rs::TS;
 
 use crate::{
     truth::Truth,
-    value::{Instance, Value},
+    value::{EntityId, Instance, Value},
     world::World,
 };
 
@@ -142,6 +144,14 @@ pub struct Env<'a> {
     /// word nothing binds. Only a call's spelling match asks the difference —
     /// see `calls::answered_by_spelling` — and there it is the whole question.
     parameters: BTreeSet<String>,
+    /// The element a `where` or `with` filter is looking at, when there is one.
+    ///
+    /// Inside a definition `this` stays the instance being defined, so a bare
+    /// name in `docs where status = active` is a field of the *element*, not of
+    /// `this` — and when that element never set it, it is the element that has
+    /// to say so. Read off `this` alone, an unset `status` passed for a word,
+    /// and `status = active` came out a definite `false`.
+    element: Option<EntityId>,
 }
 
 /// The empty set of definitions, for an environment given none.
@@ -159,6 +169,7 @@ impl<'a> Env<'a> {
             derived: &NOTHING_DERIVED,
             resolving: BTreeSet::new(),
             parameters: BTreeSet::new(),
+            element: None,
         }
     }
 
@@ -214,6 +225,7 @@ impl<'a> Env<'a> {
             derived: self.derived,
             resolving: self.resolving.clone(),
             parameters: self.parameters.clone(),
+            element: self.element.clone(),
         }
     }
 
@@ -247,6 +259,7 @@ impl<'a> Env<'a> {
             resolving,
             // A definition belongs to its entity, not to the rule reading it.
             parameters: BTreeSet::new(),
+            element: None,
         }
     }
 }
@@ -408,6 +421,10 @@ fn ident(ident: &Ident, env: &Env<'_>) -> Evaluation {
     if let Some(collection) = collection_named(name, env) {
         return Evaluation::known(collection);
     }
+    // A field of the element a filter is looking at, which it never set.
+    if let Some(read) = words::unset_element_field(ident, env) {
+        return read;
+    }
     // A computed field of whatever `this` is, named bare. `is_stranded:
     // active_devices.count = 0` reads `active_devices` with nothing between,
     // and the definition it needs is one level further down the same chain.
@@ -419,6 +436,9 @@ fn ident(ident: &Ident, env: &Env<'_>) -> Evaluation {
         }
         if let Some((function, _)) = env.function(instance, name) {
             return calls::read_bare(name, function, env);
+        }
+        if let Some(read) = words::own_field_or_state(instance, ident, env) {
+            return read;
         }
     }
 
@@ -557,7 +577,7 @@ fn member(whole: &Expr, object: &Expr, field: &Ident, env: &Env<'_>) -> Evaluati
                 // "unknown".
                 if read.value.is_unknown() && !instance.fields.contains_key(field) {
                     unresolved.push(Unresolved {
-                        reason: format!("`{id}` has no `{field}` set"),
+                        reason: unset_field(id, field),
                         expression: span_of(whole)
                             .and_then(|span| span.slice(env.source))
                             .map(str::to_owned),

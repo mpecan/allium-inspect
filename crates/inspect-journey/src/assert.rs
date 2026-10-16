@@ -34,11 +34,15 @@ impl Walker<'_> {
         }
         let (truth, detail) = match assertion {
             Assertion::Compare { left, operator, right } => {
-                let found = self.read(left);
+                let (found, why) = self.read_explained(left);
                 let wanted = self.value_of(right);
+                let read = format!("{} is {}", left.as_written(), found.render());
                 (
                     compare(&found, *operator, &wanted),
-                    Some(format!("{} is {}", left.as_written(), found.render())),
+                    Some(match why {
+                        Some(why) => format!("{read} — {why}"),
+                        None => read,
+                    }),
                 )
             }
             Assertion::Within { needle, haystack } => {

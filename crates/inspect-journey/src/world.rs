@@ -15,7 +15,7 @@
 use inspect_model::{NodeKind, SpecGraph};
 use inspect_sim::{
     Value,
-    eval::{Env, field_of},
+    eval::{Env, Evaluation, field_of},
     value::{EntityId, Instance},
 };
 
@@ -311,49 +311,69 @@ impl Walker<'_> {
     /// an error, which is the same answer the simulator gives and for the same
     /// reason.
     pub(crate) fn read(&self, path: &Path) -> Value {
+        self.read_explained(path).0
+    }
+
+    /// [`Self::read`], and when a field it computed came back undecided, the
+    /// simulator's first reason why.
+    ///
+    /// "`r.ne` is unknown" alone is the shape stipulation 1 calls
+    /// indistinguishable from a bug; "`r` has no `other` set" is something a
+    /// reader can act on (issue #21). Said about the journey's own names, by
+    /// [`Self::said_of_the_cast`].
+    pub(crate) fn read_explained(&self, path: &Path) -> (Value, Option<String>) {
         // Resolved the way a write is, so `then config.limit = 5` reads the
         // parameter `config.limit = 5` wrote. Matching on the end of a key
         // instead read `config.limit` off whichever of `loan_limit` and
         // `limit` came first.
         if config::is_config(path) {
-            return config::resolve(self.spec, path).map_or(Value::Unknown, |parameter| {
+            let value = config::resolve(self.spec, path).map_or(Value::Unknown, |parameter| {
                 self.world.config(&parameter.module, &parameter.name)
             });
+            return (value, None);
         }
         let Some(id) = self.bound.get(&path.root) else {
             if !path.segments.is_empty() {
-                return Value::Unknown;
+                return (Value::Unknown, None);
             }
             // Capitalised and unbound is a collection, which is the rule the
             // evaluator already follows: `Loans` is every loan in the world.
             // It is how a journey says "and it is one of them" without having
             // cast every instance by hand.
             if let Some(entity) = collection(&path.root) {
-                return Value::Set(
-                    self.world
-                        .instances_of(&entity)
-                        .map(|instance| Value::Ref(instance.id.clone()))
-                        .collect(),
-                );
+                let every = self
+                    .world
+                    .instances_of(&entity)
+                    .map(|instance| Value::Ref(instance.id.clone()))
+                    .collect();
+                return (Value::Set(every), None);
             }
             // Otherwise a state the spec declares: `available`, `open`,
             // `active`. A name that is neither reaches a comparison and comes
             // back false, which is the same answer as comparing against the
             // wrong state and is what the detail line is for.
-            return Value::Enum(path.root.clone());
+            return (Value::Enum(path.root.clone()), None);
         };
         let mut current = Value::Ref(id.clone());
         for segment in &path.segments {
             if segment == "count" {
-                return current.count().map_or(Value::Unknown, |n| {
+                let count = current.count().map_or(Value::Unknown, |n| {
                     i64::try_from(n).map_or(Value::Unknown, Value::Int)
                 });
+                return (count, None);
             }
-            let Value::Ref(id) = &current else { return Value::Unknown };
-            let Some(instance) = self.world.instance(id) else { return Value::Unknown };
-            current = self.field(instance, segment);
+            let Value::Ref(id) = &current else { return (Value::Unknown, None) };
+            let Some(instance) = self.world.instance(id) else { return (Value::Unknown, None) };
+            let read = self.field(instance, segment);
+            if read.value.is_unknown() {
+                return (
+                    Value::Unknown,
+                    read.unresolved.first().map(|note| self.said_of_the_cast(note)),
+                );
+            }
+            current = read.value;
         }
-        current
+        (current, None)
     }
 
     /// One field of one instance, computed if the spec computes it.
@@ -364,11 +384,11 @@ impl Walker<'_> {
     /// world left the two disagreeing about one field of one instance in one
     /// step — the rule deciding and the assertion above it saying unknown,
     /// which reads as a bug in whichever the reader trusts less.
-    fn field(&self, instance: &Instance, name: &str) -> Value {
+    fn field(&self, instance: &Instance, name: &str) -> Evaluation {
         let source = self.sources.get(&instance.module).map_or("", String::as_str);
         let env =
             Env::new(&self.world, &instance.module, source).deriving(self.program.derivations());
-        field_of(instance, name, &env).value
+        field_of(instance, name, &env)
     }
 }
 

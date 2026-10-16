@@ -387,6 +387,7 @@ pub(crate) fn element_scope<'a>(env: &'a Env<'a>, item: &Value) -> Env<'a> {
     if let Value::Ref(id) = item
         && let Some(instance) = env.world.instance(id)
     {
+        scope.element = Some(id.clone());
         for (field, value) in &instance.fields {
             scope.bindings.insert(field.clone(), value.clone());
         }

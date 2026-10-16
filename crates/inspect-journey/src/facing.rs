@@ -35,7 +35,13 @@
 use std::collections::BTreeMap;
 
 use inspect_model::{NodeKind, Party, graph::EdgeKind};
-use inspect_sim::{Value, eval::WITHIN, eval::span_of, value::EntityId, world::World};
+use inspect_sim::{
+    Value,
+    eval::WITHIN,
+    eval::span_of,
+    value::{EntityId, Instance},
+    world::World,
+};
 
 use crate::{
     check::Verdict,
@@ -167,31 +173,26 @@ impl Walker<'_> {
                 None => format!(
                     "whether `{who}` is the `{actor}` `{surface}` faces could not be settled — \
                      `{written}`: {}",
-                    self.unset(&why, who, &instance.entity, &instance.fields)
+                    self.unset(&why, who, instance)
                 ),
             }),
         }
     }
 
-    /// The evaluator's "nothing is bound to `is_admin`", said about the
-    /// journey when it is a field of whoever is at the surface that nothing
-    /// set: what to write in `given` is then the remedy, and "bound" does not
-    /// say so.
-    fn unset(
-        &self,
-        why: &str,
-        who: &str,
-        entity: &str,
-        fields: &BTreeMap<String, Value>,
-    ) -> String {
+    /// The evaluator's "nothing is bound to `is_admin`", or its "`User#1` has
+    /// no `is_admin` set", said about the journey when it is a field of
+    /// whoever is at the surface that nothing set: what to write in `given` is
+    /// then the remedy, and neither "bound" nor the world's id says so.
+    fn unset(&self, why: &str, who: &str, instance: &Instance) -> String {
         self.spec
             .nodes_of(NodeKind::Entity)
-            .filter(|node| node.name == entity)
+            .filter(|node| node.name == instance.entity)
             .filter_map(|node| node.detail.as_entity())
             .flat_map(|detail| detail.fields.iter())
             .find(|field| {
-                !fields.contains_key(&field.name)
-                    && why == inspect_sim::eval::nothing_bound(&field.name)
+                !instance.fields.contains_key(&field.name)
+                    && (why == inspect_sim::eval::nothing_bound(&field.name)
+                        || why == inspect_sim::eval::unset_field(&instance.id, &field.name))
             })
             .map_or_else(|| why.to_owned(), |field| format!("`{who}` has no `{}` set", field.name))
     }
