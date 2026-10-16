@@ -10,7 +10,10 @@
 -- `within` the workspace it is at, while `BarePanel` faces the same owner and
 -- is at no workspace at all. `Lock` restates a permission as a `requires`, so
 -- a rule that refuses can be told apart from a surface that does. `portal.allium`
--- faces `SiteAdmin` from another module.
+-- faces `SiteAdmin` from another module. `StewardPanel` faces somebody
+-- identified by an `or` its left side can settle alone, and `TransferPanel` is
+-- at two workspaces at once, so which one its owner is identified within is
+-- not said. `clash.allium` declares an entity named like `SiteAdmin`.
 
 entity User {
     flag: Boolean
@@ -38,6 +41,10 @@ actor SiteAdmin {
     identified_by: User where is_admin = true
 }
 
+actor Steward {
+    identified_by: User where is_admin = true or flag = true
+}
+
 actor Anyone {
     identified_by: User
 }
@@ -61,6 +68,11 @@ rule Lock {
 rule Leave {
     when: Leave(s)
     ensures: s.left = true
+}
+
+rule Transfer {
+    when: Transfer(source, target)
+    ensures: source.archived = true
 }
 
 rule Archive {
@@ -104,4 +116,20 @@ surface BarePanel {
         owner.left
     provides:
         Leave(owner)
+}
+
+surface StewardPanel {
+    facing steward: Steward
+    exposes:
+        steward.is_admin
+    provides:
+        Flip(steward)
+}
+
+surface TransferPanel {
+    facing owner: WorkspaceOwner
+    context source: Workspace
+    context target: Workspace
+    provides:
+        Transfer(source, target)
 }

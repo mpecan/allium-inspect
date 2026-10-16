@@ -437,11 +437,23 @@ fn check_act(trigger: &str, surface: &str, line: usize, graph: &SpecGraph, notes
     // Offered somewhere else is a different problem from offered nowhere, and
     // the fix differs: one is the wrong surface, the other is an operation
     // nobody has specified.
-    let elsewhere: Vec<&str> = graph
+    //
+    // Named with its module when another surface shares its name, because
+    // "`Settings` does not offer `UseLfs` — Settings does" contradicts itself
+    // when it is two modules' `Settings`, and the module is the difference.
+    let shared =
+        |name: &str| graph.nodes_of(NodeKind::Surface).filter(|it| it.name == name).count() > 1;
+    let elsewhere: Vec<String> = graph
         .nodes_of(NodeKind::Surface)
-        .filter_map(|node| Some((node.name.as_str(), node.detail.as_surface()?)))
+        .filter_map(|node| Some((node, node.detail.as_surface()?)))
         .filter(|(_, other)| other.provides.iter().any(|operation| operation.trigger == trigger))
-        .map(|(name, _)| name)
+        .map(|(node, _)| {
+            if shared(&node.name) {
+                format!("{}/{}", node.module, node.name)
+            } else {
+                node.name.clone()
+            }
+        })
         .collect();
 
     notes.push(Note {
@@ -592,6 +604,29 @@ mod tests {
             provides: Vec::new(),
             guarantees: Vec::new(),
         }
+    }
+
+    /// Two modules' `Settings`, and the act offered by the second: the
+    /// message names the module, or it reads as the surface offering what it
+    /// was just said not to.
+    #[test]
+    fn an_act_offered_by_a_surface_of_the_same_name_says_which_module() {
+        let mut graph = SpecGraph::new("test");
+        for (module, offered) in [("grants", "Grant"), ("switches", "UseLfs")] {
+            let mut node = inspect_model::Node::new(module, NodeKind::Surface, "Settings");
+            let mut detail = surface(&[]);
+            detail.provides.push(inspect_model::graph::SurfaceOperation {
+                trigger: offered.to_owned(),
+                parameters: Vec::new(),
+                when: None,
+            });
+            node.detail = inspect_model::graph::NodeDetail::Surface(detail);
+            graph.nodes.push(node);
+        }
+        let mut notes = Vec::new();
+        check_act("UseLfs", "Settings", 3, &graph, &mut notes);
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].message, "`Settings` does not offer `UseLfs` — switches/Settings does");
     }
 
     #[test]

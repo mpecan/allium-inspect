@@ -205,3 +205,118 @@ fn a_parcel_nobody_placed_leaves_all_over_the_relationship_undecided() {
     let why = detail.expect("a reason");
     assert!(why.contains("`crate`"), "names the field nobody stated: {why}");
 }
+
+// --- a relationship that may be missing a parcel -----------------------------
+
+/// A crate, and parcels each given a kind and, or not, a crate.
+fn shipping(parcels: &[(&str, &str, bool)], clauses: &str) -> String {
+    let cast: String =
+        parcels.iter().map(|(name, ..)| format!("        {name}: Parcel\n")).collect();
+    let given: String = parcels
+        .iter()
+        .map(|(name, kind, placed)| {
+            let placed =
+                if *placed { format!("        {name}.crate = c\n") } else { String::new() };
+            format!("        {name}.kind = {kind}\n        {name}.stamped = false\n{placed}")
+        })
+        .collect();
+    format!(
+        "journey J {{
+    cast:
+        c: Crate
+{cast}    given:
+        c.shipped = false
+        c.retired = false
+{given}    1. the step
+{clauses}
+}}"
+    )
+}
+
+/// `for p in crate.parcels: ensures: Packed(parcel: p)`, with a parcel whose
+/// `crate` nobody set. It may be in the crate, so the iteration over the rest
+/// is not the whole of what `Ship` does — and `Stamp` not firing for it, and
+/// it staying unstamped, were conclusions nobody reached.
+#[test]
+fn an_iteration_over_a_relationship_that_may_be_missing_a_member_is_not_applied_in_full() {
+    let result = walked(&shipping(
+        &[("p", "a", false)],
+        "        c does Ship(c) on Loading
+        then Stamp does not fire
+        then p.stamped = false",
+    ));
+    let (verdict, why) = line(&result, "c does Ship(c) on Loading");
+    assert_eq!(verdict, Verdict::Undecided, "{why:?}");
+    let why = why.expect("it says why");
+    assert!(why.contains("`for p in crate.parcels` may be missing members"), "{why}");
+    for about in ["then Stamp does not fire", "then p.stamped = false"] {
+        let (verdict, why) = line(&result, about);
+        assert_eq!(verdict, Verdict::Undecided, "{about}: {why:?}");
+    }
+}
+
+/// A refusal on the firings that happened says nothing about a firing that
+/// did not. `Stamp` refuses `q`, of kind b; `p` is of kind a and may be in the
+/// crate, and if it is, `Stamp` fires for it.
+#[test]
+fn a_refusal_beside_a_member_never_visited_is_not_a_definite_does_not_fire() {
+    let result = walked(&shipping(
+        &[("q", "b", true), ("p", "a", false)],
+        "        c does Ship(c) on Loading
+        then Stamp does not fire",
+    ));
+    let (verdict, why) = line(&result, "then Stamp does not fire");
+    assert_eq!(verdict, Verdict::Undecided, "{why:?}");
+    let why = why.expect("it says why");
+    assert!(why.starts_with("`Stamp` refused: "), "{why}");
+    assert!(why.contains("may be missing members"), "{why}");
+}
+
+/// Every parcel placed, and the same lines are answered.
+#[test]
+fn an_iteration_over_a_complete_relationship_is_answered() {
+    let result = walked(&shipping(
+        &[("q", "b", true)],
+        "        c does Ship(c) on Loading
+        then Stamp does not fire
+        then q.stamped = false
+        then c.shipped = true",
+    ));
+    let bad: Vec<_> = outcomes(&result)
+        .into_iter()
+        .filter(|(verdict, ..)| *verdict != Verdict::Specified)
+        .collect();
+    assert!(bad.is_empty(), "{bad:#?}");
+}
+
+/// `requires: crate.parcels.count = 0` with a parcel nobody placed. The count
+/// is a lower bound, and a crate retired over a parcel that may be in it is
+/// the simulator guessing.
+#[test]
+fn a_count_over_a_relationship_that_may_be_missing_a_member_is_undecided() {
+    let result = walked(&shipping(&[("p", "a", false)], "        c does Retire(c) on Loading"));
+    let (verdict, why) = line(&result, "c does Retire(c) on Loading");
+    assert_eq!(verdict, Verdict::Undecided, "{why:?}");
+    assert!(why.expect("it says why").contains("its `count` is not known"));
+
+    // No parcels anywhere: nothing was left out, and the count is zero.
+    let result = walked(&shipping(
+        &[],
+        "        c does Retire(c) on Loading\n        then c.retired = true",
+    ));
+    let bad: Vec<_> = outcomes(&result)
+        .into_iter()
+        .filter(|(verdict, ..)| *verdict != Verdict::Specified)
+        .collect();
+    assert!(bad.is_empty(), "{bad:#?}");
+    // And a parcel placed elsewhere is decided not to be in it.
+    let result = walked(
+        &shipping(&[("p", "a", false)], "        c does Retire(c) on Loading")
+            .replace(
+                "        p.stamped = false\n",
+                "        p.stamped = false\n        p.crate = d\n",
+            )
+            .replace("        c: Crate\n", "        c: Crate\n        d: Crate\n"),
+    );
+    assert_eq!(line(&result, "c does Retire(c) on Loading").0, Verdict::Specified);
+}

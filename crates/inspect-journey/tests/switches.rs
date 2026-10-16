@@ -50,7 +50,7 @@ fn journey(given: &str, clauses: &str) -> String {
     format!(
         "journey J {{
     cast:
-        r: Repo
+        r: Depot
     given:
 {given}
     1. the step
@@ -101,8 +101,8 @@ fn a_number_and_a_parameter_with_no_default_can_be_set_too() {
     let result = walked(&journey(
         "        config.max_mirrors = 2
         config.sync_mode = \"push\"",
-        "        r does Mirror(r) on Settings
-        r does Sync(r) on Settings
+        "        r does Mirror(r) on Switchboard
+        r does Sync(r) on Switchboard
         then r.mirrored = true
         then r.synced = true",
     ));
@@ -114,8 +114,9 @@ fn a_number_and_a_parameter_with_no_default_can_be_set_too() {
 fn a_parameter_with_no_default_is_undecided_until_somebody_says() {
     // The other half of the same honesty: with nothing said, `Sync` is neither
     // refused nor allowed, and the reason names the parameter.
-    let result = walked(&journey("        r.synced = false", "        r does Sync(r) on Settings"));
-    let (verdict, why) = line(&result, "r does Sync(r) on Settings");
+    let result =
+        walked(&journey("        r.synced = false", "        r does Sync(r) on Switchboard"));
+    let (verdict, why) = line(&result, "r does Sync(r) on Switchboard");
     assert_eq!(verdict, Verdict::Undecided, "{why}");
     assert!(why.contains("sync_mode"), "{why}");
 }
@@ -124,7 +125,7 @@ fn a_parameter_with_no_default_is_undecided_until_somebody_says() {
 fn the_module_may_be_written_in_front_of_config() {
     let result = walked(&journey(
         "        switches/config.max_mirrors = 1",
-        "        r does Mirror(r) on Settings
+        "        r does Mirror(r) on Switchboard
         then r.mirrored = true",
     ));
     assert_eq!(result.steps[0].verdict(), Verdict::Specified, "{result:#?}");
@@ -139,7 +140,7 @@ fn the_module_may_be_written_in_front_of_config() {
 fn a_parameter_the_spec_does_not_declare_is_unspecified_and_changes_nothing() {
     let result = walked(&journey(
         "        config.lfs_enabld = true",
-        "        r cannot do UseLfs(r) on Settings",
+        "        r cannot do UseLfs(r) on Switchboard",
     ));
     let (verdict, why) = line(&result, "given config.lfs_enabld");
     assert_eq!(verdict, Verdict::Unspecified, "{why}");
@@ -192,14 +193,14 @@ fn a_switch_in_the_file_world_is_reported_from_the_file() {
     let result = walked(
         "world {
     cast:
-        r: Repo
+        r: Depot
     given:
         config.lfs_enabled = true
 }
 
 journey J {
     1. the step
-        r does UseLfs(r) on Settings
+        r does UseLfs(r) on Switchboard
         then r.lfs_used = true
 }",
     );
@@ -214,11 +215,11 @@ journey J {
 fn a_switch_turned_on_earlier_in_a_chain_says_whose_it_was() {
     let source = "journey TurnedOn {
     cast:
-        r: Repo
+        r: Depot
     given:
         config.lfs_enabled = true
     1. it is used
-        r does UseLfs(r) on Settings
+        r does UseLfs(r) on Switchboard
 }
 
 journey AndStaysUsed {
@@ -241,14 +242,14 @@ fn a_file_world_switch_under_a_chain_is_listed_once() {
     // `through` a journey that never wrote it.
     let source = "world {
     cast:
-        r: Repo
+        r: Depot
     given:
         config.lfs_enabled = true
 }
 
 journey TurnedOn {
     1. it is used
-        r does UseLfs(r) on Settings
+        r does UseLfs(r) on Switchboard
 }
 
 journey AndStaysUsed {
@@ -271,7 +272,7 @@ fn a_chain_does_not_lay_the_file_world_over_what_the_earlier_journey_changed() {
     // ledger contradicted.
     let source = "world {
     cast:
-        r: Repo
+        r: Depot
     given:
         config.max_mirrors = 0
 }
@@ -285,7 +286,7 @@ journey TurnOn {
 journey Then {
     after: TurnOn
     1. still on
-        r does Mirror(r) on Settings
+        r does Mirror(r) on Switchboard
         then r.mirrored = true
         then r.synced = true
 }";
@@ -335,14 +336,14 @@ fn reading_and_writing_an_undeclared_parameter_give_the_same_answer() {
 fn a_given_switch_is_listed_as_written() {
     let result = walked(&journey(
         "        config.lfs_enabled = r.lfs_used",
-        "        r does UseLfs(r) on Settings",
+        "        r does UseLfs(r) on Switchboard",
     ));
     // What the author wrote, not the `unknown` it evaluated to.
     assert_eq!(stipulated(&result), vec![("config.lfs_enabled = r.lfs_used".to_owned(), None)]);
     // And the reason the rule is undecided says what happened: it was set, to
     // something undecided. "No default, and nothing set it" would be false on
     // both counts.
-    let (verdict, why) = line(&result, "r does UseLfs(r) on Settings");
+    let (verdict, why) = line(&result, "r does UseLfs(r) on Switchboard");
     assert_eq!(verdict, Verdict::Undecided, "{why}");
     assert!(why.contains("itself undecided"), "{why}");
     assert!(!why.contains("nothing set it"), "{why}");
@@ -371,11 +372,11 @@ fn a_switch_overridden_under_another_spelling_is_still_an_override() {
 
 journey J {
     cast:
-        r: Repo
+        r: Depot
     given:
         switches/config.lfs_enabled = false
     1. the step
-        r cannot do UseLfs(r) on Settings
+        r cannot do UseLfs(r) on Switchboard
 }",
     );
     let line = result

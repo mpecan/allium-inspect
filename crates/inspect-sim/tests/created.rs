@@ -366,9 +366,16 @@ fn another_modules_order_is_filed_there_and_not_reacted_to_here() {
     assert!(outcome.newly_enabled.iter().all(|it| it.name != "Welcome"), "{outcome:?}");
     assert!(reactions(&outcome).is_empty());
 
-    // Fired by hand about it anyway, the shop's reaction says whose order it
-    // is rather than welcoming it.
+    // Fired by hand as the warehouse's creation, it is not the shop's to
+    // react to: the shop's rule is not woken at all, rather than woken to
+    // report itself undecided and take whatever fired it down with it.
     let event = Event::new("Order.created", "warehouse").with("o", Value::Ref(id.clone()));
+    let next = step(&graph, &program, &sources, &outcome.world, &event);
+    assert!(rule("Welcome", &next).is_none(), "{:?}", next.rules);
+
+    // Fired by hand naming no module, the shop's reaction is woken by the name
+    // and says whose order it is rather than welcoming it.
+    let event = Event::new("Order.created", "").with("o", Value::Ref(id.clone()));
     let next = step(&graph, &program, &sources, &outcome.world, &event);
     let welcome = rule("Welcome", &next).expect("Welcome is woken by the name");
     assert_eq!(welcome.disposition, Disposition::Undecided, "{welcome:?}");
@@ -424,4 +431,48 @@ fn a_creation_event_carrying_another_entity_of_the_same_module_is_undecided() {
     assert_eq!(welcome.requires[0].truth, Truth::Unknown);
     assert!(!welcome.requires[0].unresolved.is_empty(), "an unknown says why");
     assert!(!outcome.world.instance(&receipt).unwrap().fields.contains_key("welcomed"));
+}
+
+/// A creation wakes only the reactions to its own entity, in its own module
+/// too: the shop makes a `Receipt` beside its `Order`, and a receipt being
+/// made is not an order being made — whoever fired it, and whatever module
+/// it names.
+#[test]
+fn a_creation_wakes_no_reaction_to_another_entity_of_its_module() {
+    let (graph, program, sources) = recorded(&["shop", "warehouse"]);
+    let mut world = World::new();
+    let till = world.create("Order", "shop");
+    let paid = step(
+        &graph,
+        &program,
+        &sources,
+        &world,
+        &Event::new("Pay", "shop").with("o", Value::Ref(till)),
+    );
+    assert!(reactions(&paid).is_empty(), "{:?}", paid.newly_enabled);
+    let Some(Effect::Created { id, .. }) = rule("Pay", &paid).and_then(|it| it.effects.first())
+    else {
+        panic!("Pay makes a receipt: {paid:?}")
+    };
+
+    let event = Event::new("Receipt.created", "shop").with("o", Value::Ref(id.clone()));
+    let next = step(&graph, &program, &sources, &paid.world, &event);
+    let woken: Vec<&str> = next.rules.iter().map(|it| it.name.as_str()).collect();
+    assert!(woken.is_empty(), "{woken:?}");
+}
+
+/// A creation fired by position, as the browser and a journey fire an act,
+/// still carries the instance: the rule's own name for it is not needed to
+/// find the one `Order` it holds.
+#[test]
+fn a_creation_fired_by_position_carries_its_instance() {
+    let (graph, program, sources) = recorded(&["orders"]);
+    let mut world = World::new();
+    let made = world.create("Order", "orders");
+    world.set_field(&made, "welcomes", Value::Int(0));
+    let event = Event::new("Order.created", "orders").passing(Value::Ref(made.clone()));
+    let next = step(&graph, &program, &sources, &world, &event);
+    let welcome = rule("Welcome", &next).expect("woken");
+    assert_eq!(welcome.disposition, Disposition::Fired, "{welcome:?}");
+    assert_eq!(next.world.instance(&made).unwrap().field("welcomes"), Value::Int(1));
 }

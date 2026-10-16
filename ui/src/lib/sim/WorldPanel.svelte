@@ -11,7 +11,7 @@
   // back undecided — and saying so here is cheaper than explaining it in the
   // trace afterwards.
 
-  import type { EntityChoice } from "./setup";
+  import { choiceKey, choiceLabel, choiceOf, type EntityChoice } from "./setup";
   import type { Instance } from "../api/Instance";
   import type { World } from "../api/World";
   import { duration, parse, render } from "./values";
@@ -34,11 +34,13 @@
     Object.entries(world.config).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
   );
 
-  function create(entity: string) {
-    const choice = entities.find((candidate) => candidate.entity === entity);
+  // By module and name: two modules may each declare an `Order`.
+  function create(key: string) {
+    const choice = entities.find((candidate) => choiceKey(candidate) === key);
     if (!choice) {
       return;
     }
+    const entity = choice.entity;
     const ordinal = world.next_ordinal[entity] ?? 1;
     const id = `${entity}#${ordinal}`;
     onchange({
@@ -72,8 +74,7 @@
   }
 
   function fieldsOf(instance: Instance) {
-    const choice = entities.find((candidate) => candidate.entity === instance.entity);
-    return choice?.fields ?? [];
+    return choiceOf(entities, instance.entity, instance.module)?.fields ?? [];
   }
 
   function shown(instance: Instance, field: string): string {
@@ -177,8 +178,8 @@
     <div class="create">
       <select bind:value={creating} aria-label="Entity to create">
         <option value="">create…</option>
-        {#each entities as choice (choice.entity)}
-          <option value={choice.entity}>{choice.entity}</option>
+        {#each entities as choice (choiceKey(choice))}
+          <option value={choiceKey(choice)}>{choiceLabel(choice, entities)}</option>
         {/each}
       </select>
       <button type="button" disabled={creating === ""} onclick={() => create(creating)}>

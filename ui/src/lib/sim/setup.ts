@@ -90,3 +90,41 @@ export function grouped(
   // grouping does not have to re-derive a priority the server decided.
   return [...groups].map(([label, triggers]) => ({ label, triggers }));
 }
+
+/**
+ * What tells one entity choice from another: its module and its name.
+ *
+ * The name alone is not enough. Two modules may each declare an `Order`, and a
+ * list keyed by the bare name had two rows with one key — which Svelte answers
+ * by unmounting the whole simulator, not just the list.
+ */
+export function choiceKey(
+  choice: Pick<EntityChoice, "entity" | "module">,
+): string {
+  return `${choice.module}/${choice.entity}`;
+}
+
+/**
+ * How a choice is labelled: bare when its name is the only one of its kind,
+ * and with its module when another module declares the same name, because
+ * two rows reading `Order` are a choice nobody can make.
+ */
+export function choiceLabel(
+  choice: EntityChoice,
+  entities: EntityChoice[],
+): string {
+  const shared =
+    entities.filter((other) => other.entity === choice.entity).length > 1;
+  return shared ? choiceKey(choice) : choice.entity;
+}
+
+/** The choice an instance was made from: its entity, in its module. */
+export function choiceOf(
+  entities: EntityChoice[],
+  entity: string,
+  module: string,
+): EntityChoice | undefined {
+  return entities.find(
+    (candidate) => candidate.entity === entity && candidate.module === module,
+  );
+}

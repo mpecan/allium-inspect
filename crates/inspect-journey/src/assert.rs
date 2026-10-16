@@ -73,6 +73,26 @@ impl Walker<'_> {
             }
         };
 
+        // Read, in the step that moved it, off a world that step says is not
+        // one the act leads to —
+        // something it set off could not be decided, fired and was not applied
+        // in full, or never stopped — the answer is about that world and not
+        // the spec's, in either direction: `then b.fired = false` holding when
+        // the member that would have set it was skipped is the simulator
+        // guessing. `fires` has already weighed this, rule by rule.
+        let (truth, detail) = match (truth, assertion) {
+            (Truth::True | Truth::False, Assertion::Compare { .. })
+            | (Truth::True | Truth::False, Assertion::Within { .. })
+            | (Truth::True | Truth::False, Assertion::Exists { .. }) => match self.unsettled() {
+                Some(why) if self.moved => {
+                    let read = detail.map_or_else(String::new, |it| format!("{it}, "));
+                    (Truth::Unknown, Some(format!("{read}but this world is not settled — {why}")))
+                }
+                _ => (truth, detail),
+            },
+            _ => (truth, detail),
+        };
+
         let verdict = match truth {
             Truth::True => Verdict::Specified,
             // A false assertion is the spec doing something other than what
@@ -453,9 +473,12 @@ impl Walker<'_> {
         }
 
         match self.evaluate(filter, &scope, module) {
-            // Definite only if nothing under it was dropped as undecided.
-            Ok((Value::Bool(_), Some(why))) => Err(why),
-            Ok((Value::Bool(admitted), None)) => Ok(admitted),
+            // A decided answer is trusted, notes and all. Whether a member a
+            // collection dropped could overturn it is the evaluator's call —
+            // `count`, `in`, `exists`, `all` and `any` over one come back
+            // undecided themselves — and a note left by an `or` its left side
+            // settled is about a part that did not matter.
+            Ok((Value::Bool(admitted), _)) => Ok(admitted),
             Ok(_) => Err("its filter did not come back true or false".to_owned()),
             Err(why) => Err(why),
         }

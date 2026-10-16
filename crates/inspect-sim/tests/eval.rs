@@ -2014,6 +2014,60 @@ fn a_relationship_whose_every_candidate_was_decided_is_complete() {
     assert_eq!(truth_of(&quantify("i", items(), kind_is("a"), None), &env), Truth::True);
 }
 
+/// `count`, `exists` and `in` over the same relationship ask the same thing
+/// of it that `all` does: `y` may be in the box, so `items.count = 1`, `not
+/// exists items` and `y not in items` were conclusions nobody reached.
+#[test]
+fn a_relationship_missing_a_member_has_no_count_and_no_absence() {
+    let (world, derived) = packed();
+    let env =
+        env(&world, "packing").deriving(&derived).bind("bx", Value::Ref(EntityId::new("Box", 1)));
+    let items = || field(ident("bx"), "items");
+    let env = env.bind("y", Value::Ref(EntityId::new("Item", 2)));
+    let env = env.bind("x", Value::Ref(EntityId::new("Item", 1)));
+
+    let count = field(items(), "count");
+    assert_eq!(value_of(&count, &env), Value::Unknown);
+    let said = reasons(&count, &env);
+    assert!(said.iter().any(|why| why.contains("its `count` is not known")), "{said:?}");
+    assert!(said.iter().any(|why| why.contains("`box`")), "names y's field: {said:?}");
+
+    // Absent from what it holds is not absent.
+    assert_eq!(truth_of(&within(ident("y"), items()), &env), Truth::Unknown);
+    assert!(
+        reasons(&within(ident("y"), items()), &env)
+            .iter()
+            .any(|why| why.starts_with("this collection may be missing members")),
+    );
+    // What it does hold settles the rest.
+    assert_eq!(truth_of(&within(ident("x"), items()), &env), Truth::True);
+    assert_eq!(truth_of(&exists(items()), &env), Truth::True);
+
+    // Nothing held, from a collection that may have left `y` out.
+    let only_b = filtered(items(), kind_is_bare("b"));
+    assert_eq!(truth_of(&exists(only_b), &env), Truth::Unknown);
+}
+
+/// The same three, once every candidate was decided, are answered.
+#[test]
+fn a_complete_relationship_has_a_count_and_an_absence() {
+    let (mut world, derived) = packed();
+    let elsewhere = world.create("Box", "packing");
+    world.set_field(&EntityId::new("Item", 2), "box", Value::Ref(elsewhere));
+    let env = env(&world, "packing")
+        .deriving(&derived)
+        .bind("bx", Value::Ref(EntityId::new("Box", 1)))
+        .bind("y", Value::Ref(EntityId::new("Item", 2)));
+    let items = || field(ident("bx"), "items");
+    assert_eq!(value_of(&field(items(), "count"), &env), Value::Int(1));
+    assert_eq!(truth_of(&within(ident("y"), items()), &env), Truth::False);
+    assert_eq!(truth_of(&exists(filtered(items(), kind_is_bare("b"))), &env), Truth::False);
+}
+
+fn kind_is_bare(state: &str) -> Expr {
+    compare(ident("kind"), "Eq", ident(state))
+}
+
 #[test]
 fn a_relationship_is_computed_in_its_own_scope_not_the_caller_s() {
     // The rule's parameter is called `box`, and so is the field `y` never had

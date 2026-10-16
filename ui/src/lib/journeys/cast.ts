@@ -44,7 +44,10 @@ export function stateAt(walk: Walk, at: number): World | null {
 }
 
 /** The instance `member` resolved to in `world`, if it resolved to one. */
-export function instanceOf(world: World | null, member: CastMember): Instance | null {
+export function instanceOf(
+  world: World | null,
+  member: CastMember,
+): Instance | null {
   if (!world || member.entity === null) {
     return null;
   }
@@ -87,6 +90,24 @@ export function configOf(world: World | null): Parameter[] {
       ? { module: "", name: key, value }
       : { module: key.slice(0, at), name: key.slice(at + 1), value };
   });
+}
+
+/**
+ * Whether the journey — or one it continues from — set `parameter` rather than
+ * leaving the spec's default, as `config.x = …` or `module/config.x = …`.
+ *
+ * Read off what the walk says it was told, because that ledger is the one a
+ * reader is shown: a parameter listed as the spec's default beside a line
+ * saying the journey set it would be the panel contradicting itself.
+ */
+export function setByJourney(walk: Walk, parameter: Parameter): boolean {
+  const spellings = [
+    `config.${parameter.name} = `,
+    `${parameter.module}/config.${parameter.name} = `,
+  ];
+  return walk.stipulated.some((told) =>
+    spellings.some((spelling) => told.said.startsWith(spelling)),
+  );
 }
 
 /**

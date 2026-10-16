@@ -5,7 +5,6 @@
 //! — and because `apply` is long enough without it.
 
 use allium_parser::ast::{Expr, ForBinding};
-use inspect_model::{NodeKind, graph::NodeId};
 
 use super::{Application, Applied};
 use crate::{
@@ -80,7 +79,25 @@ impl Application<'_> {
                 return applied;
             }
         };
+        // A collection that came back with reasons may be short of members: a
+        // relationship leaves out every candidate its `with` could not decide
+        // on, and says so only in a note. Iterating the rest as if they were
+        // all would be reading "undecided" as "not a member" — the clauses
+        // were not applied to whatever it left out, and that is said.
+        let incomplete = !evaluated.unresolved.is_empty();
         let mut applied = Applied::note(evaluated.unresolved);
+        if incomplete {
+            applied.left_undone(Unresolved {
+                reason: format!(
+                    "{header} may be missing members it could not decide on, so the clauses \
+                     inside it were not applied to them"
+                ),
+                expression: span_of(collection)
+                    .and_then(|span| span.slice(self.against.source))
+                    .map(str::to_owned),
+                span: span_of(collection),
+            });
+        }
 
         for item in items {
             if let Some(filter) = filter {
@@ -146,14 +163,7 @@ impl Application<'_> {
     fn unheld(&self, item: &Value) -> Vec<String> {
         let Value::Ref(id) = item else { return Vec::new() };
         let Some(instance) = self.world.instance(id) else { return Vec::new() };
-        let spec = self.against.spec;
-        let declared = spec
-            .node(&NodeId::new(&instance.module, NodeKind::Entity, &instance.entity))
-            .or_else(|| {
-                spec.nodes
-                    .iter()
-                    .find(|node| node.kind == NodeKind::Entity && node.name == instance.entity)
-            })
+        let declared = super::entity_node(self.against.spec, &instance.module, &instance.entity)
             .and_then(|node| node.detail.as_entity());
         declared
             .map(|entity| {

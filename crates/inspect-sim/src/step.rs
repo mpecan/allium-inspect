@@ -185,7 +185,7 @@ pub fn step(
     for node in spec.nodes_of(NodeKind::Rule) {
         let Some(detail) = node.detail.as_rule() else { continue };
         let when = program.rule(node.id.as_str()).and_then(|ast| ast.when.as_ref());
-        if !creation::wakes(&detail.trigger, when, event) {
+        if !creation::wakes(spec, &node.module, (&detail.trigger, when), event) {
             continue;
         }
         let source = sources.get(&node.module).map(String::as_str).unwrap_or_default();
@@ -292,7 +292,7 @@ fn run_rule(
     // nothing and came back undecided on every firing of the first.
     if let Some((binding, _)) = state_condition(detail, ast)
         && !bindings.contains_key(binding)
-        && let Some(id) = carried(&event.arguments, world, &detail.trigger)
+        && let Some(id) = carried(event, world, &detail.trigger)
     {
         bindings.insert(binding.to_owned(), Value::Ref(id));
     }
@@ -305,11 +305,12 @@ fn run_rule(
     // precondition that is definitely false still refuses: that is decided
     // whatever the missing name would have been.
     let when = detail.clauses_of("when").next();
+    let when_text = when.map(|clause| clause.text.clone()).unwrap_or_default();
     let gaps = binding::unbound(event, &parameters, &bindings, when);
     if !gaps.is_empty() {
         unresolved.extend(gaps.clone());
         requires.push(ClauseVerdict {
-            text: when.map(|clause| clause.text.clone()).unwrap_or_default(),
+            text: when_text.clone(),
             truth: Truth::Unknown,
             unresolved: gaps,
         });
@@ -322,7 +323,7 @@ fn run_rule(
         && let Some(when) = ast.when.as_ref()
     {
         if !bindings.contains_key(binding)
-            && let Some(id) = carried(&event.arguments, world, entity)
+            && let Some(id) = carried(event, world, entity)
         {
             bindings.insert(binding.to_owned(), Value::Ref(id));
         }
@@ -335,15 +336,7 @@ fn run_rule(
             source,
         );
         unresolved.extend(why.clone());
-        requires.push(ClauseVerdict {
-            text: detail
-                .clauses_of("when")
-                .next()
-                .map(|clause| clause.text.clone())
-                .unwrap_or_default(),
-            truth,
-            unresolved: why,
-        });
+        requires.push(ClauseVerdict { text: when_text.clone(), truth, unresolved: why });
     }
 
     // A state rule's own condition, first, as a precondition. Nobody names a
@@ -378,28 +371,32 @@ fn run_rule(
         };
         unresolved.extend(evaluated.unresolved.clone());
         requires.push(ClauseVerdict {
-            text: detail
-                .clauses_of("when")
-                .next()
-                .map(|clause| clause.text.clone())
-                .unwrap_or_default(),
+            text: when_text.clone(),
             truth: evaluated.truth(),
             unresolved: evaluated.unresolved,
         });
     }
 
+    // The graph lists only the rule's own `requires`, not those written inside
+    // a rule-level `for`, so its texts are counted against the top-level ones
+    // alone; a per-member clause is sliced from the source by its own span.
+    let mut top_level = detail.clauses_of("requires");
     for (index, clause) in ast.requires.iter().enumerate() {
-        let text = detail
-            .clauses_of("requires")
-            .nth(index)
-            .map(|clause| clause.text.clone())
-            .unwrap_or_default();
-        let evaluated = match ast.per_member.get(&index) {
-            Some(within) => per_member(within, clause, source),
+        let (text, evaluated) = match ast.per_member.get(&index) {
+            Some(within) => (
+                crate::eval::span_of(clause)
+                    .and_then(|span| span.slice(source))
+                    .map(str::to_owned)
+                    .unwrap_or_default(),
+                per_member(within, clause, source),
+            ),
             None => {
                 let scope =
                     rule_scope(Env::new(world, module, source), program, &declared, &bindings);
-                eval(clause, &scope)
+                (
+                    top_level.next().map(|clause| clause.text.clone()).unwrap_or_default(),
+                    eval(clause, &scope),
+                )
             }
         };
         unresolved.extend(evaluated.unresolved.clone());
@@ -602,17 +599,16 @@ fn state_condition<'a>(
 ///
 /// Two distinct ones is not a question this can answer, so it answers none,
 /// and the rule's condition says what it could not read.
-fn carried(
-    arguments: &BTreeMap<String, Value>,
-    world: &World,
-    entity: &str,
-) -> Option<crate::value::EntityId> {
-    let mut found = arguments.values().filter_map(|value| match value {
-        Value::Ref(id) if world.instance(id).is_some_and(|instance| instance.entity == entity) => {
-            Some(id)
-        }
-        _ => None,
-    });
+fn carried(event: &Event, world: &World, entity: &str) -> Option<crate::value::EntityId> {
+    let mut found =
+        event.arguments.values().chain(&event.positional).filter_map(|value| match value {
+            Value::Ref(id)
+                if world.instance(id).is_some_and(|instance| instance.entity == entity) =>
+            {
+                Some(id)
+            }
+            _ => None,
+        });
     let first = found.next()?;
     found.all(|other| other == first).then(|| first.clone())
 }

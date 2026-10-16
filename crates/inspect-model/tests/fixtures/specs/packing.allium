@@ -21,14 +21,22 @@ entity Box {
 -- set a journey states. The rule's parameter shares its name with the field
 -- the relationship reads, so a definition that saw the rule's names would
 -- count a parcel nobody placed as in the crate.
+--
+-- `Ship` iterates the same relationship in an `ensures`, emitting `Packed`
+-- once per parcel, and `Stamp` stamps each parcel of kind a; `Retire` asks
+-- for a crate with no parcels. A parcel whose `crate` nobody set may be in
+-- any crate, so none of the three may answer as if it were not.
 entity Parcel {
     crate: Crate
     kind: a | b
+    stamped: Boolean
 }
 
 entity Crate {
     parcels: Parcel with crate = this
     sealed: Boolean
+    shipped: Boolean
+    retired: Boolean
 }
 
 rule Seal {
@@ -49,6 +57,25 @@ rule SealCrate {
     ensures: crate.sealed = true
 }
 
+rule Ship {
+    when: Ship(crate)
+    for p in crate.parcels:
+        ensures: Packed(parcel: p)
+    ensures: crate.shipped = true
+}
+
+rule Stamp {
+    when: Packed(parcel)
+    requires: parcel.kind = a
+    ensures: parcel.stamped = true
+}
+
+rule Retire {
+    when: Retire(crate)
+    requires: crate.parcels.count = 0
+    ensures: crate.retired = true
+}
+
 surface Packing {
     facing box: Box
     provides:
@@ -60,4 +87,6 @@ surface Loading {
     facing crate: Crate
     provides:
         SealCrate(crate)
+        Ship(crate)
+        Retire(crate)
 }

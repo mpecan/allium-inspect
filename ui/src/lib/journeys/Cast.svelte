@@ -20,6 +20,7 @@
     configOf,
     fieldsOf,
     instanceOf,
+    setByJourney,
     stateAt,
   } from "./cast";
 
@@ -117,7 +118,8 @@
   {#if config.length > 0}
     <h2 class="second">Configuration</h2>
     <p class="prose note">
-      Seeded from the spec's own defaults, and in force for every step.
+      As it stands at this step: the spec's own defaults, with whatever this
+      journey set — those are marked.
     </p>
     <dl class="config">
       {#each config as parameter (parameter.module + parameter.name)}
@@ -125,7 +127,11 @@
         <dt>
           {#if parameter.module}<span class="module">{parameter.module}.</span>{/if}{parameter.name}
         </dt>
-        <dd class:unknown={shown.unknown}>{shown.text}</dd>
+        <dd class:unknown={shown.unknown}>
+          {shown.text}{#if setByJourney(walk, parameter)}<span class="set"
+              >set by the journey</span
+            >{/if}
+        </dd>
       {/each}
     </dl>
   {/if}
@@ -246,6 +252,12 @@
   }
 
   .config dt .module {
+    color: var(--ink-faint);
+  }
+
+  .config .set {
+    margin-left: var(--gap-2);
+    font-size: var(--t-small);
     color: var(--ink-faint);
   }
 

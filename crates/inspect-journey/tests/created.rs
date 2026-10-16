@@ -232,8 +232,12 @@ fn a_reaction_that_never_stops_creating_is_undecided_and_says_so() {
     assert_eq!(verdict, Verdict::Undecided, "{detail:?}");
     let detail = detail.expect("it says why");
     assert!(detail.contains("Cell.created") && detail.contains("32 rounds"), "{detail}");
-    // What the act itself made is still the act's.
-    assert_eq!(line(&walk, "then first.gen = 0").0, Verdict::Specified);
+    // What the act itself made reads as it was made, and is not reported as
+    // settled: nothing checked that a reaction past the bound leaves it alone.
+    let (verdict, detail) = line(&walk, "then first.gen = 0");
+    assert_eq!(verdict, Verdict::Undecided, "{detail:?}");
+    let detail = detail.expect("it says why");
+    assert!(detail.starts_with("first.gen is 0, but this world is not settled"), "{detail}");
     assert_eq!(walk.steps[0].verdict(), Verdict::Undecided);
 }
 
@@ -281,4 +285,58 @@ fn a_reaction_in_one_step_does_not_answer_for_the_next() {
 }";
     let walk = walked(source, ORDERS);
     all_held(&walk);
+}
+
+/// A creation wakes only the reactions to its own entity. `tickets` reacts to
+/// `Ticket.created`, twice over, and placing an order makes no ticket — so
+/// neither of its reactions is woken to report itself undecided about an
+/// order it was never written about.
+#[test]
+fn a_creation_wakes_only_the_reactions_to_its_own_entity() {
+    let walk = walked(ORDERING, &["orders", "tickets"]);
+    all_held(&walk);
+    for (_, about, detail) in outcomes(&walk) {
+        let detail = detail.unwrap_or_default();
+        assert!(!detail.contains("Greet") && !detail.contains("Split"), "{about}: {detail}");
+    }
+}
+
+/// Two modules each declaring an `Order`, each with a reaction to its own
+/// being made. Placing one of `orders`' is not the shop's to react to: woken by
+/// the name alone, the shop's `Welcome` reported itself undecided and took the
+/// act that placed the order down with it.
+#[test]
+fn another_modules_reaction_to_the_same_name_is_not_woken() {
+    let walk = walked(ORDERING, &["orders", "shop"]);
+    all_held(&walk);
+    let source = "journey J {
+    cast:
+        seed: Order
+    1. placing an order is not a sale at the till
+        seed does Place(seed) on Shop
+            creating fresh: Order
+        then fresh.welcomes = 1
+}";
+    all_held(&walked(source, &["orders", "shop"]));
+}
+
+/// A reaction that makes *two* of what it reacts to doubles every round, and
+/// a bound on rounds alone would take hours to reach. The walk comes back,
+/// undecided, saying what was still being set off.
+#[test]
+fn a_reaction_that_doubles_every_round_is_cut_off_and_says_so() {
+    let source = "journey J {
+    cast:
+        s: Spore
+    1. one spore, and then two, and then four
+        s does Sow(s) on Petri
+}";
+    let walk = walked(source, CELLS);
+    let (verdict, detail) = line(&walk, "s does Sow(s) on Petri");
+    assert_eq!(verdict, Verdict::Undecided, "{detail:?}");
+    let detail = detail.expect("it says why");
+    assert!(
+        detail.contains("`Spore.created` was still being set off after 512 firings"),
+        "{detail}"
+    );
 }

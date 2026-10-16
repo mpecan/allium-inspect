@@ -179,3 +179,30 @@ fn a_precondition_inside_a_loop_is_not_read_about_an_argument_sharing_its_name()
     assert!(detail.contains("`Check` could not be decided"), "{detail}");
     assert!(detail.contains("inside `for w in"), "{detail}");
 }
+
+/// What the clock set off and could not decide is said the way an act's is:
+/// each rule once, with the reason it gave — not a bare list of names.
+#[test]
+fn a_rule_the_clock_could_not_decide_is_named_once_with_its_reason() {
+    let source = "journey J {
+    cast:
+        c: Clock
+    1. time passes over a clock nobody said was done or not
+        stipulate c.is_due = true
+        after 1.second
+}";
+    let journeys = parse(source).expect("the journey parses");
+    let (graph, program, sources) = common::library(FANOUT);
+    let walk = walk(&journeys[0], &journeys, &graph, &program, &sources);
+    let all = outcomes(&walk);
+    let (verdict, _, detail) =
+        all.iter().find(|(_, about, _)| about == "after 1.second").expect("the line");
+    assert_eq!(*verdict, Verdict::Undecided, "{all:#?}");
+    let detail = detail.clone().expect("it says why");
+    assert!(
+        detail.starts_with("while the clock moved, what it set off: `Tick` could not be decided: "),
+        "{detail}"
+    );
+    assert!(detail.contains("`done`"), "{detail}");
+    assert_eq!(detail.matches("`Tick`").count(), 1, "{detail}");
+}

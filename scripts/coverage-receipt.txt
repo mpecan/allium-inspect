@@ -1,4 +1,4 @@
 # Coverage receipt — written by 'just coverage-check'. Do not hand-edit.
 # Read by scripts/check-coverage-freshness.sh, which runs inside 'just check'.
 # Fields: <commit> <percent> <measured-at>
-b33963c570979f802931310376f676008a741eff 95 2026-10-15T22:11:39Z
+68037b9739937371344cbf4495f5ac17db74f89b 95 2026-10-15T23:59:11Z

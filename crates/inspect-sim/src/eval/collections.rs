@@ -23,14 +23,27 @@ use crate::{truth::Truth, value::Value};
 /// `exists X` and `not exists X`.
 pub(super) fn existence(operand: &Expr, env: &Env<'_>, negated: bool) -> Evaluation {
     let evaluated = eval(operand, env);
+    let mut unresolved = evaluated.unresolved;
     let present = match &evaluated.value {
-        Value::Set(items) => Truth::from_bool(!items.is_empty()),
+        // One member held is a member, whatever else was left out. None held,
+        // from a collection that may have left some out, is not an absence.
+        Value::Set(items) => {
+            let (answer, omitted) = lambdas::undecided_by_omission(
+                Truth::from_bool(!items.is_empty()),
+                Truth::False,
+                (!unresolved.is_empty()).then_some(operand),
+                "exists",
+                env,
+            );
+            unresolved.extend(omitted);
+            answer
+        }
         Value::Null => Truth::False,
         Value::Unknown => Truth::Unknown,
         _ => Truth::True,
     };
     let truth = if negated { present.not() } else { present };
-    Evaluation { value: truth_value(truth), unresolved: evaluated.unresolved }
+    Evaluation { value: truth_value(truth), unresolved }
 }
 
 /// What one field of a join lookup is being matched against.
@@ -221,7 +234,7 @@ fn eval_ident_named(name: &str, at: &JoinField, env: &Env<'_>) -> Evaluation {
     env.bindings.get(name).map_or_else(
         || {
             Evaluation::unknown(
-                format!("nothing is bound to `{name}`"),
+                super::nothing_bound(name),
                 // The field carries the only span there is: the value it would
                 // have had is the thing that is not written.
                 &Expr::Ident(at.field.clone()),
@@ -403,11 +416,26 @@ pub(super) fn membership(
         }
         _ => eval(collection, env),
     };
+    // Only the collection's own reasons say it may be short of members; the
+    // needle's say something about the needle.
+    let incomplete = !haystack.unresolved.is_empty();
     let mut unresolved = needle.unresolved;
     unresolved.extend(haystack.unresolved);
 
     let inside = match &haystack.value {
-        Value::Set(items) => Truth::any(items.iter().map(|item| item.equals(&needle.value))),
+        // Found among the members it holds is found. Not found, among the
+        // members of a collection that may have left some out, is not settled.
+        Value::Set(items) => {
+            let (answer, omitted) = lambdas::undecided_by_omission(
+                Truth::any(items.iter().map(|item| item.equals(&needle.value))),
+                Truth::False,
+                incomplete.then_some(collection),
+                "in",
+                env,
+            );
+            unresolved.extend(omitted);
+            answer
+        }
         // Anything else — a scalar, or a collection nobody could resolve — is a
         // membership test with no collection to test against. If the haystack
         // came back undecided it has already said why; if it came back as a

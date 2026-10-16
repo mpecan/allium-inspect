@@ -256,6 +256,16 @@ impl<'a> Env<'a> {
 /// `within` is a keyword, so no spec can declare a name that collides with it.
 pub const WITHIN: &str = "within";
 
+/// The reason given for a bare name nothing binds: "nothing is bound to `x`".
+///
+/// One spelling, shared, because a reader of the reason — the journey walk
+/// turning it into "`bob` has no `is_admin` set" — has to recognise it, and a
+/// copy of the wording there would drift from this one without a sound.
+#[must_use]
+pub fn nothing_bound(name: &str) -> String {
+    format!("nothing is bound to `{name}`")
+}
+
 /// Evaluate `expr` against `env`.
 #[must_use]
 pub fn eval(expr: &Expr, env: &Env<'_>) -> Evaluation {
@@ -348,9 +358,7 @@ pub fn eval(expr: &Expr, env: &Env<'_>) -> Evaluation {
         // a name nothing bound, said the way every other one is.
         Expr::Within { .. } => match env.bindings.get(WITHIN) {
             Some(value) => Evaluation::known(value.clone()),
-            None => {
-                Evaluation::unknown(format!("nothing is bound to `{WITHIN}`"), expr, env.source)
-            }
+            None => Evaluation::unknown(nothing_bound(WITHIN), expr, env.source),
         },
     }
 }
@@ -423,7 +431,7 @@ fn ident(ident: &Ident, env: &Env<'_>) -> Evaluation {
     Evaluation {
         value: Value::Unknown,
         unresolved: vec![Unresolved {
-            reason: format!("nothing is bound to `{name}`"),
+            reason: nothing_bound(name),
             expression: Some(name.clone()),
             span: Some(Span::new(ident.span.start, ident.span.end)),
         }],
@@ -509,6 +517,21 @@ fn member(whole: &Expr, object: &Expr, field: &Ident, env: &Env<'_>) -> Evaluati
     let mut unresolved = base.unresolved.clone();
 
     if field == "count" {
+        // A collection that came back with reasons may be short of members it
+        // could not decide on — `parcels: Parcel with crate = this` leaves out
+        // a parcel whose `crate` nobody set — so its count is a lower bound,
+        // not a count. Reported as one, `parcels.count = 0` would hold over a
+        // parcel that may well be in the crate. See
+        // `lambdas::undecided_by_omission`, the same judgement for `all`.
+        if matches!(base.value, Value::Set(_)) && !unresolved.is_empty() {
+            return Evaluation::unknown(
+                "this collection may be missing members it could not decide on, so its \
+                 `count` is not known",
+                object,
+                env.source,
+            )
+            .carrying(unresolved);
+        }
         return match base.value.count() {
             Some(count) => Evaluation {
                 value: Value::Int(i64::try_from(count).unwrap_or(i64::MAX)),

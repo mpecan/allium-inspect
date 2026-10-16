@@ -14,6 +14,8 @@
 //! Both are bounded and both remember what they have already run, because a
 //! spec whose rules feed each other is ordinary rather than exceptional.
 
+use std::collections::BTreeSet;
+
 use inspect_model::NodeKind;
 use inspect_sim::{StepOutcome, Truth, Value, enabled, step::step, world::Event};
 
@@ -22,6 +24,10 @@ use crate::{
     journey::Journey,
     run::{Ground, Settled, Undecided, Walked, Walker, already_ran},
 };
+
+/// How many events one step may fire, its own included, before what it set
+/// off is reported as never having settled.
+const FIRINGS: usize = 512;
 
 impl Walker<'_> {
     /// Fire an event, and everything it sets off.
@@ -51,12 +57,12 @@ impl Walker<'_> {
         const ROUNDS: usize = 32;
         let acted = self.once(event);
 
-        let mut seen = vec![key_of(event)];
+        let mut seen = BTreeSet::from([key_of(event)]);
         let mut pending = emissions(&acted);
         for round in 0..=ROUNDS {
             let next: Vec<Event> =
                 pending.into_iter().filter(|event| !seen.contains(&key_of(event))).collect();
-            if next.is_empty() {
+            if next.is_empty() || self.cut_off.is_some() {
                 break;
             }
             // Reaching the bound is said, as `settle` says it. The memory stops
@@ -65,25 +71,41 @@ impl Walker<'_> {
             // made by making another — and a world cut off there is not one
             // the act leads to.
             if round == ROUNDS {
-                let mut triggers: Vec<&str> = next.iter().map(|it| it.trigger.as_str()).collect();
-                triggers.dedup();
-                self.undecided.push(Undecided {
-                    rule: triggers.join("`, `"),
-                    why: format!(
-                        "it was still being set off after {ROUNDS} rounds, so what this act \
-                         leads to never settled"
-                    ),
-                });
+                self.cut(&next, &format!("after {ROUNDS} rounds"));
                 break;
             }
             pending = Vec::new();
-            for event in next {
-                seen.push(key_of(&event));
-                pending.extend(emissions(&self.once(&event)));
+            for (at, event) in next.iter().enumerate() {
+                if !seen.insert(key_of(event)) {
+                    continue;
+                }
+                // Rounds bound how deep a cascade goes, not how wide. A
+                // reaction that makes two of what it reacts to doubles every
+                // round, and thirty-two rounds of that is a walk that never
+                // comes back to say it was cut off. So the firings are counted
+                // too, across the whole step, and running out is said the
+                // same way.
+                if self.firings >= FIRINGS {
+                    self.cut(&next[at..], &format!("after {FIRINGS} firings"));
+                    break;
+                }
+                pending.extend(emissions(&self.once(event)));
             }
         }
 
         acted
+    }
+
+    /// Stop following a cascade, saying which triggers were still waiting and
+    /// when it stopped: what the act leads to never settled, and the world it
+    /// left is not one the specification describes.
+    fn cut(&mut self, waiting: &[Event], when: &str) {
+        let triggers: BTreeSet<&str> = waiting.iter().map(|it| it.trigger.as_str()).collect();
+        let triggers: Vec<&str> = triggers.into_iter().collect();
+        self.cut_off = Some(format!(
+            "`{}` was still being set off {when}, so what this led to never settled",
+            triggers.join("`, `")
+        ));
     }
 
     /// Forget what ran, before a step that will say what it ran.
@@ -93,11 +115,14 @@ impl Walker<'_> {
         self.unapplied.clear();
         self.refused.clear();
         self.created.clear();
+        self.cut_off = None;
+        self.firings = 0;
     }
 
     /// One turn of the engine, remembering what ran.
     fn once(&mut self, event: &Event) -> StepOutcome {
         use inspect_sim::Disposition;
+        self.firings += 1;
         let outcome = step(self.spec, self.program, self.sources, &self.world, event);
         for rule in &outcome.rules {
             match rule.disposition {
@@ -152,6 +177,11 @@ impl Walker<'_> {
         // rule on a hold for the first one running again, and it never ran.
         let mut ran: Vec<(String, Value)> = Vec::new();
         for _ in 0..ROUNDS {
+            // A cascade cut off partway is already said, by `unsettled`, and
+            // nothing run on the world it left would be the spec's either.
+            if self.cut_off.is_some() {
+                return Settled::Yes;
+            }
             // Everything the world makes true, not everything this step made
             // newly true: a rule enabled before the clock moved and never run
             // is still waiting, and a journey that skipped it would report a
@@ -227,8 +257,23 @@ impl Walker<'_> {
         }
         // Woken and refused: the spec's own reason, in its own words, rather
         // than a bare "did not run" a reader has to go and explain.
+        //
+        // Unless the step is unsettled. Refused on the firings that happened
+        // says nothing about one that did not: a `for` member nobody could
+        // decide about, or a cascade cut off, may have woken it again with
+        // something it would have taken.
         if !ran && let Some(it) = self.refused.iter().find(|it| it.rule == rule) {
-            return (Truth::from_bool(negated), Some(format!("`{rule}` refused: {}", it.why)));
+            let refused = format!("`{rule}` refused: {}", it.why);
+            return match self.unsettled() {
+                Some(why) => (
+                    Truth::Unknown,
+                    Some(format!(
+                        "{refused} — but whether it would have run on what was not settled is \
+                         not known: {why}"
+                    )),
+                ),
+                None => (Truth::from_bool(negated), Some(refused)),
+            };
         }
         if !ran && self.waits_on_the_world(rule) {
             // Nobody fires a state-condition rule; it becomes true or it does
@@ -367,14 +412,9 @@ impl Walker<'_> {
 /// rule woken twice is still one rule nobody could decide, and the reason is
 /// what tells a reader whether the fix is in their journey or in the spec.
 pub(crate) fn set_off(undecided: &[Undecided]) -> Option<String> {
-    let mut named: Vec<&Undecided> = Vec::new();
-    for it in undecided {
-        if !named.iter().any(|seen| seen.rule == it.rule) {
-            named.push(it);
-        }
-    }
-    let said: Vec<String> =
-        named.iter().map(|it| format!("`{}` could not be decided: {}", it.rule, it.why)).collect();
+    let said: Vec<String> = first_per_rule(undecided)
+        .map(|it| format!("`{}` could not be decided: {}", it.rule, it.why))
+        .collect();
     (!said.is_empty()).then(|| format!("what it set off: {}", said.join("; ")))
 }
 
@@ -384,14 +424,7 @@ pub(crate) fn set_off(undecided: &[Undecided]) -> Option<String> {
 /// Worded as having fired, because it did: "could not be decided" beside a
 /// `then Fan fires` that holds is two answers to one question.
 pub(crate) fn partly(unapplied: &[Undecided]) -> Option<String> {
-    let mut named: Vec<&Undecided> = Vec::new();
-    for it in unapplied {
-        if !named.iter().any(|seen| seen.rule == it.rule) {
-            named.push(it);
-        }
-    }
-    let said: Vec<String> = named
-        .iter()
+    let said: Vec<String> = first_per_rule(unapplied)
         .map(|it| {
             format!("`{}` fired, but part of what it ensures was not applied: {}", it.rule, it.why)
         })
@@ -399,13 +432,22 @@ pub(crate) fn partly(unapplied: &[Undecided]) -> Option<String> {
     (!said.is_empty()).then(|| said.join("; "))
 }
 
+/// Each rule once, in the order it first appears, with its first reason.
+fn first_per_rule(all: &[Undecided]) -> impl Iterator<Item = &Undecided> {
+    let mut named = BTreeSet::new();
+    all.iter().filter(move |it| named.insert(it.rule.as_str()))
+}
+
 impl Walker<'_> {
     /// Everything this step ran that leaves the world unsettled — what it set
     /// off that could not be decided, and what fired and was not applied in
     /// full — or `None` when there is nothing.
     pub(crate) fn unsettled(&self) -> Option<String> {
-        let said: Vec<String> =
-            set_off(&self.undecided).into_iter().chain(partly(&self.unapplied)).collect();
+        let said: Vec<String> = set_off(&self.undecided)
+            .into_iter()
+            .chain(partly(&self.unapplied))
+            .chain(self.cut_off.clone())
+            .collect();
         (!said.is_empty()).then(|| said.join("; "))
     }
 }

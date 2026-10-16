@@ -904,3 +904,19 @@ fn a_parameter_nobody_passed_is_not_refused_on_by_its_spelling() {
     let undecided = ask_answered(None, false);
     assert_eq!(undecided.disposition, Disposition::Undecided, "{:?}", undecided.requires);
 }
+
+/// A `requires` inside a rule-level `for` is shown as written. The graph lists
+/// only a rule's own clauses, so its text was looked up there by position and
+/// came back empty — or as another clause's.
+#[test]
+fn a_precondition_inside_a_loop_is_shown_as_the_spec_wrote_it() {
+    let (graph, program, sources) = recorded(&["fanout"]);
+    let mut world = World::new();
+    let hook = world.create("Hook", "fanout");
+    let event = Event::new("Check", "fanout").passing(Value::Ref(hook));
+    let outcome = step(&graph, &program, &sources, &world, &event);
+    let check = outcome_for("Check", &outcome);
+    let texts: Vec<&str> = check.requires.iter().map(|it| it.text.as_str()).collect();
+    assert_eq!(texts, ["w.active = true"], "{:?}", check.requires);
+    assert_eq!(check.requires[0].truth, Truth::Unknown);
+}

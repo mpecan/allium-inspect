@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { grouped, offered, type Fireable } from "./setup";
+import {
+  choiceKey,
+  choiceLabel,
+  choiceOf,
+  grouped,
+  offered,
+  type EntityChoice,
+  type Fireable,
+} from "./setup";
 
 function fireable(
   partial: Partial<Fireable> & Pick<Fireable, "trigger">,
@@ -108,3 +116,37 @@ describe("grouped", () => {
   });
 });
 
+describe("entity choices", () => {
+  const choice = (entity: string, module: string): EntityChoice => ({
+    entity,
+    module,
+    fields: [
+      { name: module, type_expr: "Boolean", states: [], derived: false },
+    ],
+  });
+  const entities = [
+    choice("Order", "shop"),
+    choice("Order", "warehouse"),
+    choice("Receipt", "shop"),
+  ];
+
+  it("keys two modules' entities of one name apart", () => {
+    const keys = entities.map(choiceKey);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it("labels a shared name with its module, and a unique one bare", () => {
+    expect(entities.map((it) => choiceLabel(it, entities))).toEqual([
+      "shop/Order",
+      "warehouse/Order",
+      "Receipt",
+    ]);
+  });
+
+  it("finds the choice an instance was made from by module as well as name", () => {
+    expect(choiceOf(entities, "Order", "warehouse")?.fields[0]?.name).toBe(
+      "warehouse",
+    );
+    expect(choiceOf(entities, "Order", "nowhere")).toBeUndefined();
+  });
+});

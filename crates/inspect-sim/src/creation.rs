@@ -120,14 +120,31 @@ pub(crate) fn reacts_in(spec: &SpecGraph, module: &str, when: Option<&Expr>) -> 
     }
 }
 
-/// Whether `event` wakes a rule waiting on `trigger` with this `when`.
+/// Whether `event` wakes a rule in `module` waiting on `trigger` with this
+/// `when`.
 ///
 /// A creation rule only by its creation; every other rule by its trigger's
 /// name, as before. The second half is what keeps a state rule's firing about
 /// an order from reaching a rule that reacts to orders being made.
-pub(crate) fn wakes(trigger: &str, when: Option<&Expr>, event: &Event) -> bool {
+///
+/// And a creation rule only by a creation in the module its entity is from:
+/// two modules may each declare an `Order`, and the other module's being made
+/// is not something this rule reacts to — woken by it, it reported itself
+/// undecided and took the act that made the order with it. An event that says
+/// no module (fired by hand), or a rule whose name leads to none, still wakes
+/// it, and its `when` says what it was handed.
+pub(crate) fn wakes(
+    spec: &SpecGraph,
+    module: &str,
+    (trigger, when): (&str, Option<&Expr>),
+    event: &Event,
+) -> bool {
     match creation_of(when) {
-        Some((_, entity)) => event.trigger == created_trigger(entity),
+        Some((_, entity)) => {
+            event.trigger == created_trigger(entity)
+                && (event.module.is_empty()
+                    || reacts_in(spec, module, when).is_none_or(|home| home == event.module))
+        }
         None => trigger == event.trigger,
     }
 }

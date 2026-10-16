@@ -179,24 +179,24 @@ mod a_black_box_called_with_a_word {
     fn a_field_nobody_set_is_not_the_word_it_spells() {
         let result = walked(&journey(
             "",
-            "        stipulate can(r, level) = true\n        r does Check(r) on Settings\n        then r.flag = true",
+            "        stipulate can(r, level) = true\n        r does Probe(r) on Settings\n        then r.flag = true",
         ));
-        let (verdict, detail) = line(&result, "r does Check(r) on Settings");
+        let (verdict, detail) = line(&result, "r does Probe(r) on Settings");
         assert_eq!(verdict, Verdict::Undecided, "{detail:?}");
         assert!(detail.expect("a reason").contains("can(this, level)"));
         assert_eq!(result.verdict(), Verdict::Undecided);
     }
 
-    /// `Poke` emits `Ask(repo)` and never passes `kind`. `kind` is a question
+    /// `Prod` emits `Ask(repo)` and never passes `kind`. `kind` is a question
     /// about what would have been passed, and the stipulation spelling it does
     /// not answer it.
     #[test]
     fn a_parameter_nobody_passed_is_not_the_word_it_spells() {
         let result = walked(&journey(
             "",
-            "        stipulate can(r, kind) = true\n        r does Poke(r) on Settings\n        then r.flag = true",
+            "        stipulate can(r, kind) = true\n        r does Prod(r) on Settings\n        then r.flag = true",
         ));
-        let (verdict, detail) = line(&result, "r does Poke(r) on Settings");
+        let (verdict, detail) = line(&result, "r does Prod(r) on Settings");
         assert_eq!(verdict, Verdict::Undecided, "{detail:?}");
         assert!(detail.expect("a reason").contains("`Ask` could not be decided"));
         assert_eq!(result.verdict(), Verdict::Undecided);
@@ -312,4 +312,29 @@ fn a_rule_undecided_in_one_step_does_not_soften_a_refusal_in_the_next() {
     assert_eq!(verdict, Verdict::Refused, "{detail:?}");
     // And the step that acted is the one that says something was undecided.
     assert_eq!(result.steps[0].verdict(), Verdict::Undecided);
+}
+
+/// A set written back in another order is the same set.
+#[test]
+fn a_set_said_back_in_another_order_is_the_same_set() {
+    let result = walked(
+        "journey J {
+    cast:
+        r: Repo
+    given:
+        r.tags = {\"a\", \"b\"}
+    1. the tags, the other way round
+        then r.tags = {\"b\", \"a\"}
+        then r.tags = {\"a\", \"b\"}
+        stipulate r.tags = {\"b\", \"a\"}
+        then r.tags = {\"a\", \"b\"}
+}",
+    );
+    let bad: Vec<_> = result
+        .steps
+        .iter()
+        .flat_map(|step| &step.outcomes)
+        .filter(|outcome| outcome.verdict != Verdict::Specified)
+        .collect();
+    assert!(bad.is_empty(), "{bad:#?}");
 }

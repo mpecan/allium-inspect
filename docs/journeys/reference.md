@@ -424,16 +424,22 @@ whether `bob` is the `SiteAdmin` `AdminPanel` faces could not be settled — `is
 An actor declared in another module (`facing admin: admins/SiteAdmin`) is read
 the same way.
 
-Three cases ask nothing:
+Four cases ask nothing:
 
-- An actor that is only a type — `identified_by: User` — or a surface facing an
-  entity directly (`facing c: Clock`) demands nothing beyond the type. And a
-  type that differs from whoever acts is not adjudicated: a surface facing a
-  `Member` and an act by an `Identity` is either a small inconsistency or one
-  person being both, and a walk that picked would be guessing. So it goes
-  ahead, as it always has.
+- An actor that is only a type — `identified_by: User` — demands nothing
+  beyond the type.
+- Nor does a surface facing an entity directly (`facing c: Clock`).
+- A type that differs from whoever acts is not adjudicated when the actor has
+  no condition: a surface facing a `Member` and an act by an `Identity` is
+  either a small inconsistency or one person being both, and a walk that
+  picked would be guessing. So it goes ahead, as it always has.
 - Somebody [cast as the actor itself](#cast--who-is-in-it) — `boss: SiteAdmin`
-  — is one, because the journey said so.
+  — is one, because the journey said so. Not when an entity has the actor's
+  name: an instance of that entity is somebody else, and is asked the
+  condition like anybody.
+
+An actor identified `within` a context, at a surface that is at two contexts of
+that type, is undecided: which one the actor is identified within is not said.
 
 An actor *with* a condition asked of somebody of another type — `crew: Team`
 acting on `AdminPanel` — is undecided, naming both types: the condition is a
@@ -483,9 +489,10 @@ says, naming the loop: whether a member failing it should refuse the whole
 rule or only skip that member is not something this tool decides for the spec.
 
 **A rule that fired and left part of what it ensures unapplied leaves the step
-undecided**, `for` or not. Five things count, and only these: a member of a
+undecided**, `for` or not. Six things count, and only these: a member of a
 `for` the filter could not decide about, a `for` over something that is not a
-collection, an `if` whose condition could not be decided, an assignment to
+collection, a `for` over a collection that may be missing members it could not
+decide on, an `if` whose condition could not be decided, an assignment to
 something that is not an instance, and a postcondition of a form the simulator
 does not model. A postcondition that was decided and applied is not one of
 them, even when deciding it left notes about what it did not need — an `any`
@@ -495,10 +502,11 @@ value, and the `then` lines that read it say so.
 
 While the step is unsettled this way, `then <Rule> does not fire` about a rule
 that did not run is undecided too, because whatever was not applied is what
-might have woken it. A `then` about a field is answered against the world as
-it stands: a definite *no* after an undecided act is downgraded to undecided,
-as everywhere in a step, but a *yes* is reported as it reads — the step itself
-is undecided, and says why.
+might have woken it — and so is one that was woken and refused, because the
+firing that was not applied might have woken it again with something it takes.
+A `then` about a field in the same step is undecided either way, with what it
+read and why the world is not settled: `then b.fired = false` holding when the
+member that would have set it was never visited would be the walk guessing.
 
 **A creation is followed the same way.** A rule written `when: o: Order.created`
 runs once for each order the act's rules create, about that order, and whatever
@@ -516,7 +524,9 @@ A reaction can itself create, including another of what it reacts to. Each new
 instance is a new event, so no memory of what already ran will stop a rule that
 makes a cell every time a cell is made. After 32 rounds the act is reported
 *undecided*, naming what was still being set off, rather than being judged on a
-world cut off partway through.
+world cut off partway through. A reaction that makes *two* of what it reacts to
+doubles every round and would not reach that bound for hours, so one step also
+stops after 512 firings and says so the same way.
 
 Two modules may each declare an `Order`. A reaction written `o: Order.created`
 reacts to its own module's orders, and `memo/Order.created` to those of the
@@ -842,7 +852,12 @@ A relationship is only as complete as what decides it: with
 `items: Item with box = this`, an item whose `box` nobody stated may or may
 not be in the box, so the items it does hold can refute `all` (or satisfy
 `any`) but cannot settle it by agreeing — that comes back undecided, naming
-the field nobody stated. `for i in box.items: …` reads the same way.
+the field nobody stated. `for i in box.items: …` reads the same way, and so do
+`box.items.count`, which is then not known at all; `x in box.items`, which a
+member it holds settles and nothing else does; and `exists`, which one member
+settles and none does not. As a postcondition, `for i in box.items:` applies
+its clauses to the items it holds and says the rest were not applied, so the
+act is undecided.
 Write the quantifier the spec means rather than a black-box predicate a
 journey then has to stipulate — the predicate hides the logic the journey was
 meant to check.
@@ -867,8 +882,9 @@ r does Halt(r) on Settings
 
 Every refusal after it in the same step is undecided with it, and the step does
 not hold, whichever way a `then` about what `Halted` would have written comes
-out. A later step is not softened: it reads the world as the walk left it, and
-a refusal there stays a refusal. The step that acted is the one that says
+out — a *yes* about a field included, because the world it was read from is
+not one the act leads to. A later step is not softened: it reads the world as
+the walk left it, and a refusal there stays a refusal. The step that acted is the one that says
 something was undecided, so look there first.
 
 `all` and `any` are the two methods that take a lambda here. Any other —

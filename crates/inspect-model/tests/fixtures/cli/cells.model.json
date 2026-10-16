@@ -1,1 +1,1 @@
-{"diagnostics":[],"entities":[{"fields":[{"name":"gen","type_expr":"Integer"}],"kind":"internal","name":"Cell"}],"version":3}
+{"diagnostics":[],"entities":[{"fields":[{"name":"gen","type_expr":"Integer"}],"kind":"internal","name":"Cell"},{"fields":[{"name":"gen","type_expr":"Integer"}],"kind":"internal","name":"Spore"}],"version":3}

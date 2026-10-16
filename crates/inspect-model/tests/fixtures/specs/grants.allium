@@ -15,7 +15,7 @@
 --
 -- And three names that read like a word nothing binds and are not one: a field
 -- nobody set, read inside the entity's own definition (`allowed`); a parameter
--- nobody passed (`Ask`, emitted by `Poke` without its `kind`). A stipulation
+-- nobody passed (`Ask`, emitted by `Prod` without its `kind`). A stipulation
 -- spelling either must not answer the call they are in.
 
 enum Ending { cancel | fail }
@@ -73,8 +73,8 @@ rule Halted {
     ensures: repo.ended = true
 }
 
-rule Check {
-    when: Check(repo)
+rule Probe {
+    when: Probe(repo)
     requires: repo.allowed
     ensures: repo.flag = true
 }
@@ -85,8 +85,8 @@ rule Ask {
     ensures: repo.flag = true
 }
 
-rule Poke {
-    when: Poke(repo)
+rule Prod {
+    when: Prod(repo)
     ensures: Ask(repo)
 }
 
@@ -98,6 +98,6 @@ surface Settings {
         Stop(repo)
         Close(repo)
         Halt(repo)
-        Check(repo)
-        Poke(repo)
+        Probe(repo)
+        Prod(repo)
 }

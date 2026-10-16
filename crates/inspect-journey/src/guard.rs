@@ -21,8 +21,9 @@ impl Walker<'_> {
     /// Whether `action when condition` shows what is being asked about, given
     /// whether `action` alone would.
     ///
-    /// The guard is only read when it could change the answer: an item about
-    /// something else is not shown whatever its guard says.
+    /// An item about something else is not shown whatever its guard says;
+    /// `combine` is the one place that decides so, and the guard read for it
+    /// is read for nothing.
     pub(crate) fn guarded(
         &self,
         (action, condition): (&Expr, &Expr),
@@ -30,9 +31,6 @@ impl Walker<'_> {
         context: &BTreeMap<String, Value>,
         module: &str,
     ) -> Admission {
-        if matches!(shown, Admission::No | Admission::Hidden(_)) {
-            return shown;
-        }
         let source = self.sources.get(module).map_or("", String::as_str);
         let written = quoted(source, action, condition)
             .map_or_else(|| "its `when` guard".to_owned(), |text| format!("`when {text}`"));
@@ -47,12 +45,13 @@ impl Walker<'_> {
         module: &str,
     ) -> Result<bool, String> {
         match self.evaluate(condition, context, module) {
-            // A definite value computed over a collection that dropped members
-            // nothing could decide — `(docs where is_private = true).count > 0`
-            // with one `is_private` unset — is not definite. Answering it would
-            // let `cannot see` hold on a member nobody read.
-            Ok((Value::Bool(_), Some(why))) | Err(why) => Err(why),
-            Ok((Value::Bool(holds), None)) => Ok(holds),
+            // Decided is decided. A value computed over a collection that
+            // dropped members nothing could decide — `(docs where is_private =
+            // true).count > 0` with one `is_private` unset — comes back
+            // undecided from the evaluator itself, so what reaches here as a
+            // boolean is one no dropped member could overturn.
+            Err(why) => Err(why),
+            Ok((Value::Bool(holds), _)) => Ok(holds),
             Ok((other, _)) => Err(format!("it came back {}, not true or false", other.described())),
         }
     }

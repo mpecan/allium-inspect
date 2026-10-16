@@ -82,11 +82,16 @@ pub(crate) fn undecided(rule: &RuleOutcome) -> String {
         // not say which clause asked, and a rule with four preconditions has
         // four candidates. The quote comes from the spec text, which is why the
         // walker is handed it.
-        |note| match &note.expression {
-            Some(expression) => format!("{} — in `{expression}`", note.reason),
-            None => note.reason.clone(),
-        },
+        located,
     )
+}
+
+/// A note's reason, and the sub-expression it is about when it located one.
+fn located(note: &inspect_sim::Unresolved) -> String {
+    match &note.expression {
+        Some(expression) => format!("{} — in `{expression}`", note.reason),
+        None => note.reason.clone(),
+    }
 }
 
 /// What a fired rule's postconditions could not apply, as its first reason —
@@ -97,10 +102,7 @@ pub(crate) fn undecided(rule: &RuleOutcome) -> String {
 /// settled by its left side, an `any` settled by one member — and those say
 /// nothing about whether the world is missing a change.
 pub(crate) fn unapplied(rule: &RuleOutcome) -> Option<String> {
-    rule.unapplied.first().map(|note| match &note.expression {
-        Some(expression) => format!("{} — in `{expression}`", note.reason),
-        None => note.reason.clone(),
-    })
+    rule.unapplied.first().map(located)
 }
 
 #[cfg(test)]

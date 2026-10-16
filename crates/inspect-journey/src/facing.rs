@@ -191,7 +191,7 @@ impl Walker<'_> {
             .flat_map(|detail| detail.fields.iter())
             .find(|field| {
                 !fields.contains_key(&field.name)
-                    && why == format!("nothing is bound to `{}`", field.name)
+                    && why == inspect_sim::eval::nothing_bound(&field.name)
             })
             .map_or_else(|| why.to_owned(), |field| format!("`{who}` has no `{}` set", field.name))
     }

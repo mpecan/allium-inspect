@@ -2,26 +2,26 @@
 
 journey ConfigInGiven {
     cast:
-        r: Repo
+        r: Depot
     given:
         config.lfs_enabled = true
     1. use LFS on an instance that enabled it
-        r does UseLfs(r) on Settings
+        r does UseLfs(r) on Switchboard
         then r.lfs_used = true
 }
 
 journey ConfigInStep {
     cast:
-        r: Repo
+        r: Depot
     1. use LFS on an instance that enabled it
         stipulate config.lfs_enabled = true
-        r does UseLfs(r) on Settings
+        r does UseLfs(r) on Switchboard
         then r.lfs_used = true
 }
 
 journey ByDefaultItIsOff {
     cast:
-        r: Repo
+        r: Depot
     1. LFS is refused where nobody turned it on
-        r cannot do UseLfs(r) on Settings
+        r cannot do UseLfs(r) on Switchboard
 }

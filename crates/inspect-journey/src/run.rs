@@ -79,6 +79,9 @@ pub fn walk(
         unapplied: Vec::new(),
         refused: Vec::new(),
         created: Vec::new(),
+        cut_off: None,
+        firings: 0,
+        moved: false,
         notes: Vec::new(),
     };
     // The ground first, when this journey stands on some. Everything below —
@@ -148,6 +151,16 @@ pub(crate) struct Walker<'a> {
     /// Every instance made since it, in the order it was made — the act's own
     /// first, then whatever it set off.
     pub(crate) created: Vec<EntityId>,
+    /// A cascade since it that was cut off before it settled, and where. Kept
+    /// apart from `undecided`: it names triggers still waiting, not a rule.
+    pub(crate) cut_off: Option<String>,
+    /// Events fired since it, the act's own included, against the budget that
+    /// stops a cascade that grows faster than the round bound can catch.
+    pub(crate) firings: usize,
+    /// Whether the step being walked has acted or moved the clock yet. What a
+    /// step set off belongs to that step: a later step's `then` answered by a
+    /// `stipulate` is the journey's own words, not the cascade's.
+    pub(crate) moved: bool,
     /// Faults that belong to no step clause.
     ///
     /// A cast member whose type the spec does not have, or a `given` that
@@ -161,6 +174,7 @@ impl Walker<'_> {
     /// One step: every clause in the order it was written.
     pub(crate) fn walk_step(&mut self, step: &Step, notes: &[check::Note]) -> Walked {
         let mut outcomes = Vec::new();
+        self.moved = false;
         for clause in &step.clauses {
             // A line the spec cannot support is not run. Firing an act at a
             // surface nobody specified would produce a second, confusing
@@ -278,6 +292,7 @@ impl Walker<'_> {
     /// whoever does it (see `facing`).
     fn act(&mut self, act: &Act<'_>, line: usize, about: String) -> Outcome {
         self.forget();
+        self.moved = true;
         self.at_the_surface(act, line, about)
     }
 
@@ -408,6 +423,7 @@ impl Walker<'_> {
         };
         self.world.now = self.world.now.saturating_add(*by);
         self.forget();
+        self.moved = true;
 
         // Time passing is a claim about the world, so it answers like one.
         // It used to report `Specified` whatever happened underneath it: two
@@ -425,21 +441,17 @@ impl Walker<'_> {
                 )),
             };
         }
-        // A rule that fired while the clock moved and left part of what it
-        // ensures unapplied leaves the world as unsettled as one that could
-        // not be decided at all, and is said in its own words beside them.
-        let mut said = Vec::new();
-        if !self.undecided.is_empty() {
-            said.push(format!(
-                "{} could not be decided while the clock moved",
-                self.undecided.iter().map(|it| it.rule.as_str()).collect::<Vec<_>>().join(", ")
-            ));
-        }
-        said.extend(crate::drive::partly(&self.unapplied));
-        if said.is_empty() {
-            Outcome { line, verdict: Verdict::Specified, about, detail: None }
-        } else {
-            Outcome { line, verdict: Verdict::Undecided, about, detail: Some(said.join("; ")) }
+        // What the clock set off is said the way an act's is — each rule
+        // once, with its reason, beside what fired and was not applied in full
+        // and a cascade that never settled — under the clock's name.
+        match self.unsettled() {
+            None => Outcome { line, verdict: Verdict::Specified, about, detail: None },
+            Some(why) => Outcome {
+                line,
+                verdict: Verdict::Undecided,
+                about,
+                detail: Some(format!("while the clock moved, {why}")),
+            },
         }
     }
 }

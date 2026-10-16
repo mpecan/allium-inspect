@@ -482,3 +482,63 @@ fn a_look_that_named_its_context_says_what_else_was_missing() {
     assert!(why.contains("`seat` has no `workspace` set"), "{why}");
     assert!(!why.contains("say which one"), "{why}");
 }
+
+// --- what decides it, and what does not --------------------------------------
+
+/// `identified_by: User where is_admin = true or flag = true`, with only
+/// `is_admin` given. The `or` is settled by its left side, and a note about
+/// the right side it never needed does not make her any less a steward.
+#[test]
+fn a_condition_settled_by_one_side_of_an_or_faces_her() {
+    let result = walked(&journey(
+        "        alice: User",
+        "        alice.is_admin = true",
+        "        alice does Flip(alice) on StewardPanel
+        alice sees alice.is_admin on StewardPanel
+        then alice.flag = true",
+    ));
+    for about in [
+        "alice does Flip(alice) on StewardPanel",
+        "alice sees alice.is_admin on StewardPanel",
+        "then alice.flag = true",
+    ] {
+        let (verdict, why) = line(&result, about);
+        assert_eq!(verdict, Verdict::Specified, "{about}: {why}");
+    }
+}
+
+/// An entity named like the actor is not the actor. `clash` declares its own
+/// `SiteAdmin`, and somebody cast as one of those is not thereby the
+/// `admins/SiteAdmin` the panel faces — a user whose `is_admin` is true.
+#[test]
+fn an_entity_named_like_the_actor_is_not_cast_as_the_actor() {
+    let journeys = parse(&journey(
+        "        x: clash/SiteAdmin",
+        "        x.flag = false",
+        "        x does Poll(x) on ClashPanel",
+    ))
+    .expect("the journey parses");
+    let (graph, program, sources) = common::library(&["admins", "clash"]);
+    let result = walk(&journeys[0], &journeys, &graph, &program, &sources);
+    let (verdict, why) = line(&result, "x does Poll(x) on ClashPanel");
+    assert_eq!(verdict, Verdict::Undecided, "{why}");
+    assert!(why.contains("a `User` where `is_admin = true`"), "{why}");
+    assert!(why.contains("is a `SiteAdmin`"), "{why}");
+}
+
+/// A surface at two workspaces, and an owner identified within one. Which one
+/// is not said, and taking the first would be the walk choosing.
+#[test]
+fn an_actor_within_a_context_the_act_passes_twice_is_undecided_and_says_so() {
+    for verb in ["does", "cannot do"] {
+        let act = format!("seat {verb} Transfer(home, away) on TransferPanel");
+        let result = walked(&journey(
+            "        seat: Seat\n        home: Workspace\n        away: Workspace",
+            "        seat.workspace = home\n        home.archived = false",
+            &format!("        {act}"),
+        ));
+        let (verdict, why) = line(&result, &act);
+        assert_eq!(verdict, Verdict::Undecided, "{act}: {why}");
+        assert!(why.contains("more than one `Workspace`"), "{why}");
+    }
+}
