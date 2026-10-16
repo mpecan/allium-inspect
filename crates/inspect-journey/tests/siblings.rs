@@ -111,7 +111,7 @@ fn a_contested_field_is_undecided_in_the_next_step() {
         admire
             .detail
             .as_deref()
-            .is_some_and(|it| it.contains("was set to a value nothing settled")),
+            .is_some_and(|it| it.contains("`RepaintA` and `RepaintB` had already disagreed")),
         "{admire:#?}"
     );
 }

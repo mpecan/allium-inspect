@@ -18,9 +18,13 @@ impl Walker<'_> {
     pub(crate) fn said_of_the_cast(&self, note: &Unresolved) -> String {
         let mut reason = note.reason.clone();
         for (name, id) in &self.bound {
-            let world = format!("`{id}`");
-            if reason.contains(&world) {
-                reason = reason.replace(&world, &format!("`{name}`"));
+            // Alone, and at the head of a path: "`Box#1.out` was set to …".
+            for (world, said) in
+                [(format!("`{id}`"), format!("`{name}`")), (format!("`{id}."), format!("`{name}."))]
+            {
+                if reason.contains(&world) {
+                    reason = reason.replace(&world, &said);
+                }
             }
         }
         match &note.expression {

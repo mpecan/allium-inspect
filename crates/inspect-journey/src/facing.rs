@@ -194,7 +194,12 @@ impl Walker<'_> {
                     && (why == inspect_sim::eval::nothing_bound(&field.name)
                         || why == inspect_sim::eval::unset_field(&instance.id, &field.name))
             })
-            .map_or_else(|| why.to_owned(), |field| format!("`{who}` has no `{}` set", field.name))
+            .map_or_else(
+                // A field it holds undecided is named the way the journey
+                // names its owner: "`b.out` was set to …", not `Box#1.out`.
+                || why.replace(&format!("`{}.", instance.id), &format!("`{who}.")),
+                |field| format!("`{who}` has no `{}` set", field.name),
+            )
     }
 
     /// The actor `surface` faces, when it faces one this walk can read.

@@ -201,6 +201,21 @@ impl World {
         Some(previous)
     }
 
+    /// [`Self::set_field`], remembering `why` when `value` is undecided, so
+    /// reading the field back can say what the write could not settle.
+    pub fn set_field_explained(
+        &mut self,
+        id: &EntityId,
+        field: &str,
+        value: Value,
+        why: Vec<crate::eval::Unresolved>,
+    ) -> Option<Value> {
+        let instance = self.entities.get_mut(id)?;
+        let previous = instance.field(field);
+        instance.set_explained(field, value, why);
+        Some(previous)
+    }
+
     /// The configuration parameter `name`, looked up for `module`.
     ///
     /// Tried qualified first, then bare. A rule in `messaging` writing

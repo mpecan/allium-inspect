@@ -235,12 +235,12 @@ fn member(
     clause: &Expr,
     mut scope: Env<'_>,
 ) -> Evaluation {
-    scope.bindings.insert(name.to_owned(), item.clone());
+    scope.set(name.to_owned(), item.clone());
     let mut carried = Vec::new();
     for (bound, value) in &within.lets {
         let evaluated = eval(value, &scope);
         carried.extend(evaluated.unresolved);
-        scope.bindings.insert(bound.clone(), evaluated.value);
+        scope.set(bound.clone(), evaluated.value);
     }
     let mut read = eval(clause, &scope);
     read.unresolved.extend(carried);

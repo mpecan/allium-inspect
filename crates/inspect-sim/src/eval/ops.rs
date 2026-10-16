@@ -16,6 +16,11 @@
 //! question is malformed, and answering it either way would report a
 //! precondition as settled that the spec never posed.
 //!
+//! **`??` is an `if` with the condition written for you.** `a ?? b` is `a`
+//! when `a` is set, `b` when it is null — and undecided when whether it is
+//! null is what nobody knows. Taking `b` there would be reading an unknown as
+//! null, which is the guess stipulation 1 forbids.
+//!
 //! **Arithmetic keeps units.** A timestamp plus a duration is a timestamp; two
 //! timestamps subtract to a duration; a duration plus an integer is nothing at
 //! all. Collapsing them to integers would let `due_at + 21` typecheck its way
@@ -187,7 +192,43 @@ pub fn logical(
     Evaluation { value: truth_value(truth), unresolved }
 }
 
-/// `+`, `-`, `*`, `/` over numbers, durations and timestamps.
+/// `left ?? right`: the left side unless it is null.
+///
+/// The right side is evaluated only when it is reached, the same as the branch
+/// of an `if` nobody took — a name it leaves unbound is no reason for anything
+/// when the left was set.
+pub fn coalesce(left_node: &Expr, right_node: &Expr, env: &Env<'_>) -> Evaluation {
+    let left = eval(left_node, env);
+    match left.value {
+        Value::Null => {
+            let right = eval(right_node, env);
+            let mut unresolved = left.unresolved;
+            unresolved.extend(right.unresolved);
+            // The answer is the right side, so when that is undecided in
+            // silence the operator says so, as it does for the left.
+            if right.value.is_unknown() && unresolved.is_empty() {
+                unresolved.push(super::unresolved_at(
+                    "the right side of `??` was never settled",
+                    right_node,
+                    env.source,
+                ));
+            }
+            Evaluation { value: right.value, unresolved }
+        }
+        // Whether it is null is the question, so neither side is the answer.
+        // A name bound to something undecided arrives saying nothing, and the
+        // operator says it rather than leave an unknown with no reason.
+        Value::Unknown if left.unresolved.is_empty() => Evaluation::unknown(
+            "the left side of `??` was never settled, so whether it is null is not known",
+            left_node,
+            env.source,
+        ),
+        _ => left,
+    }
+}
+
+/// `+`, `-`, `*`, `/` over numbers, durations and timestamps, and `+`
+/// between strings.
 pub fn arithmetic(
     left_node: &Expr,
     operator: BinaryOp,
@@ -229,6 +270,12 @@ pub fn arithmetic(
         (Value::Set(items), BinaryOp::Add | BinaryOp::Sub, other) if !other.is_unknown() => {
             Ok(Value::Set(combined(items, operator, other)))
         }
+        // `box.title + " " + extra`: concatenation, and only between two
+        // strings. A number is not spelled into one, because which spelling
+        // is a choice the spec did not make.
+        (Value::Str(left), BinaryOp::Add, Value::Str(right)) => {
+            Ok(Value::Str(format!("{left}{right}")))
+        }
         (Value::Int(_), BinaryOp::Div, Value::Int(0)) => Err(Fault::DividedByZero),
         (Value::Int(left), _, Value::Int(right)) => {
             let checked = match operator {
@@ -248,7 +295,20 @@ pub fn arithmetic(
             // An operand that was already undecided has said why. Adding a
             // second reason on top of it would blame the operator for a gap
             // somewhere underneath it.
-            if !left.value.is_unknown() && !right.value.is_unknown() {
+            //
+            // Unless it said nothing: a name bound to something undecided
+            // arrives with no reason, and staying quiet then left an unknown
+            // with none at all.
+            if left.value.is_unknown() || right.value.is_unknown() {
+                if unresolved.is_empty() {
+                    let span = between(left_node, right_node);
+                    unresolved.push(Unresolved {
+                        reason: format!("`{}` was given a side nothing settled", name_of(operator)),
+                        expression: span.and_then(|span| span.slice(env.source)).map(str::to_owned),
+                        span,
+                    });
+                }
+            } else {
                 let span = between(left_node, right_node);
                 let reason = match fault {
                     Fault::Undefined => format!(

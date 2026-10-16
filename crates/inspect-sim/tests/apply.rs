@@ -1363,3 +1363,146 @@ fn an_existence_assertion_is_noted_as_one() {
         vec![Effect::Noted { description: "exists copy".to_owned() }]
     );
 }
+
+// --- a field written with a value nothing settled (issue #27) ------------
+
+/// What reading `object.field` back says, once the clause has run.
+fn read_back(world: &World, id: &EntityId, called: &str) -> (Value, Vec<String>) {
+    let env = inspect_sim::eval::Env::new(world, "lending", "").bind("it", Value::Ref(id.clone()));
+    let read = inspect_sim::eval::eval(&field(ident("it"), called), &env);
+    (read.value, read.unresolved.into_iter().map(|note| note.reason).collect())
+}
+
+#[test]
+fn a_field_assigned_something_undecided_says_why_when_read_back() {
+    // The reason belonged to the write, and reading the field back said only
+    // that it was "set to a value nothing settled" — and a journey's `then`
+    // said nothing at all.
+    let copy = EntityId::new("Copy", 1);
+    let (_, _, world) = apply(
+        &assign(field(ident("copy"), "shelfmark"), ident("nobody")),
+        &[("copy", Value::Ref(copy.clone()))],
+    );
+    let (value, reasons) = read_back(&world, &copy, "shelfmark");
+    assert_eq!(value, Value::Unknown);
+    assert!(reasons.first().is_some_and(|reason| reason.contains("`nobody`")), "{reasons:?}");
+}
+
+#[test]
+fn a_creation_argument_nothing_settled_says_why_when_read_back() {
+    let (_, _, world) = apply(&creation("Loan", vec![("copy", ident("nobody"))]), &[]);
+    let (value, reasons) = read_back(&world, &EntityId::new("Loan", 1), "copy");
+    assert_eq!(value, Value::Unknown);
+    assert!(reasons.first().is_some_and(|reason| reason.contains("`nobody`")), "{reasons:?}");
+}
+
+#[test]
+fn settling_a_field_later_forgets_why_it_was_not() {
+    let copy = EntityId::new("Copy", 1);
+    let (_, _, mut world) = apply(
+        &assign(field(ident("copy"), "shelfmark"), ident("nobody")),
+        &[("copy", Value::Ref(copy.clone()))],
+    );
+    world.set_field(&copy, "shelfmark", Value::Str("QA78".to_owned()));
+    let (value, reasons) = read_back(&world, &copy, "shelfmark");
+    assert_eq!(value, Value::Str("QA78".to_owned()));
+    assert!(reasons.is_empty(), "{reasons:?}");
+    let instance = world.instance(&copy).expect("the copy");
+    assert!(instance.why("shelfmark").is_empty());
+}
+
+#[test]
+fn an_instance_with_nothing_undecided_serialises_as_it_always_has() {
+    // Recordings, snapshots and shared links hold worlds; a field that is
+    // always written would change every one of them for nothing.
+    let (world, copy) = world();
+    let json = serde_json::to_string(world.instance(&copy).expect("the copy")).expect("JSON");
+    assert!(!json.contains("why"), "{json}");
+}
+
+#[test]
+fn why_a_field_was_not_settled_survives_a_round_trip() {
+    // The browser holds the world between steps and sends it back.
+    let copy = EntityId::new("Copy", 1);
+    let (_, _, world) = apply(
+        &assign(field(ident("copy"), "shelfmark"), ident("nobody")),
+        &[("copy", Value::Ref(copy.clone()))],
+    );
+    let json = serde_json::to_string(&world).expect("JSON");
+    let back: World = serde_json::from_str(&json).expect("the world reads back");
+    assert_eq!(back, world);
+    let (_, reasons) = read_back(&back, &copy, "shelfmark");
+    assert!(reasons.first().is_some_and(|reason| reason.contains("`nobody`")), "{reasons:?}");
+}
+
+/// Read `it.<called>` back from a source with an em-dash ahead of the read, so
+/// the note's anchor is checked by byte offset (stipulation 4).
+fn read_at(world: &World, id: &EntityId, called: &str) -> (Value, Vec<inspect_sim::Unresolved>) {
+    let source = format!("-- — \nrequires: it.{called} = 1");
+    let at = source.find("it.").expect("present");
+    let end = at + "it.".len() + called.len();
+    let node = Expr::MemberAccess {
+        span: Span { start: at, end },
+        object: Box::new(Expr::Ident(Ident {
+            span: Span { start: at, end: at + 2 },
+            name: "it".into(),
+        })),
+        field: Ident { span: Span { start: at + 3, end }, name: called.to_owned() },
+    };
+    let env =
+        inspect_sim::eval::Env::new(world, "lending", &source).bind("it", Value::Ref(id.clone()));
+    let read = inspect_sim::eval::eval(&node, &env);
+    (read.value, read.unresolved)
+}
+
+#[test]
+fn a_field_read_back_names_the_read_and_says_what_the_write_could_not_settle() {
+    // The write's own note named a sub-expression of another rule, at another
+    // time. Read back, the note is about *this* read — `it.shelfmark` — and
+    // the write's reason comes along as what was so when it was written. Once,
+    // not beside a second, generic note saying less.
+    let copy = EntityId::new("Copy", 1);
+    let (_, _, world) = apply(
+        &assign(field(ident("copy"), "shelfmark"), ident("nobody")),
+        &[("copy", Value::Ref(copy.clone()))],
+    );
+    let (value, notes) = read_at(&world, &copy, "shelfmark");
+    assert_eq!(value, Value::Unknown);
+    assert_eq!(notes.len(), 1, "{notes:#?}");
+    let note = &notes[0];
+    assert_eq!(note.expression.as_deref(), Some("it.shelfmark"), "{note:?}");
+    assert!(note.reason.starts_with("`Copy#1.shelfmark` was set to a value nothing settled"));
+    assert!(note.reason.contains("when it was written: nothing is bound to `nobody`"), "{note:?}");
+}
+
+#[test]
+fn a_field_set_undecided_with_no_reason_still_says_so_when_read_back() {
+    let copy = EntityId::new("Copy", 1);
+    let (mut world, _) = world();
+    world.set_field(&copy, "shelfmark", Value::Unknown);
+    let (value, notes) = read_at(&world, &copy, "shelfmark");
+    assert_eq!(value, Value::Unknown);
+    let said: Vec<_> = notes.iter().map(|note| note.reason.as_str()).collect();
+    assert_eq!(said, ["`Copy#1.shelfmark` was set to a value nothing settled"]);
+    assert_eq!(notes[0].expression.as_deref(), Some("it.shelfmark"));
+}
+
+#[test]
+fn a_let_undecided_says_why_where_a_later_clause_reads_it() {
+    // `let s = nobody` then `copy.shelfmark = s`: the binding was a bare
+    // value, so the field was written with no reason, and read back said only
+    // that it was undecided.
+    let copy = EntityId::new("Copy", 1);
+    let block = Expr::Block {
+        span: NOWHERE,
+        items: vec![
+            Expr::LetExpr { span: NOWHERE, name: name("s"), value: Box::new(ident("nobody")) },
+            assign(field(ident("copy"), "shelfmark"), ident("s")),
+        ],
+    };
+    let (_, reasons, world) = apply(&block, &[("copy", Value::Ref(copy.clone()))]);
+    // Said once at the rule, however many clauses read it.
+    assert_eq!(reasons, ["nothing is bound to `nobody`"]);
+    let (_, notes) = read_at(&world, &copy, "shelfmark");
+    assert!(notes[0].reason.contains("`nobody`"), "{notes:#?}");
+}

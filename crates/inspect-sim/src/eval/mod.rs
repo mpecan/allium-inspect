@@ -33,7 +33,9 @@ mod calls;
 mod collections;
 mod lambdas;
 mod literals;
+mod member;
 mod ops;
+mod told;
 mod words;
 
 use std::{
@@ -45,7 +47,7 @@ use allium_parser::ast::{CondBranch, Expr, Ident, QualifiedName};
 // Re-exported for `apply`, which walks the same tree to decide what a
 // postcondition changes.
 pub use ast::{bare_name, span_of};
-use ast::{is_ident_named, literal_text, truth_value};
+use ast::{literal_text, truth_value};
 pub(crate) use collections::element_scope;
 use inspect_model::{Derivations, Function, Span};
 use serde::{Deserialize, Serialize};
@@ -70,6 +72,9 @@ pub struct Unresolved {
     pub expression: Option<String>,
     pub span: Option<Span>,
 }
+
+/// Why each of some bound names holds an unknown: see [`Env::told`].
+pub type Told = BTreeMap<String, Vec<Unresolved>>;
 
 /// A value, and everything that could not be decided on the way to it.
 #[derive(Debug, Clone, PartialEq)]
@@ -123,6 +128,12 @@ pub struct Env<'a> {
     pub module: &'a str,
     /// Names in scope: trigger arguments, `let` bindings, `this`, loop variables.
     pub bindings: BTreeMap<String, Value>,
+    /// Why a name in `bindings` holds an unknown, when whatever bound it said.
+    ///
+    /// Beside the binding rather than in it, because a binding is a bare
+    /// [`Value`]; without this a name bound to something undecided reached its
+    /// reader saying nothing (issue #27). See the `told` module.
+    pub told: Told,
     /// The module's spec text, so an undecided note can quote the source.
     pub source: &'a str,
     /// What the spec computes rather than stores, by `inspect_model::derived_key`.
@@ -165,6 +176,7 @@ impl<'a> Env<'a> {
             world,
             module,
             bindings: BTreeMap::new(),
+            told: BTreeMap::new(),
             source,
             derived: &NOTHING_DERIVED,
             resolving: BTreeSet::new(),
@@ -209,7 +221,7 @@ impl<'a> Env<'a> {
     /// The same environment with `name` bound.
     #[must_use]
     pub fn bind(mut self, name: impl Into<String>, value: Value) -> Self {
-        self.bindings.insert(name.into(), value);
+        self.set(name, value);
         self
     }
 
@@ -217,10 +229,13 @@ impl<'a> Env<'a> {
     fn scoped(&self, name: &str, value: Value) -> Env<'_> {
         let mut bindings = self.bindings.clone();
         bindings.insert(name.to_owned(), value);
+        let mut told = self.told.clone();
+        told.remove(name);
         Env {
             world: self.world,
             module: self.module,
             bindings,
+            told,
             source: self.source,
             derived: self.derived,
             resolving: self.resolving.clone(),
@@ -245,22 +260,24 @@ impl<'a> Env<'a> {
     fn computing(&self, instance: &Instance, key: String) -> Env<'_> {
         let mut bindings = BTreeMap::new();
         bindings.insert("this".to_owned(), Value::Ref(instance.id.clone()));
-        for (field, value) in &instance.fields {
-            bindings.insert(field.clone(), value.clone());
-        }
         let mut resolving = self.resolving.clone();
         resolving.insert(key);
-        Env {
+        let mut scope = Env {
             world: self.world,
             module: self.module,
             bindings,
+            told: BTreeMap::new(),
             source: self.source,
             derived: self.derived,
             resolving,
             // A definition belongs to its entity, not to the rule reading it.
             parameters: BTreeSet::new(),
             element: None,
-        }
+        };
+        // Bare, and each undecided one saying why: `shown: out + "!"` over an
+        // `out` a rule could not settle names what it could not settle.
+        scope.bind_stored(instance);
+        scope
     }
 }
 
@@ -359,7 +376,7 @@ pub fn eval(expr: &Expr, env: &Env<'_>) -> Evaluation {
         Expr::GenericType { .. } | Expr::TypeOptional { .. } => {
             unsupported("a type annotation", expr, env)
         }
-        Expr::NullCoalesce { .. } => unsupported("a `??` coalesce", expr, env),
+        Expr::NullCoalesce { left, right, .. } => coalesce(left, right, env),
         Expr::ProjectionMap { .. } => unsupported("a projection", expr, env),
         Expr::TransitionsTo { .. } => unsupported("a `transitions_to` assertion", expr, env),
         Expr::Becomes { .. } => unsupported("a `becomes` assertion", expr, env),
@@ -399,8 +416,17 @@ pub fn field_of(instance: &Instance, field: &str, env: &Env<'_>) -> Evaluation {
     // Stored wins. A `stipulate` writes to the instance, and a journey that
     // says a value outright must not be overruled by a definition — that is
     // the whole point of saying it.
+    //
+    // A value stored undecided says so, with what its write could not settle
+    // (issue #27) — unanchored, because only the reader knows where it read.
     if instance.fields.contains_key(field) {
-        return Evaluation::known(instance.field(field));
+        let value = instance.field(field);
+        let unresolved = if value.is_unknown() {
+            vec![told::stored_unknown(instance, field)]
+        } else {
+            Vec::new()
+        };
+        return Evaluation { value, unresolved };
     }
     match env.derivation(instance, field) {
         Some((definition, key)) => eval(definition, &env.computing(instance, key)),
@@ -415,7 +441,9 @@ pub fn field_of(instance: &Instance, field: &str, env: &Env<'_>) -> Evaluation {
 fn ident(ident: &Ident, env: &Env<'_>) -> Evaluation {
     let name = &ident.name;
     if let Some(bound) = env.bindings.get(name) {
-        return Evaluation::known(bound.clone());
+        let span = Span::new(ident.span.start, ident.span.end);
+        let unresolved = if bound.is_unknown() { env.told_of(name, span) } else { Vec::new() };
+        return Evaluation { value: bound.clone(), unresolved };
     }
     if let Some(collection) = collection_named(name, env) {
         return Evaluation::known(collection);
@@ -507,131 +535,9 @@ fn collection_of(entity: &str, env: &Env<'_>) -> Value {
     )
 }
 
-/// `object.field`, including `config.x` and `collection.count`.
-fn member(whole: &Expr, object: &Expr, field: &Ident, env: &Env<'_>) -> Evaluation {
-    let field = &field.name;
-
-    // `config.loan_limit` is not a field of anything: `config` is a namespace.
-    if is_ident_named(object, "config") {
-        // A parameter with no default this simulator can read, and that
-        // nobody set, is undecided — and says which parameter. Bare, it read
-        // as "something could not be evaluated" at the rule it guarded. One
-        // that *was* set, to something itself undecided, says that instead:
-        // it has a default and somebody wrote over it, so the first reason
-        // would be false on both counts.
-        return match env.world.config(env.module, field) {
-            Value::Unknown => Evaluation::unknown(
-                env.world.why_config_is_undecided(env.module, field, &format!("config.{field}")),
-                whole,
-                env.source,
-            ),
-            value => Evaluation::known(value),
-        };
-    }
-
-    let base = eval(object, env);
-    let mut unresolved = base.unresolved.clone();
-
-    if field == "count" {
-        // A collection that came back with reasons may be short of members it
-        // could not decide on — `parcels: Parcel with crate = this` leaves out
-        // a parcel whose `crate` nobody set — so its count is a lower bound,
-        // not a count. Reported as one, `parcels.count = 0` would hold over a
-        // parcel that may well be in the crate. See
-        // `lambdas::undecided_by_omission`, the same judgement for `all`.
-        if matches!(base.value, Value::Set(_)) && !unresolved.is_empty() {
-            return Evaluation::unknown(
-                "this collection may be missing members it could not decide on, so its \
-                 `count` is not known",
-                object,
-                env.source,
-            )
-            .carrying(unresolved);
-        }
-        return match base.value.count() {
-            Some(count) => Evaluation {
-                value: Value::Int(i64::try_from(count).unwrap_or(i64::MAX)),
-                unresolved,
-            },
-            None => Evaluation::unknown(
-                format!("`{field}` is {}, which has no count", base.value.described()),
-                whole,
-                env.source,
-            )
-            .carrying(unresolved),
-        };
-    }
-
-    match &base.value {
-        Value::Ref(id) => match env.world.instance(id) {
-            Some(instance) => {
-                let read = field_of(instance, field, env);
-                unresolved.extend(read.unresolved);
-                // A field nobody set and nobody computes is undecided, and
-                // saying *which* field on which instance is the difference
-                // between a panel a reader can act on and one that says only
-                // "unknown".
-                //
-                // One that *was* stored as undecided — two rules woken by one
-                // trigger disagreed about it, or a rule wrote something it
-                // could not settle — says so, rather than nothing at all. A
-                // stored value is read as it is (`field_of`), so it never
-                // arrives with a reason of its own to defer to.
-                let stored = instance.fields.contains_key(field);
-                if read.value.is_unknown() {
-                    unresolved.push(Unresolved {
-                        reason: if stored {
-                            format!("`{id}.{field}` was set to a value nothing settled")
-                        } else {
-                            unset_field(id, field)
-                        },
-                        expression: span_of(whole)
-                            .and_then(|span| span.slice(env.source))
-                            .map(str::to_owned),
-                        span: span_of(whole),
-                    });
-                }
-                Evaluation { value: read.value, unresolved }
-            }
-            None => Evaluation::unknown(format!("`{id}` is not in this world"), whole, env.source)
-                .carrying(unresolved),
-        },
-        // A field read across a collection is a projection: `receipts.reporter`
-        // is every reporter, not an error.
-        Value::Set(items) => {
-            let projected = items
-                .iter()
-                .map(|item| match item {
-                    Value::Ref(id) => env
-                        .world
-                        .instance(id)
-                        .map_or(Value::Unknown, |instance| instance.field(field)),
-                    _ => Value::Unknown,
-                })
-                .collect();
-            Evaluation { value: Value::Set(projected), unresolved }
-        }
-        // Undecided already, and usually saying why. When it said nothing —
-        // a name bound to an argument an emission could not settle — the read
-        // says it, or a chained rule reports only "something could not be
-        // evaluated" (issue #6), which is indistinguishable from a bug.
-        Value::Unknown if unresolved.is_empty() => Evaluation::unknown(
-            format!("`{field}` was read from something nothing settled"),
-            object,
-            env.source,
-        ),
-        Value::Unknown => Evaluation { value: Value::Unknown, unresolved },
-        other => Evaluation::unknown(
-            format!("`{field}` was read from {}, which has no fields", other.described()),
-            whole,
-            env.source,
-        )
-        .carrying(unresolved),
-    }
-}
-
 use collections::{existence, filtered, membership, quantified};
-use ops::{arithmetic, compare, logical};
+use member::member;
+use ops::{arithmetic, coalesce, compare, logical};
 
 /// `if condition: a else if condition: b else: c`.
 ///

@@ -94,8 +94,9 @@ fn a_parameter_spelled_like_a_state_is_what_was_passed() {
 }
 
 /// `let x = box.preferred`, unset, then `{x, b}`. The set is not two things
-/// it knows: if `x` is `b` it is one. The step stays undecided and says `x`
-/// is why, rather than holding on a count it never established.
+/// it knows: if `x` is `b` it is one. The step stays undecided and says why
+/// `x` is undecided — the `let` keeps its reason (issue #27) — rather than
+/// holding on a count it never established.
 #[test]
 fn an_unknown_beside_a_word_leaves_the_loop_undecided_and_says_which() {
     let walk = walked("AnUnknownBesideAWord");
@@ -107,7 +108,8 @@ fn an_unknown_beside_a_word_leaves_the_loop_undecided_and_says_which() {
         .unwrap_or_else(|| panic!("no act line: {walk:#?}"));
     assert_eq!(act.verdict, Verdict::Undecided, "{act:#?}");
     let detail = act.detail.as_deref().unwrap_or_default();
-    assert!(detail.contains("`x` is bound to a value nobody knows"), "{act:#?}");
+    assert!(detail.contains("`bx` has no `preferred` set"), "{act:#?}");
+    assert!(detail.contains("in `{x, b}`"), "{act:#?}");
 }
 
 /// `Tray` stores `a` and never sets it, so `options: {a, b}` holds a value

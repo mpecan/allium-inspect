@@ -794,7 +794,9 @@ fn every_undecided_result_carries_at_least_one_reason() {
     // correctly, which is the shape to look for when adding a case here —
     // reach for the arm nobody would think to write a test *about*.
     let world = library();
-    let env = env(&world, "lending");
+    // `silent`: a name bound to something undecided, which says nothing of
+    // its own — the shape an operator has to speak for.
+    let env = env(&world, "lending").bind("silent", Value::Unknown);
     let cases: Vec<(&str, Expr)> = vec![
         ("an unbound name", ident("nobody")),
         ("a field of an unbound name", field(ident("nobody"), "x")),
@@ -859,6 +861,13 @@ fn every_undecided_result_carries_at_least_one_reason() {
         ("a field of a scalar", field(number("1"), "status")),
         ("not, over an unbound name", not(ident("nobody"))),
         ("a filter over a scalar", filtered(number("1"), null())),
+        ("a coalesce over an unbound name", coalesce(ident("nobody"), text("s"))),
+        ("a coalesce over a silent name", coalesce(ident("silent"), text("s"))),
+        ("a coalesce falling through to an unbound name", coalesce(null(), ident("nobody"))),
+        ("a coalesce falling through to a silent name", coalesce(null(), ident("silent"))),
+        ("a string plus an unbound name", arithmetic(text("a"), "Add", ident("nobody"))),
+        ("a string plus a silent name", arithmetic(text("a"), "Add", ident("silent"))),
+        ("a string plus a number", arithmetic(text("a"), "Add", number("1"))),
     ];
     for (described, node) in cases {
         let evaluated = eval(&node, &env);
@@ -3040,4 +3049,181 @@ fn of_two_undecided_members_the_first_by_id_is_the_one_named() {
     let evaluation = eval(&field(ident("r"), "active_watches"), &env);
     let said: Vec<_> = evaluation.unresolved.iter().map(|note| note.reason.clone()).collect();
     assert_eq!(said, [format!("`{watch}` has no `b` set"), format!("`{second}` has no `b` set")]);
+}
+
+// --- `??` and string `+` (issue #27) --------------------------------------
+
+fn coalesce(left: Expr, right: Expr) -> Expr {
+    Expr::NullCoalesce { span: NOWHERE, left: Box::new(left), right: Box::new(right) }
+}
+
+#[test]
+fn a_coalesce_is_its_left_side_when_that_is_set() {
+    // The right side is never reached, so a name it leaves unbound is no
+    // reason for anything: the same as the branch of an `if` not taken.
+    let world = library();
+    let env = env(&world, "lending").bind("title", Value::Str("t".to_owned()));
+    let node = coalesce(ident("title"), ident("nobody"));
+    let read = eval(&node, &env);
+    assert_eq!(read.value, Value::Str("t".to_owned()));
+    assert!(read.unresolved.is_empty(), "{:?}", read.unresolved);
+}
+
+#[test]
+fn a_coalesce_is_its_right_side_when_the_left_is_null() {
+    let world = library();
+    let env = env(&world, "lending").bind("title", Value::Null);
+    let read = eval(&coalesce(ident("title"), text("s")), &env);
+    assert_eq!(read.value, Value::Str("s".to_owned()));
+    assert!(read.unresolved.is_empty(), "{:?}", read.unresolved);
+}
+
+#[test]
+fn a_coalesce_over_a_null_literal_reaches_the_right_side() {
+    let world = library();
+    let env = env(&world, "lending");
+    assert_eq!(value_of(&coalesce(null(), number("3")), &env), Value::Int(3));
+}
+
+#[test]
+fn a_coalesce_whose_left_is_undecided_is_undecided_and_says_why() {
+    // Not the right side: whether the left is null is exactly what is not
+    // known, so taking the right would be guessing that it is.
+    let world = library();
+    let env = env(&world, "lending");
+    let node = coalesce(ident("title"), text("s"));
+    assert_eq!(value_of(&node, &env), Value::Unknown);
+    let said = reasons(&node, &env);
+    assert!(said.iter().any(|reason| reason.contains("`title`")), "{said:?}");
+}
+
+#[test]
+fn a_coalesce_whose_left_is_undecided_in_silence_still_says_why() {
+    // A name bound to something undecided arrives with no reason of its own.
+    let world = library();
+    let env = env(&world, "lending").bind("title", Value::Unknown);
+    let node = coalesce(ident("title"), text("s"));
+    assert_eq!(value_of(&node, &env), Value::Unknown);
+    let said = reasons(&node, &env);
+    assert!(said.iter().any(|reason| reason.contains("`??`")), "{said:?}");
+}
+
+#[test]
+fn a_coalesce_falling_through_to_an_undecided_right_side_says_why() {
+    let world = library();
+    let env = env(&world, "lending").bind("title", Value::Null);
+    let node = coalesce(ident("title"), ident("summary"));
+    assert_eq!(value_of(&node, &env), Value::Unknown);
+    let said = reasons(&node, &env);
+    assert!(said.iter().any(|reason| reason.contains("`summary`")), "{said:?}");
+}
+
+#[test]
+fn a_coalesce_falling_through_to_a_right_side_undecided_in_silence_says_why() {
+    // The answer is the right side, so when that arrives saying nothing the
+    // operator speaks for it, as it does for the left.
+    let world = library();
+    let env = env(&world, "lending").bind("title", Value::Null).bind("s", Value::Unknown);
+    let node = coalesce(ident("title"), ident("s"));
+    assert_eq!(value_of(&node, &env), Value::Unknown);
+    assert_eq!(reasons(&node, &env), ["the right side of `??` was never settled"]);
+}
+
+#[test]
+fn a_coalesce_keeps_what_its_null_left_side_said() {
+    // A left side that settled to null still says what it read on the way:
+    // `true or nobody` is true, and keeps its note about `nobody`.
+    let world = library();
+    let env = env(&world, "lending");
+    let left = Expr::Conditional {
+        span: NOWHERE,
+        branches: vec![allium_parser::ast::CondBranch {
+            span: NOWHERE,
+            condition: logical(
+                Expr::BoolLiteral { span: NOWHERE, value: true },
+                "Or",
+                ident("nobody"),
+            ),
+            body: null(),
+        }],
+        else_body: None,
+    };
+    assert_eq!(eval(&left, &env).value, Value::Null);
+    let read = eval(&coalesce(left, text("s")), &env);
+    assert_eq!(read.value, Value::Str("s".to_owned()), "{read:?}");
+    assert!(!read.unresolved.is_empty(), "{read:?}");
+}
+
+#[test]
+fn a_coalesce_quotes_the_spec_by_byte_offset() {
+    // An em-dash before it: three bytes, one character.
+    let source = "-- — \nensures: x ?? y";
+    let world = library();
+    let env = Env::new(&world, "lending", source).bind("x", Value::Unknown);
+    let at = source.find("x ??").expect("present");
+    let end = source.len();
+    let left = Expr::Ident(Ident { span: AstSpan { start: at, end: at + 1 }, name: "x".into() });
+    let right = Expr::Ident(Ident { span: AstSpan { start: end - 1, end }, name: "y".to_owned() });
+    let node = Expr::NullCoalesce {
+        span: AstSpan { start: at, end },
+        left: Box::new(left),
+        right: Box::new(right),
+    };
+    let note = &eval(&node, &env).unresolved[0];
+    assert_eq!(note.expression.as_deref(), Some("x"), "{note:?}");
+}
+
+#[test]
+fn strings_added_together_are_concatenated() {
+    let world = library();
+    let env = env(&world, "lending")
+        .bind("title", Value::Str("a".to_owned()))
+        .bind("extra", Value::Str("c".to_owned()));
+    let node = arithmetic(arithmetic(ident("title"), "Add", text(" ")), "Add", ident("extra"));
+    let read = eval(&node, &env);
+    assert_eq!(read.value, Value::Str("a c".to_owned()));
+    assert!(read.unresolved.is_empty(), "{:?}", read.unresolved);
+}
+
+#[test]
+fn only_addition_is_defined_between_strings() {
+    let world = library();
+    let env = env(&world, "lending");
+    for op in ["Sub", "Mul", "Div"] {
+        let node = arithmetic(text("a"), op, text("b"));
+        assert_eq!(value_of(&node, &env), Value::Unknown, "{op}");
+        assert!(reasons(&node, &env)[0].contains("not defined between"), "{op}");
+    }
+}
+
+#[test]
+fn a_string_plus_a_number_is_not_guessed_at() {
+    // No implicit conversion: the language reference defines `+` between
+    // strings, and a spelling of `1` is a choice this tool would be making.
+    let world = library();
+    let env = env(&world, "lending");
+    let node = arithmetic(text("a"), "Add", number("1"));
+    assert_eq!(value_of(&node, &env), Value::Unknown);
+    assert!(reasons(&node, &env)[0].contains("not defined between"));
+}
+
+#[test]
+fn a_string_plus_something_undecided_says_why() {
+    let world = library();
+    let env = env(&world, "lending");
+    let node = arithmetic(text("a"), "Add", ident("extra"));
+    assert_eq!(value_of(&node, &env), Value::Unknown);
+    let said = reasons(&node, &env);
+    assert!(said.iter().any(|reason| reason.contains("`extra`")), "{said:?}");
+}
+
+#[test]
+fn arithmetic_over_an_operand_undecided_in_silence_still_says_why() {
+    // The operand "has already said why" — except a name bound to something
+    // undecided says nothing, and the result was an unknown with no reason.
+    let world = library();
+    let env = env(&world, "lending").bind("extra", Value::Unknown);
+    let node = arithmetic(text("a"), "Add", ident("extra"));
+    assert_eq!(value_of(&node, &env), Value::Unknown);
+    assert!(!reasons(&node, &env).is_empty());
 }

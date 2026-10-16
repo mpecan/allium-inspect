@@ -14,7 +14,7 @@
   import { choiceKey, choiceLabel, choiceOf, type EntityChoice } from "./setup";
   import type { Instance } from "../api/Instance";
   import type { World } from "../api/World";
-  import { duration, parse, render } from "./values";
+  import { duration, edited, parse, render } from "./values";
 
   interface Props {
     world: World;
@@ -68,7 +68,7 @@
       ...world,
       entities: {
         ...world.entities,
-        [id]: { ...instance, fields: { ...instance.fields, [field]: parse(text, states) } },
+        [id]: edited(instance, field, parse(text, states)),
       },
     });
   }

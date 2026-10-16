@@ -251,7 +251,7 @@ fn defined(
 
     let mut scope = env.computing(instance, key);
     for (param, value) in function.params.iter().zip(given) {
-        scope.bindings.insert(param.clone(), value);
+        scope.set(param.clone(), value);
     }
     eval(&function.body, &scope)
 }

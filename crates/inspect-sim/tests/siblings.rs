@@ -195,7 +195,9 @@ fn a_third_sibling_does_not_settle_what_two_disagreed_about() {
         "{:#?}",
         third.unapplied
     );
-    // And a later step reading it is undecided, saying why.
+    // And a later step reading it is undecided, saying why: the clash itself,
+    // kept with the field, rather than only that something did not settle it
+    // (issue #27).
     let admired = fired(&outcome.world, &on("Admire", "lamp", &lamp));
     let admire = rule(&admired, "Admire");
     assert_eq!(admire.disposition, Disposition::Undecided, "{admire:#?}");
@@ -203,7 +205,7 @@ fn a_third_sibling_does_not_settle_what_two_disagreed_about() {
         admire
             .unresolved
             .iter()
-            .any(|it| it.reason.contains("`Lamp#1.colour` was set to a value nothing settled")),
+            .any(|it| it.reason.contains("`RepaintA` and `RepaintB` had already disagreed")),
         "{admire:#?}"
     );
 }

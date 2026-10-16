@@ -1,0 +1,150 @@
+-- Issue #27: `??` and string `+` were never simulated, and a field a rule
+-- wrote with an undecided value read back as "unknown" with no reason.
+
+-- The first reproduction, as filed.
+journey CoalesceFallsThrough {
+    cast:
+        b: Box
+    given:
+        b.title = null
+    1. one
+        stipulate summary(b) = "s"
+        b does Name(b) on Desk
+        then b.out = "s"
+}
+
+-- The right side is never reached, so nothing has to answer `summary`.
+journey CoalesceKeepsTheLeft {
+    cast:
+        b: Box
+    given:
+        b.title = "t"
+    1. one
+        b does Name(b) on Desk
+        then b.out = "t"
+}
+
+-- Nobody said whether the title is null, so neither side is the answer —
+-- not even with the right side's answer ready, which a guess would take.
+journey CoalesceOverAnUnsetTitle {
+    cast:
+        b: Box
+    1. one
+        stipulate summary(b) = "s"
+        b does Name(b) on Desk
+        then b.out = "s"
+}
+
+-- Falls through to a question nobody answered.
+journey CoalesceUnanswered {
+    cast:
+        b: Box
+    given:
+        b.title = null
+    1. one
+        b does Name(b) on Desk
+        then b.out = "s"
+}
+
+-- The same, spelled as an `if`.
+journey SpelledOutUnanswered {
+    cast:
+        b: Box
+    given:
+        b.title = null
+    1. one
+        b does NameSpelledOut(b) on Desk
+        then b.out = "s"
+}
+
+-- The second reproduction, as filed.
+journey Concatenates {
+    cast:
+        b: Box
+    given:
+        b.tag = "a"
+    1. one
+        b does Label(b, "c") on Desk
+        then b.label = "a c"
+}
+
+-- A tag nobody set is not an empty string.
+journey ConcatenatesAnUnsetTag {
+    cast:
+        b: Box
+    1. one
+        b does Label(b, "c") on Desk
+        then b.label = "a c"
+}
+
+-- Concatenated, and not what the line says.
+journey ConcatenatesWrongly {
+    cast:
+        b: Box
+    given:
+        b.tag = "a"
+    1. one
+        b does Label(b, "c") on Desk
+        then b.label = "ac"
+}
+
+-- The fall-through named by a `let`.
+journey ThroughALetUnanswered {
+    cast:
+        b: Box
+    given:
+        b.title = null
+    1. one
+        b does NameThroughALet(b) on Desk
+        then b.out = "s"
+}
+
+-- Answered after the write: the field was written undecided, and stays so.
+-- The reason says what was so when it was written, and a rule reading the
+-- field names its own clause.
+journey AnsweredAfterTheWrite {
+    cast:
+        b: Box
+    given:
+        b.title = null
+    1. write
+        b does Name(b) on Desk
+    2. answer later
+        stipulate summary(b) = "s"
+        then b.out = "s"
+    3. ship
+        b does Ship(b) on Desk
+}
+
+-- Fields the spec computes from one a rule wrote undecided.
+journey ComputedOverAnUndecidedField {
+    cast:
+        b: Box
+    given:
+        b.title = null
+    1. one
+        b does Name(b) on Desk
+        then b.shown = "s!"
+        then b.same = true
+}
+
+-- Whether the box's owner is a `Shipper` turns on a field `Name` wrote
+-- undecided.
+journey FacedOverAnUndecidedField {
+    cast:
+        b: Box
+    given:
+        b.title = null
+    1. name
+        b does Name(b) on Desk
+    2. seal
+        b does Seal(b) on Dock
+}
+
+-- A field nothing set and nothing computes.
+journey NothingSetIt {
+    cast:
+        b: Box
+    1. look
+        then b.done = true
+}

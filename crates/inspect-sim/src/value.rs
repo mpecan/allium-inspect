@@ -17,7 +17,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::truth::Truth;
+use crate::{eval::Unresolved, truth::Truth};
 
 /// The identity of one entity instance in a world.
 ///
@@ -381,13 +381,32 @@ pub struct Instance {
     pub module: String,
     /// Field values, ordered so a world serialises identically twice.
     pub fields: BTreeMap<String, Value>,
+    /// Why a field holds [`Value::Unknown`], for each one a rule wrote that way.
+    ///
+    /// The reason belongs to the write — `box.out = box.title ?? summary(box)`
+    /// with nobody answering `summary` — and is needed at the read, which may
+    /// be a journey's `then` a step later. Stored as a bare unknown, it read
+    /// back as "`b.out` is unknown" and nothing else: the shape stipulation 1
+    /// calls indistinguishable from a bug (issue #27).
+    ///
+    /// Left out of the wire when empty, so a world with nothing undecided in
+    /// it serialises exactly as it did before this existed.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[ts(optional, as = "Option<BTreeMap<String, Vec<Unresolved>>>")]
+    pub why: BTreeMap<String, Vec<Unresolved>>,
 }
 
 impl Instance {
     /// An instance of `entity` from `module`, with no fields set.
     #[must_use]
     pub fn new(id: EntityId, entity: impl Into<String>, module: impl Into<String>) -> Self {
-        Self { id, entity: entity.into(), module: module.into(), fields: BTreeMap::new() }
+        Self {
+            id,
+            entity: entity.into(),
+            module: module.into(),
+            fields: BTreeMap::new(),
+            why: BTreeMap::new(),
+        }
     }
 
     /// The value of `field`.
@@ -401,9 +420,37 @@ impl Instance {
         self.fields.get(field).cloned().unwrap_or(Value::Unknown)
     }
 
-    /// Set `field` to `value`.
+    /// Set `field` to `value`, forgetting why it was undecided before.
     pub fn set(&mut self, field: impl Into<String>, value: Value) {
-        self.fields.insert(field.into(), value);
+        let field = field.into();
+        self.why.remove(&field);
+        self.fields.insert(field, value);
+    }
+
+    /// Set `field` to `value`, and when that is undecided, remember `why`.
+    ///
+    /// A settled value forgets any reason, the same as [`Self::set`]: a reason
+    /// kept beside a value it no longer explains would be read as explaining
+    /// whatever is written there next.
+    pub fn set_explained(&mut self, field: impl Into<String>, value: Value, why: Vec<Unresolved>) {
+        let field = field.into();
+        let undecided = value.is_unknown() && !why.is_empty();
+        self.set(field.clone(), value);
+        if undecided {
+            self.why.insert(field, why);
+        }
+    }
+
+    /// Why `field` holds an undecided value, when a write said.
+    ///
+    /// Nothing for a field that holds anything else, whatever arrived over the
+    /// wire beside it.
+    #[must_use]
+    pub fn why(&self, field: &str) -> &[Unresolved] {
+        match self.fields.get(field) {
+            Some(Value::Unknown) => self.why.get(field).map_or(&[], Vec::as_slice),
+            _ => &[],
+        }
     }
 
     /// The same instance with `field` set.
@@ -683,6 +730,55 @@ mod tests {
             .with("status", Value::Enum("visible".to_owned()));
         assert_eq!(instance.field("body"), Value::Str("hello".to_owned()));
         assert_eq!(instance.field("status"), Value::Enum("visible".to_owned()));
+    }
+
+    /// Only an undecided value keeps a reason, and only a reason that says
+    /// something: a settled write that carried a note about a branch it did
+    /// not need, or an unknown with nothing to say, stores nothing — so the
+    /// wire stays as it was (issue #27).
+    #[test]
+    fn only_an_undecided_value_keeps_why() {
+        let note = crate::eval::Unresolved {
+            reason: "nothing is bound to `x`".to_owned(),
+            expression: None,
+            span: None,
+        };
+        let mut instance = Instance::new(EntityId::new("M", 1), "M", "m");
+        instance.set_explained("settled", Value::Int(1), vec![note.clone()]);
+        instance.set_explained("silent", Value::Unknown, Vec::new());
+        assert!(instance.why.is_empty(), "{:?}", instance.why);
+        instance.set_explained("open", Value::Unknown, vec![note.clone()]);
+        assert_eq!(instance.why("open"), std::slice::from_ref(&note));
+    }
+
+    /// A reason kept beside a value it no longer explains would be read as
+    /// explaining whatever is written there next — another unknown included.
+    #[test]
+    fn rewriting_a_field_forgets_why_it_was_undecided() {
+        let note = crate::eval::Unresolved {
+            reason: "nothing is bound to `x`".to_owned(),
+            expression: None,
+            span: None,
+        };
+        let mut instance = Instance::new(EntityId::new("M", 1), "M", "m");
+        instance.set_explained("f", Value::Unknown, vec![note.clone()]);
+        instance.set_explained("f", Value::Unknown, Vec::new());
+        assert!(instance.why("f").is_empty());
+        assert!(!instance.why.contains_key("f"), "{:?}", instance.why);
+        instance.set_explained("f", Value::Unknown, vec![note]);
+        instance.set("f", Value::Unknown);
+        assert!(!instance.why.contains_key("f"), "{:?}", instance.why);
+    }
+
+    /// A world comes back from the browser; a reason sent beside a settled
+    /// value explains nothing and is not given.
+    #[test]
+    fn a_reason_beside_a_settled_value_on_the_wire_is_not_given() {
+        let json = r#"{"id":"M#1","entity":"M","module":"m","fields":{"f":{"kind":"int","value":1}},
+            "why":{"f":[{"reason":"stale","expression":null,"span":null}]}}"#;
+        let instance: Instance = serde_json::from_str(json).expect("an instance");
+        assert_eq!(instance.field("f"), Value::Int(1));
+        assert!(instance.why("f").is_empty());
     }
 
     #[test]

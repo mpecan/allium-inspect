@@ -28,7 +28,7 @@ use allium_parser::ast::Expr;
 
 use crate::{
     apply::{Against, Application, Applied, Effect},
-    eval::Unresolved,
+    eval::{Told, Unresolved},
     step::{Disposition, RuleOutcome},
     value::{EntityId, Value},
     world::World,
@@ -44,19 +44,16 @@ use crate::{
 pub(crate) fn apply(
     against: Against<'_>,
     (world, next): (&World, &mut World),
-    bindings: BTreeMap<String, Value>,
+    (bindings, told): (BTreeMap<String, Value>, Told),
     ensures: &[Expr],
 ) -> Applied {
     let mut own = world.clone();
     own.next_ordinal.clone_from(&next.next_ordinal);
     let mut applied = Applied::default();
     {
-        let mut application = Application::new(against, &mut own, bindings);
+        let mut application = Application::new(against, &mut own, bindings).telling(told);
         for clause in ensures {
-            let step = application.apply(clause);
-            applied.effects.extend(step.effects);
-            applied.unresolved.extend(step.unresolved);
-            applied.unapplied.extend(step.unapplied);
+            applied.merge(application.apply(clause));
         }
     }
     next.next_ordinal.clone_from(&own.next_ordinal);
@@ -73,8 +70,11 @@ pub(crate) fn apply(
                 next.remove(id);
             }
             // Onto nothing, when a sibling removed it: gone either way.
+            // With the reason the rule's own copy kept for an undecided
+            // value, or replaying it would leave the unknown and drop why.
             Effect::Assigned { id, field, to, .. } => {
-                next.set_field(id, field, to.clone());
+                let why = own.instance(id).map(|it| it.why(field).to_vec()).unwrap_or_default();
+                next.set_field_explained(id, field, to.clone(), why);
             }
             Effect::Emitted { .. } | Effect::Refused { .. } | Effect::Noted { .. } => {}
         }
@@ -142,7 +142,7 @@ impl Written {
                     still_contested(trigger, (first, second, &outcome.name), &key, wrote)
                 }
             };
-            world.set_field(&key.0, &key.1, Value::Unknown);
+            world.set_field_explained(&key.0, &key.1, Value::Unknown, vec![said.clone()]);
             clashes.push(said);
         }
         outcome.unresolved.extend(clashes.iter().cloned());

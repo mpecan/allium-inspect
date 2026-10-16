@@ -958,13 +958,14 @@ different values leave it **undecided**, and the act says which two:
 b does Paint(l) on Shelf
   `PaintRed` fired, but part of what it ensures was not applied: `PaintBlue` and `PaintRed` were both woken by `Paint`: `PaintBlue` set `Lamp#1.colour` to "blue" and `PaintRed` set it to "red"; the specification does not say which of the two runs first, so which value stands is undecided
 then l.colour = "red"
-  l.colour is unknown
+  l.colour is unknown — `l.colour` was set to a value nothing settled — when it was written: `PaintBlue` and `PaintRed` were both woken by `Paint`: …
 ```
 
 It stays undecided for the rest of the walk, and whatever a third rule woken
 by the same firing writes to it: agreeing with one of the two does not settle
 the question between them. A later step that reads it is undecided, and says
-the field "was set to a value nothing settled". Writes that agree, writes to
+the field "was set to a value nothing settled", with the clash as what was so
+when it was written: it is kept with the field, not only on the act. Writes that agree, writes to
 different fields, and a removal beside an assignment to what it removed come
 out the same in either order, and stand. Settle a clash in the spec — a
 `requires` on one rule that rules the other out — and the walk can decide it.
@@ -1138,6 +1139,24 @@ settled it comes back `undecided` with the simulator's reason on the line:
 then r.ne = true
   r.ne is unknown — `r` has no `other` set
 ```
+
+A **stored** field a rule wrote with a value it could not settle says so, and
+what the write could not settle comes with it — kept with the field until
+something settles it, so the `then` a step later can still give it:
+
+```text
+b does Name(b) on Desk
+then b.out = "s"
+  b.out is unknown — `b.out` was set to a value nothing settled — when it was written: nothing defines `summary`, and no stipulation answers this call (in `summary(box)`)
+```
+
+*When it was written* is meant: a stored value is not computed again, so a
+`stipulate summary(b) = "s"` a step later does not settle `b.out` — the
+rule has to run again — and the reason says what was so then, not that
+nothing answers `summary` now. A rule that reads the field names its own
+clause — *in `box.out`* — not a sub-expression of the rule that wrote it. A
+field that nothing set and nothing computes says that instead:
+``b.done is unknown — `b` has no `done` set``.
 
 The reason names the cast member the way the journey did, not by the
 simulator's id for it. `stipulate` is how a journey gets past that
@@ -1488,6 +1507,19 @@ out — a *yes* about a field included, because the world it was read from is
 not one the act leads to. A later step is not softened: it reads the world as
 the walk left it, and a refusal there stays a refusal. The step that acted is the one that says
 something was undecided, so look there first.
+
+**`??` and `+` between strings are evaluated.** `a ?? b` is `a` when `a` is
+set, and `b` when `a` is null — the same answer as `if a != null: a else: b`,
+and like that `if`, `b` is only read when it is reached. When nobody said
+whether `a` is null — a field never set, a call nobody answered — neither
+side is the answer, and the line is undecided naming `a`: taking `b` would be
+reading *unknown* as *null*. `"a" + " " + extra` concatenates; `+` between a
+string and anything else, and `-`, `*`, `/` between strings, are undecided
+and say which two kinds of value met — *`` `+` is not defined between a string
+and an integer ``*, or *a string and a duration*, and so on — because which
+spelling a number would take is a choice the spec did not make. A name bound
+by a `let`, or a field read bare inside a computed field, carries the reason
+it is undecided to wherever it is read.
 
 `all` and `any` are the two methods that take a lambda here. Any other —
 `items.filter(i => …)` — and a lambda anywhere else is still undecided, with

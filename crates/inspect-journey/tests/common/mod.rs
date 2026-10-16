@@ -121,6 +121,10 @@ pub const DEFAULTS: &[&str] = &["defaults"];
 /// #26).
 pub const KINDS: &[&str] = &["kinds"];
 
+/// The operators fixture, alone: `??`, string `+`, and a field written with a
+/// value nothing settled (issue #27).
+pub const OPERATORS: &[&str] = &["operators"];
+
 /// `modules`, replayed from their recordings, with each module's source.
 pub fn library(modules: &[&str]) -> (SpecGraph, Program, Sources) {
     let root = fixtures();

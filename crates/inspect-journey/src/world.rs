@@ -15,7 +15,7 @@
 use inspect_model::{NodeKind, SpecGraph};
 use inspect_sim::{
     Value,
-    eval::{Env, Evaluation, field_of},
+    eval::{Env, Evaluation, Unresolved, field_of, unset_field},
     value::{EntityId, Instance},
 };
 
@@ -392,10 +392,18 @@ impl Walker<'_> {
             let Some(instance) = self.world.instance(id) else { return (Value::Unknown, None) };
             let read = self.field(instance, segment);
             if read.value.is_unknown() {
-                return (
-                    Value::Unknown,
-                    read.unresolved.first().map(|note| self.said_of_the_cast(note)),
-                );
+                // A field nobody set and nothing computes comes back with no
+                // note of its own; a rule reading it says which, and so does
+                // this.
+                let key = inspect_model::derived_key(&instance.module, &instance.entity, segment);
+                let derivations = self.program.derivations();
+                let computed = derivations.fields.contains_key(&key)
+                    || derivations.functions.contains_key(&key);
+                let unset = (!computed && !instance.fields.contains_key(segment)).then(|| {
+                    Unresolved { reason: unset_field(id, segment), expression: None, span: None }
+                });
+                let note = read.unresolved.first().or(unset.as_ref());
+                return (Value::Unknown, note.map(|note| self.said_of_the_cast(note)));
             }
             current = read.value;
         }

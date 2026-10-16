@@ -187,7 +187,7 @@ impl Application<'_> {
         // a postcondition the simulator does not model, which it is not.
         if !matches!(value, Expr::Call { .. }) {
             let evaluated = self.evaluate(value);
-            self.bindings.insert(name.to_owned(), evaluated.value);
+            self.bind(name, evaluated.value, evaluated.unresolved.clone());
             return Applied::note(evaluated.unresolved);
         }
         let applied = self.apply(value);
@@ -201,14 +201,14 @@ impl Application<'_> {
 
         match bound {
             Some(value) => {
-                self.bindings.insert(name.to_owned(), value);
+                self.bind(name, value, Vec::new());
                 applied
             }
             None => {
                 let evaluated = self.evaluate(value);
                 let mut applied = applied;
+                self.bind(name, evaluated.value, evaluated.unresolved.clone());
                 applied.unresolved.extend(evaluated.unresolved);
-                self.bindings.insert(name.to_owned(), evaluated.value);
                 applied
             }
         }
@@ -242,12 +242,17 @@ impl Application<'_> {
             {
                 evaluated = Evaluation { value: state, unresolved: Vec::new() };
             }
+            self.world.set_field_explained(
+                &id,
+                field,
+                evaluated.value,
+                evaluated.unresolved.clone(),
+            );
             applied.unresolved.extend(evaluated.unresolved);
-            self.world.set_field(&id, field, evaluated.value);
         }
 
         // The instance binds its own name, so the next clause can refer to it.
-        self.bindings.insert(entity.to_lowercase(), Value::Ref(id));
+        self.bind(&entity.to_lowercase(), Value::Ref(id), Vec::new());
         applied
     }
 

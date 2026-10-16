@@ -133,6 +133,8 @@ impl Application<'_> {
                     }
                 }
             }
+            // A loop variable says nothing a `let` of the same name said.
+            self.told.remove(&binding);
             let restore = self.bindings.insert(binding.clone(), item);
             let step = self.apply(&body);
             applied.merge(step);
@@ -226,7 +228,7 @@ pub(crate) fn keeps(
         outer.bindings.remove(&field);
     }
     let mut scope = element_scope(&outer, item);
-    scope.bindings.insert(binding.to_owned(), item.clone());
+    scope.set(binding.to_owned(), item.clone());
     eval(filter, &scope)
 }
 

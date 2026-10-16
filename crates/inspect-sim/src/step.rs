@@ -35,7 +35,7 @@ use crate::{
     apply::Against,
     apply::Effect,
     binding, creation, due,
-    eval::{Env, Unresolved, eval},
+    eval::{Env, Told, Unresolved, eval},
     gone::{self, Removed},
     per_member,
     siblings::Written,
@@ -301,11 +301,18 @@ fn run_rule(
     // the precondition that reads it says which sub-expression could not be
     // settled — better than "nothing is bound to `existing`", which points at
     // the `let` rather than at what defeated it.
+    let mut told = Told::new();
     for (name, value) in &ast.lets {
         let evaluated = {
-            let scope = rule_scope(Env::new(world, module, source), program, &declared, &bindings);
+            let scope =
+                rule_scope(Env::new(world, module, source), program, &declared, (&bindings, &told));
             eval(value, &scope)
         };
+        if evaluated.value.is_unknown() && !evaluated.unresolved.is_empty() {
+            told.insert(name.clone(), evaluated.unresolved);
+        } else {
+            told.remove(name);
+        }
         bindings.insert(name.clone(), evaluated.value);
     }
 
@@ -422,7 +429,8 @@ fn run_rule(
     // alone; a per-member clause is sliced from the source by its own span,
     // and read once for each member its loop keeps.
     let mut top_level = detail.clauses_of("requires");
-    let scope = || rule_scope(Env::new(world, module, source), program, &declared, &bindings);
+    let scope =
+        || rule_scope(Env::new(world, module, source), program, &declared, (&bindings, &told));
     for (index, clause) in ast.requires.iter().enumerate() {
         let (text, read) = match ast.per_member.get(&index) {
             Some(within) => (
@@ -460,7 +468,7 @@ fn run_rule(
         crate::siblings::apply(
             Against { spec, module, source, derived: program.derivations() },
             (world, next),
-            bindings,
+            (bindings, told),
             &ast.ensures,
         )
     } else {
@@ -585,10 +593,12 @@ fn rule_scope<'a>(
     base: Env<'a>,
     program: &'a Program,
     declared: &[String],
-    bindings: &BTreeMap<String, Value>,
+    (bindings, told): (&BTreeMap<String, Value>, &Told),
 ) -> Env<'a> {
     let mut scope = base.deriving(program.derivations()).declaring(declared.iter().cloned());
     scope.bindings.clone_from(bindings);
+    // Why a `let` is undecided, for the precondition that reads it to say.
+    scope.told.clone_from(told);
     scope
 }
 
@@ -643,18 +653,17 @@ fn about<'a>(
     binding: &str,
     instance: &crate::value::EntityId,
 ) -> Env<'a> {
-    scope.bindings.insert(binding.to_owned(), Value::Ref(instance.clone()));
-    scope.bindings.insert("this".to_owned(), Value::Ref(instance.clone()));
+    scope.set(binding.to_owned(), Value::Ref(instance.clone()));
+    scope.set("this", Value::Ref(instance.clone()));
     // The entity's own name too. `when: copy: Copy.status = lost` reads as
     // "for each Copy, where *this* copy's status is lost" — inside the
     // condition the type name means the instance, not the collection. Without
     // this the condition asks whether *every* copy is lost, which is a
     // different question and answers `unknown`.
-    scope.bindings.insert(entity.to_owned(), Value::Ref(instance.clone()));
-    if let Some(found) = scope.world.instance(instance) {
-        for (field, value) in &found.fields {
-            scope.bindings.insert(field.clone(), value.clone());
-        }
+    scope.set(entity.to_owned(), Value::Ref(instance.clone()));
+    let world = scope.world;
+    if let Some(found) = world.instance(instance) {
+        scope.bind_stored(found);
     }
     scope
 }

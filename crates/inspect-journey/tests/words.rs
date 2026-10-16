@@ -265,6 +265,7 @@ fn the_fixtures_own_journeys_report_no_word() {
         ("kinds", common::KINDS),
         ("lending", LENDING),
         ("loss", LENDING),
+        ("operators", common::OPERATORS),
         ("orders", common::ORDERS),
         ("packing", common::PACKING),
         ("pinboard", common::PINBOARD),

@@ -335,7 +335,7 @@ pub(super) fn quantified(
     let mut verdicts = Vec::new();
     for item in &items {
         let mut scope = element_scope(env, item);
-        scope.bindings.insert(name.clone(), item.clone());
+        scope.set(name.clone(), item.clone());
 
         // `for l in Loans where status = open:` narrows what is claimed about.
         if let Some(filter) = filter {
@@ -403,9 +403,8 @@ pub(crate) fn element_scope<'a>(env: &'a Env<'a>, item: &Value) -> Env<'a> {
         // Unbound here, the element's own lookup answers it: computed in its
         // scope, or "has no `x` set" (issue #23).
         scope.bindings.retain(|name, _| name == "this" || !env.has(id, name));
-        for (field, value) in &instance.fields {
-            scope.bindings.insert(field.clone(), value.clone());
-        }
+        scope.told.retain(|name, _| name == "this" || !env.has(id, name));
+        scope.bind_stored(instance);
     }
     scope
 }

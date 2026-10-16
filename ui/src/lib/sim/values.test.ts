@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
+import type { Instance } from "../api/Instance";
 import type { Value } from "../api/Value";
-import { duration, parse, render } from "./values";
+import { duration, edited, parse, render } from "./values";
 
 describe("render", () => {
   it("names an undecided value rather than leaving a blank", () => {
@@ -153,5 +154,40 @@ describe("parse", () => {
       const typed = value.kind === "duration" ? "21.days" : shown;
       expect(parse(typed, states)).toEqual(value);
     }
+  });
+});
+
+describe("edited", () => {
+  // A rule that wrote a value it could not settle keeps the reason with the
+  // field (issue #27). Somebody editing that field by hand has answered it,
+  // or cleared it to "nobody said" — and either way the rule's reason is no
+  // longer about what is there.
+  const why = [{ reason: "nothing defines `summary`", expression: null, span: null }];
+  const box: Instance = {
+    id: "Box#1",
+    entity: "Box",
+    module: "m",
+    fields: { out: { kind: "unknown" }, title: { kind: "unknown" } },
+    why: { out: why, title: why },
+  };
+
+  it("sets the field", () => {
+    const next = edited(box, "out", { kind: "str", value: "s" });
+    expect(next.fields.out).toEqual({ kind: "str", value: "s" });
+  });
+
+  it("forgets why the edited field was undecided, even when cleared", () => {
+    const next = edited(box, "out", parse(""));
+    expect(next.fields.out).toEqual({ kind: "unknown" });
+    expect(next.why?.out).toBeUndefined();
+  });
+
+  it("keeps why every other field is undecided", () => {
+    expect(edited(box, "out", parse("")).why?.title).toEqual(why);
+  });
+
+  it("leaves the instance it was given alone", () => {
+    edited(box, "out", parse(""));
+    expect(box.why?.out).toEqual(why);
   });
 });
