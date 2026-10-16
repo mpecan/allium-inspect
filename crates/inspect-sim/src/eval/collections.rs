@@ -403,7 +403,11 @@ pub(crate) fn element_scope<'a>(env: &'a Env<'a>, item: &Value) -> Env<'a> {
         // Unbound here, the element's own lookup answers it: computed in its
         // scope, or "has no `x` set" (issue #23).
         scope.bindings.retain(|name, _| name == "this" || !env.has(id, name));
-        scope.told.retain(|name, _| name == "this" || !env.has(id, name));
+        // A reason is only ever for a name still bound: one left beside a
+        // name unbound here would be read as explaining whatever is bound
+        // under it next.
+        let bound = &scope.bindings;
+        scope.told.retain(|name, _| bound.contains_key(name));
         scope.bind_stored(instance);
     }
     scope

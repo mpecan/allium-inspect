@@ -36,7 +36,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    eval::{Env, Evaluation, Told, Unresolved, bare_name, eval, span_of},
+    eval::{Env, Evaluation, Told, Unresolved, bare_name, eval, remember, span_of},
     truth::Truth,
     value::{EntityId, Value},
     world::World,
@@ -185,11 +185,7 @@ impl<'a> Application<'a> {
     /// Bind `name` to `value`, with `why` when that is undecided, so a later
     /// clause reading the name can say what the binding could not settle.
     fn bind(&mut self, name: &str, value: Value, why: Vec<Unresolved>) {
-        if value.is_unknown() && !why.is_empty() {
-            self.told.insert(name.to_owned(), why);
-        } else {
-            self.told.remove(name);
-        }
+        remember(&mut self.told, name, &value, why);
         self.bindings.insert(name.to_owned(), value);
     }
 

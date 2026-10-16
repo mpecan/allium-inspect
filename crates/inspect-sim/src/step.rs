@@ -35,7 +35,7 @@ use crate::{
     apply::Against,
     apply::Effect,
     binding, creation, due,
-    eval::{Env, Told, Unresolved, eval},
+    eval::{Env, Told, Unresolved, eval, remember},
     gone::{self, Removed},
     per_member,
     siblings::Written,
@@ -308,11 +308,7 @@ fn run_rule(
                 rule_scope(Env::new(world, module, source), program, &declared, (&bindings, &told));
             eval(value, &scope)
         };
-        if evaluated.value.is_unknown() && !evaluated.unresolved.is_empty() {
-            told.insert(name.clone(), evaluated.unresolved);
-        } else {
-            told.remove(name);
-        }
+        remember(&mut told, name, &evaluated.value, evaluated.unresolved);
         bindings.insert(name.clone(), evaluated.value);
     }
 

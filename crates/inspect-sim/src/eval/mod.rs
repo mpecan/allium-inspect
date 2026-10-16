@@ -52,6 +52,7 @@ pub(crate) use collections::element_scope;
 use inspect_model::{Derivations, Function, Span};
 use serde::{Deserialize, Serialize};
 use std::ops::Not;
+pub(crate) use told::remember;
 pub use words::unset_field;
 
 use ts_rs::TS;

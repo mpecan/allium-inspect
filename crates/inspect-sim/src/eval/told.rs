@@ -18,7 +18,7 @@
 use allium_parser::ast::Expr;
 use inspect_model::Span;
 
-use super::{Env, Unresolved, span_of};
+use super::{Env, Told, Unresolved, span_of};
 use crate::value::{Instance, Value};
 
 /// The note for reading `field` of `instance` while it holds a stored unknown.
@@ -58,6 +58,21 @@ pub(crate) fn anchored_at(note: Unresolved, at: &Expr, source: &str) -> Unresolv
     anchored(note, span_of(at), source)
 }
 
+/// Keep `why` for `name` in `told` when `value` is undecided, and forget any
+/// reason for it otherwise.
+///
+/// The one rule for every map of bound names — an environment's, an
+/// application's, a rule's own `let`s — so they cannot drift apart. A reason
+/// kept beside a settled value would be read as explaining whatever unknown is
+/// bound under that name next; an empty one is no reason at all.
+pub(crate) fn remember(told: &mut Told, name: &str, value: &Value, why: Vec<Unresolved>) {
+    if value.is_unknown() && !why.is_empty() {
+        told.insert(name.to_owned(), why);
+    } else {
+        told.remove(name);
+    }
+}
+
 impl Env<'_> {
     /// The same environment with `name` bound to `value`, and — when that is
     /// undecided — `why`, for whatever reads the name to give.
@@ -80,11 +95,7 @@ impl Env<'_> {
     /// Bind `name` to `value` in place, with `why` when that is undecided.
     pub fn set_explained(&mut self, name: impl Into<String>, value: Value, why: Vec<Unresolved>) {
         let name = name.into();
-        if value.is_unknown() && !why.is_empty() {
-            self.told.insert(name.clone(), why);
-        } else {
-            self.told.remove(&name);
-        }
+        remember(&mut self.told, &name, &value, why);
         self.bindings.insert(name, value);
     }
 
@@ -103,5 +114,92 @@ impl Env<'_> {
         self.told.get(name).map_or_else(Vec::new, |notes| {
             notes.iter().map(|note| anchored(note.clone(), Some(span), self.source)).collect()
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use inspect_model::Span;
+
+    use super::{Told, Unresolved, anchored, remember, stored_unknown};
+    use crate::{
+        eval::Env,
+        value::{EntityId, Instance, Value},
+        world::World,
+    };
+
+    fn note(reason: &str, expression: Option<&str>) -> Unresolved {
+        Unresolved {
+            reason: reason.to_owned(),
+            expression: expression.map(str::to_owned),
+            span: None,
+        }
+    }
+
+    fn written(why: Vec<Unresolved>) -> Instance {
+        let mut instance = Instance::new(EntityId::new("Box", 1), "Box", "m");
+        instance.set_explained("out", Value::Unknown, why);
+        instance
+    }
+
+    #[test]
+    fn a_write_reason_says_where_it_was_when_it_does_not_already() {
+        let read =
+            stored_unknown(&written(vec![note("nothing answers it", Some("summary(box)"))]), "out");
+        assert_eq!(
+            read.reason,
+            "`Box#1.out` was set to a value nothing settled — when it was written: \
+             nothing answers it (in `summary(box)`)"
+        );
+    }
+
+    #[test]
+    fn a_write_reason_that_names_its_expression_is_not_told_it_twice() {
+        let read =
+            stored_unknown(&written(vec![note("`box.title` is unset", Some("box.title"))]), "out");
+        assert_eq!(
+            read.reason,
+            "`Box#1.out` was set to a value nothing settled — when it was written: \
+             `box.title` is unset"
+        );
+    }
+
+    #[test]
+    fn a_note_with_somewhere_to_be_already_is_not_moved() {
+        // Anchored by expression alone — a quoted sub-expression with no span —
+        // is still anchored, and the read must not overwrite what it quotes.
+        let source = "box.out";
+        let kept = anchored(note("why", Some("summary(box)")), Some(Span::new(0, 7)), source);
+        assert_eq!(kept.expression.as_deref(), Some("summary(box)"));
+        assert_eq!(kept.span, None);
+
+        let placed = anchored(note("why", None), Some(Span::new(0, 7)), source);
+        assert_eq!(placed.expression.as_deref(), Some("box.out"));
+        assert_eq!(placed.span, Some(Span::new(0, 7)));
+    }
+
+    #[test]
+    fn only_an_undecided_name_with_something_to_say_is_remembered() {
+        let mut told = Told::new();
+        remember(&mut told, "s", &Value::Unknown, vec![note("why", None)]);
+        assert_eq!(told.get("s").map(Vec::len), Some(1));
+
+        // Settled since: the old reason no longer explains it.
+        remember(&mut told, "s", &Value::Int(1), vec![note("why", None)]);
+        assert!(!told.contains_key("s"));
+
+        remember(&mut told, "s", &Value::Unknown, vec![note("why", None)]);
+        remember(&mut told, "s", &Value::Unknown, Vec::new());
+        assert!(!told.contains_key("s"), "an empty reason is no reason, and replaces the old one");
+    }
+
+    #[test]
+    fn an_environment_binds_by_the_same_rule() {
+        let world = World::new();
+        let mut env = Env::new(&world, "m", "s");
+        env.set_explained("s", Value::Unknown, vec![note("why", None)]);
+        assert_eq!(env.told_of("s", Span::new(0, 1)).len(), 1);
+        env.set_explained("s", Value::Str("x".to_owned()), vec![note("why", None)]);
+        assert!(env.told.is_empty());
     }
 }

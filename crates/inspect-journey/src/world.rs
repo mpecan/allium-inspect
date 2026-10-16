@@ -392,18 +392,17 @@ impl Walker<'_> {
             let Some(instance) = self.world.instance(id) else { return (Value::Unknown, None) };
             let read = self.field(instance, segment);
             if read.value.is_unknown() {
-                // A field nobody set and nothing computes comes back with no
-                // note of its own; a rule reading it says which, and so does
-                // this.
-                let key = inspect_model::derived_key(&instance.module, &instance.entity, segment);
-                let derivations = self.program.derivations();
-                let computed = derivations.fields.contains_key(&key)
-                    || derivations.functions.contains_key(&key);
-                let unset = (!computed && !instance.fields.contains_key(segment)).then(|| {
-                    Unresolved { reason: unset_field(id, segment), expression: None, span: None }
+                // A field nobody set and nothing computes is the one read that
+                // comes back with no note of its own: a stored unknown always
+                // says what its write could not settle, and a computed one
+                // says why (stipulation 1, asserted over the evaluator). A
+                // rule reading it says which field, and so does this.
+                let note = read.unresolved.first().cloned().unwrap_or_else(|| Unresolved {
+                    reason: unset_field(id, segment),
+                    expression: None,
+                    span: None,
                 });
-                let note = read.unresolved.first().or(unset.as_ref());
-                return (Value::Unknown, note.map(|note| self.said_of_the_cast(note)));
+                return (Value::Unknown, Some(self.said_of_the_cast(&note)));
             }
             current = read.value;
         }
