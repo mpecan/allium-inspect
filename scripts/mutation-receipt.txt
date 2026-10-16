@@ -7,4 +7,4 @@
 # may move <commit> forward onto a later commit with the same inputs, keeping
 # the time. After a squash-merge drops <commit>, the gate finds the commit on
 # main with the same sources. Receipts without a fingerprint are still read.
-ea4430517b01947e9b864d8f125cdcf1df5ecde2 7/7 0 2026-10-16T16:20:51Z 2945ee8b15ad7bdfa53385c0b5783bc55d0af8bd
+60ea610e657e2fb358c9b3e3747f0f7790e6c1fc 67/67 0 2026-10-16T17:07:36Z fcef09e317ee6e89106d86793f806a83dc7134ce
