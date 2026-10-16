@@ -279,17 +279,20 @@ impl Walker<'_> {
             }
             // An act whose `where` answered a call something still asked
             // unanswered: which of the two ways, beside the act.
+            //
+            // And a `where` answer refused once its instance landed: the
+            // journey said something the walk could not put in force. That is
+            // a line of the step, not an aside — undecided in its verdict, as
+            // a `stipulate` refused for the same reason is — or a step whose
+            // act held would read "holds" over an answer it never gave.
+            let mut unheard = Vec::new();
             if matches!(clause, Clause::Does { .. }) {
                 asides.extend(self.unanswered().into_iter().map(|detail| Outcome {
                     verdict: Verdict::Remark,
                     detail: Some(detail),
                     ..outcome.clone()
                 }));
-                // A `where` answer refused once its instance landed: the
-                // journey said something the walk could not put in force.
-                asides.extend(std::mem::take(&mut self.unheard).into_iter().map(|detail| {
-                    Outcome { verdict: Verdict::Undecided, detail: Some(detail), ..outcome.clone() }
-                }));
+                unheard = std::mem::take(&mut self.unheard);
             }
             // A definite `false` that follows something undecided is not the
             // spec forbidding anything — it is a consequence of a world this
@@ -308,7 +311,16 @@ impl Walker<'_> {
                     None => "something earlier in this step was undecided".to_owned(),
                 });
             }
+            let refused: Vec<Outcome> = unheard
+                .into_iter()
+                .map(|detail| Outcome {
+                    verdict: Verdict::Undecided,
+                    detail: Some(detail),
+                    ..outcome.clone()
+                })
+                .collect();
             outcomes.push(outcome);
+            outcomes.extend(refused);
         }
         Walked {
             number: step.number,

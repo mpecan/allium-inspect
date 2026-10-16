@@ -246,17 +246,45 @@ fn an_answer_under_creating_with_no_value_is_refused_and_not_listed() {
     let walk = walked("AnAnswerWithNoValue");
     let step = &walk.steps[0];
     assert!(said(&walk).is_empty(), "{:?}", said(&walk));
-    let aside = step
-        .asides
-        .iter()
-        .find(|aside| aside.detail.as_deref().is_some_and(|it| it.contains("has no value")))
-        .unwrap_or_else(|| panic!("said on the act's line: {:#?}", step.asides));
-    assert_eq!(aside.verdict, Verdict::Undecided);
-    let detail = aside.detail.as_deref().unwrap_or_default();
+    let refused = refusal(step);
+    assert_eq!(refused.verdict, Verdict::Undecided);
+    let detail = refused.detail.as_deref().unwrap_or_default();
     assert!(
         detail.contains("`repo.name` has no value once `issue` is made")
             && detail.contains("`where audience(issue)` gives the call no answer"),
         "{detail}"
     );
     assert_eq!(step.verdict(), Verdict::Undecided);
+}
+
+/// The refusal is the answer's own verdict, not the act's: an act that held
+/// still carries an undecided aside for the `where` it could not put in force.
+#[test]
+fn a_refused_answer_beside_an_act_that_held_is_still_undecided() {
+    let text = "journey AnActThatHeldWithAnAnswerRefused {\n    cast:\n        repo: Repo\n    \
+                1. open an issue and answer a second call with nothing\n        \
+                repo does Open(repo, \"crash\") on Tracker\n            creating issue: Issue\n            \
+                where audience(issue) = {}\n            where colour(issue) = repo.name\n}\n";
+    let journeys = parse(text).expect("the journey parses");
+    let (graph, program, sources) = common::library(AUDIENCE);
+    let walk = walk(&journeys[0], &journeys, &graph, &program, &sources);
+    let step = &walk.steps[0];
+    assert_eq!(step.outcomes[0].verdict, Verdict::Specified, "the act held: {:#?}", step.outcomes);
+    let refused = refusal(step);
+    assert_eq!(refused.verdict, Verdict::Undecided, "{refused:#?}");
+    assert_eq!(refused.about, step.outcomes[0].about, "on the act's line");
+    assert!(
+        refused.detail.as_deref().unwrap_or_default().contains("`where colour(issue)`"),
+        "{refused:#?}"
+    );
+    assert_eq!(step.verdict(), Verdict::Undecided, "not a step that holds: {step:#?}");
+}
+
+/// The line saying a `where` answer was refused: one of the step's own
+/// outcomes, so it counts in the step's verdict.
+fn refusal(step: &inspect_journey::Walked) -> &inspect_journey::Outcome {
+    step.outcomes
+        .iter()
+        .find(|outcome| outcome.detail.as_deref().is_some_and(|it| it.contains("has no value")))
+        .unwrap_or_else(|| panic!("said on the act's line: {step:#?}"))
 }

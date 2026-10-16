@@ -1396,7 +1396,8 @@ As many `where` lines as there are calls to answer, each `where <call> =
   did.
 - **An answer with no value is refused**, as in `given`: `where audience(issue)
   = repo.name` with no `name` set is undecided on the act's line, and not
-  listed.
+  listed. It is one of the step's lines, not an aside: a step whose act held
+  is still undecided over an answer it could not give.
 
 Written as a `stipulate` after the act instead, the answer still lands — a later
 act may ask the same question — but the step stays undecided, and when what the
