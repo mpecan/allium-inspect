@@ -1,0 +1,45 @@
+-- allium: 3
+-- reviews.allium
+--
+-- One act that makes more than one thing (issue #31). `Submit` makes a review
+-- and the code comment that goes with it, the way submitting a draft review
+-- does; `Thread` makes a review and two comments, so a journey catching both
+-- comments has to say which one each name is. Everything that reacts to what
+-- they make does it from `mentions.allium`, across a module boundary.
+
+entity Review {
+    body: String
+    announced: Boolean
+}
+
+entity Comment {
+    review: Review
+    body: String
+    mentioned: Boolean
+}
+
+entity Reviewer {
+    name: String
+}
+
+rule Submit {
+    when: Submit(reviewer, body)
+    ensures:
+        let review = Review.created(body: body, announced: false)
+        Comment.created(review: review, body: body, mentioned: false)
+}
+
+rule Thread {
+    when: Thread(reviewer, body)
+    ensures:
+        let review = Review.created(body: body, announced: false)
+        Comment.created(review: review, body: "first", mentioned: false)
+        Comment.created(review: review, body: "second", mentioned: false)
+}
+
+surface PullRequest {
+    facing reviewer: Reviewer
+    provides:
+        Submit(reviewer, body)
+        Thread(reviewer, body)
+}

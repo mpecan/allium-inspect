@@ -383,8 +383,8 @@ impl Walker<'_> {
     /// Listed with nothing behind it, as an act that made nothing lists it: a
     /// later line naming it should be told why it is nobody.
     fn unmade(&mut self, act: &Act<'_>) {
-        if let Some(caught) = act.creating {
-            self.bind(caught, None, Origin::Caught);
+        for caught in act.creating {
+            self.bind(&caught.cast, None, Origin::Caught);
         }
     }
 }

@@ -1,0 +1,24 @@
+-- allium: 3
+-- mentions.allium
+--
+-- Reacts to what `reviews.allium` makes, through a qualified name, by asking
+-- black boxes about each new instance: `watchers` of a review and `mentions`
+-- of a comment. Neither is defined, so only a journey can answer them, and
+-- only with a `where` under the `creating` line that names the instance
+-- (issue #31).
+
+use "./reviews.allium" as pulls
+
+rule Announce {
+    when: review: pulls/Review.created
+    ensures:
+        for w in watchers(review):
+            review.announced = true
+}
+
+rule Mention {
+    when: comment: pulls/Comment.created
+    ensures:
+        for who in mentions(comment):
+            comment.mentioned = true
+}

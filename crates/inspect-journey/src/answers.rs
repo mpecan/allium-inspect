@@ -26,7 +26,7 @@ use inspect_sim::{Value, step::RuleOutcome, value::EntityId, world::Answer};
 use crate::{
     Outcome,
     check::Verdict,
-    journey::{Cast, Subject, Term, Where},
+    journey::{Cast, Caught, Subject, Term, Where},
     run::{Stipulation, Undecided, Walker},
 };
 
@@ -123,57 +123,155 @@ fn asked_of<'a>(rule: &'a Undecided, call: &str) -> Option<&'a str> {
     rule.asked.iter().find(|expression| calls(expression, call)).map(String::as_str)
 }
 
-/// The answers an act in progress will give once the instance they are about
-/// exists.
+/// The answers an act in progress will give once the instances they are
+/// about exist.
 #[derive(Debug, Clone)]
 pub(crate) struct Awaiting {
-    caught: Cast,
-    answering: Vec<Where>,
+    /// Every line the act catches, in order — those with nothing left to
+    /// answer too, because which instance a line catches depends on the lines
+    /// of its kind above it. An answer is taken out of its line once it lands.
+    lines: Vec<Caught>,
 }
 
 impl Awaiting {
-    /// `None` when there is nothing to wait for: no `creating`, or no `where`.
-    pub(crate) fn of(caught: Option<&Cast>, answering: &[Where]) -> Option<Self> {
-        let caught = caught?;
-        if answering.is_empty() {
-            return None;
-        }
-        Some(Self { caught: caught.clone(), answering: answering.to_vec() })
+    /// `None` when there is nothing to wait for: no `creating`, or no `where`
+    /// under any of them.
+    pub(crate) fn of(creating: &[Caught]) -> Option<Self> {
+        Self { lines: creating.to_vec() }.waiting()
+    }
+
+    /// Itself while some line still has an answer to give, and `None` once
+    /// every answer has landed.
+    fn waiting(self) -> Option<Self> {
+        self.lines.iter().any(|line| !line.answering.is_empty()).then_some(self)
     }
 }
 
+/// Which instance each `creating` line catches, of those `made` in the order
+/// they were made: the first of its kind no line above it caught.
+///
+/// The first made, not the first in the world's order: ids sort as text, so
+/// `Order#10` comes before `Order#9`, and a reaction that made another order
+/// would be caught instead of the act's own whenever the count crossed a
+/// digit. And not merely the first of its kind: two lines of one kind would
+/// otherwise both name the first instance, and the second line would read as
+/// caught while the second instance went unnamed.
+///
+/// By the entity's name, as a single line always caught: `pulls/Comment` and
+/// `Comment` name the same thing.
+pub(crate) fn catch(made: &[EntityId], lines: &[&Cast]) -> Vec<Option<EntityId>> {
+    let mut claimed: Vec<&EntityId> = Vec::new();
+    let mut caught = Vec::new();
+    for line in lines {
+        let bare = line.type_expr.rsplit('/').next().unwrap_or(&line.type_expr);
+        let id = made.iter().find(|id| id.entity() == bare && !claimed.contains(id));
+        if let Some(id) = id {
+            claimed.push(id);
+        }
+        caught.push(id.cloned());
+    }
+    caught
+}
+
+/// The first name `answer` reads that a line of the same act names and has
+/// not caught an instance for, with what that leaves the answer.
+fn uncaught<'a>(
+    answer: &Where,
+    (names, made): (&'a [String], &[Option<EntityId>]),
+) -> Option<(&'a str, &'static str)> {
+    names.iter().zip(made).filter(|(_, id)| id.is_none()).find_map(|(name, _)| {
+        if answer.arguments.iter().any(|term| term.mentions(name)) {
+            Some((name.as_str(), "answers no call the specification can ask"))
+        } else {
+            answer.value.mentions(name).then_some((name.as_str(), "gives the call no answer"))
+        }
+    })
+}
+
 impl Walker<'_> {
-    /// The instance `creating` catches, if the act has made it yet.
+    /// The instance each of `lines` catches, of those the act has made so far
+    /// — `None` for a line whose instance was removed since. See [`catch`].
     ///
-    /// The first made, not the first in the world's order: ids sort as text,
-    /// so `Order#10` comes before `Order#9`, and a reaction that made another
-    /// order would be caught instead of the act's own whenever the count
-    /// crossed a digit.
-    pub(crate) fn first_made(&self, caught: &Cast) -> Option<EntityId> {
-        let bare = caught.type_expr.rsplit('/').next().unwrap_or(&caught.type_expr);
-        self.created
-            .iter()
-            .find(|id| id.entity() == bare && self.world.instance(id).is_some())
-            .cloned()
+    /// Assigned over every instance the act made, removed ones included, so
+    /// a line keeps the instance it caught: dropping a removed one first moved
+    /// every later line of its kind up by one, and the line above took the
+    /// instance its sibling's answer had already landed on.
+    pub(crate) fn made_for(&self, lines: &[Caught]) -> Vec<Option<EntityId>> {
+        let casts: Vec<&Cast> = lines.iter().map(|line| &line.cast).collect();
+        catch(&self.created, &casts)
+            .into_iter()
+            .map(|id| id.filter(|id| self.world.instance(id).is_some()))
+            .collect()
     }
 
-    /// Put the act's `where` answers in force, if what they are about has
-    /// just been made. Called after every turn of the engine during an act;
-    /// once they land they are not waited for again.
+    /// Put the act's `where` answers in force, each once the instance its line
+    /// caught has been made and so has every other line's it reads. Called
+    /// after every turn of the engine during an act; once an answer lands it
+    /// is not waited for again.
+    ///
+    /// An answer reading another line's name waits for that line, rather than
+    /// being weighed against whatever the name meant before the act — an
+    /// instance an earlier step caught, or no instance at all, which reads as
+    /// a state of the same spelling. Either is a definite answer about
+    /// something the journey never meant.
     pub(crate) fn answer_what_was_made(&mut self) {
-        let Some(awaiting) = &self.awaiting else {
+        let Some(mut awaiting) = self.awaiting.take() else {
             return;
         };
-        let Some(id) = self.first_made(&awaiting.caught) else {
+        let made = self.made_for(&awaiting.lines);
+        let names: Vec<String> = awaiting.lines.iter().map(|line| line.cast.name.clone()).collect();
+        // Every name the act has made something for is bound before any
+        // answer is weighed, so an answer under one line may read what another
+        // line caught — whichever of them is written first. Bound now rather
+        // than once the act is over, so the answer's arguments read as the
+        // instance; the cast entry is still made by the act, once, when it
+        // catches the same instance.
+        for (name, id) in names.iter().zip(&made) {
+            if let Some(id) = id {
+                self.bound.insert(name.clone(), id.clone());
+            }
+        }
+        for (line, id) in awaiting.lines.iter_mut().zip(&made) {
+            let Some(id) = id else {
+                continue;
+            };
+            let (ready, waiting): (Vec<Where>, Vec<Where>) = std::mem::take(&mut line.answering)
+                .into_iter()
+                .partition(|answer| uncaught(answer, (&names, &made)).is_none());
+            line.answering = waiting;
+            self.answer_for(&line.cast, id, ready);
+        }
+        self.awaiting = awaiting.waiting();
+    }
+
+    /// Refuse what is still waiting once the act is over: an answer whose own
+    /// line caught its instance, reading a line that never caught one. Said
+    /// on the act's line, as an answer with no value is.
+    pub(crate) fn refuse_what_still_waits(&mut self) {
+        let Some(awaiting) = self.awaiting.take() else {
             return;
         };
-        let Some(Awaiting { caught, answering }) = self.awaiting.take() else {
-            return;
-        };
-        // Bound now rather than once the act is over, so the answer's
-        // arguments read as the instance. The cast entry is still made by the
-        // act, once, when it catches the same instance.
-        self.bound.insert(caught.name.clone(), id.clone());
+        let made = self.made_for(&awaiting.lines);
+        let names: Vec<String> = awaiting.lines.iter().map(|line| line.cast.name.clone()).collect();
+        for (line, id) in awaiting.lines.iter().zip(&made) {
+            // A line that caught nothing is said about by the act, by name.
+            if id.is_none() {
+                continue;
+            }
+            for answer in &line.answering {
+                if let Some((sibling, consequence)) = uncaught(answer, (&names, &made)) {
+                    self.unheard.push(format!(
+                        "`{sibling}` has no value once `{}` is made, so `where {}` {consequence}",
+                        line.cast.name,
+                        answer.as_written()
+                    ));
+                }
+            }
+        }
+    }
+
+    /// One line's `where` answers, now that `id` is the instance it caught.
+    fn answer_for(&mut self, caught: &Cast, id: &EntityId, answering: Vec<Where>) {
         for answer in answering {
             let arguments: Vec<Value> =
                 answer.arguments.iter().map(|term| self.value_of(term)).collect();
@@ -438,13 +536,74 @@ mod tests {
         }
     }
 
+    fn line(name: &str, type_expr: &str, answering: Vec<Where>) -> Caught {
+        Caught {
+            cast: Cast { name: name.to_owned(), type_expr: type_expr.to_owned(), line: 1 },
+            answering,
+        }
+    }
+
     #[test]
     fn nothing_is_awaited_without_a_catch_or_an_answer() {
-        assert!(Awaiting::of(None, &[audience()]).is_none());
-        assert!(Awaiting::of(Some(&caught()), &[]).is_none());
-        let awaiting = Awaiting::of(Some(&caught()), &[audience()]).expect("both");
-        assert_eq!(awaiting.caught, caught());
-        assert_eq!(awaiting.answering, [audience()]);
+        assert!(Awaiting::of(&[]).is_none());
+        assert!(Awaiting::of(&[line("issue", "Issue", vec![])]).is_none());
+        let both = [line("issue", "Issue", vec![audience()])];
+        let awaiting = Awaiting::of(&both).expect("both");
+        assert_eq!(awaiting.lines, both);
+    }
+
+    /// One line answering is enough to wait, and every line is kept: which
+    /// instance the answered one catches depends on the lines above it.
+    #[test]
+    fn every_line_is_kept_while_any_of_them_answers() {
+        let lines = [line("review", "Review", vec![]), line("issue", "Issue", vec![audience()])];
+        let awaiting = Awaiting::of(&lines).expect("the second line answers");
+        assert_eq!(awaiting.lines, lines);
+        // Once its answer has landed there is nothing left to wait for.
+        let mut landed = awaiting;
+        landed.lines[1].answering.clear();
+        assert!(landed.waiting().is_none());
+    }
+
+    #[test]
+    fn each_line_catches_the_first_of_its_kind_no_line_above_caught() {
+        let made =
+            [EntityId::new("Review", 1), EntityId::new("Comment", 1), EntityId::new("Comment", 2)];
+        let first = caught_as("first", "pulls/Comment");
+        let review = caught_as("review", "Review");
+        let second = caught_as("second", "Comment");
+        let third = caught_as("third", "Comment");
+        assert_eq!(
+            catch(&made, &[&first, &review, &second, &third]),
+            [
+                Some(EntityId::new("Comment", 1)),
+                Some(EntityId::new("Review", 1)),
+                Some(EntityId::new("Comment", 2)),
+                None,
+            ]
+        );
+    }
+
+    /// In the order made, not the order ids sort in as text.
+    #[test]
+    fn the_first_made_is_caught_before_one_that_sorts_first() {
+        let made = [EntityId::new("Order", 9), EntityId::new("Order", 10)];
+        let one = caught_as("one", "Order");
+        let two = caught_as("two", "Order");
+        assert_eq!(
+            catch(&made, &[&one, &two]),
+            [Some(EntityId::new("Order", 9)), Some(EntityId::new("Order", 10))]
+        );
+    }
+
+    #[test]
+    fn nothing_of_a_kind_made_is_nothing_caught() {
+        assert_eq!(catch(&[], &[&caught()]), [None]);
+        assert_eq!(catch(&[EntityId::new("Repo", 1)], &[&caught()]), [None]);
+    }
+
+    fn caught_as(name: &str, type_expr: &str) -> Cast {
+        Cast { name: name.to_owned(), type_expr: type_expr.to_owned(), line: 1 }
     }
 
     #[test]

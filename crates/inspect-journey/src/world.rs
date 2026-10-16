@@ -180,6 +180,15 @@ impl Walker<'_> {
         });
     }
 
+    /// Why `name` names no instance, when it is a `creating` line that caught
+    /// nothing: the cause of every read through it, which an unknown with no
+    /// reason would leave looking like a bug.
+    fn caught_nothing(&self, name: &str) -> Option<String> {
+        let member = self.cast.iter().rev().find(|member| member.name == name)?;
+        (member.origin == Origin::Caught && member.entity.is_none())
+            .then(|| format!("`{name}` caught nothing, on line {}", member.line))
+    }
+
     /// The type `name` was bound under, as the journey wrote it.
     ///
     /// Written, not read off the instance: `y/Item` names the `Item` of `y`,
@@ -360,7 +369,7 @@ impl Walker<'_> {
         }
         let Some(id) = self.bound.get(&path.root) else {
             if !path.segments.is_empty() {
-                return (Value::Unknown, None);
+                return (Value::Unknown, self.caught_nothing(&path.root));
             }
             // Capitalised and unbound is a collection, which is the rule the
             // evaluator already follows: `Loans` is every loan in the world.

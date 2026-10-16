@@ -1,0 +1,93 @@
+-- allium: 3
+-- followups.allium
+--
+-- Acts that make more than one thing, not all of it at once (issue #31).
+-- `Post` makes a note, and the draft that goes with it is made by a reaction
+-- a turn later, so a journey catching both names one instance before the
+-- other exists. `Pair` makes two tags and a reaction removes the first, so a
+-- journey catching both has one name left with nothing behind it. `Desk`
+-- faces only an active author, so an act there can make nothing at all.
+
+entity Note {
+    body: String
+    mentioned: Boolean
+}
+
+entity Draft {
+    note: Note
+    announced: Boolean
+    watched: Boolean
+}
+
+entity Tag {
+    label: String
+    seen: Boolean
+}
+
+entity Author {
+    active: Boolean
+}
+
+actor Writer {
+    identified_by: Author where active = true
+}
+
+rule Post {
+    when: Post(author, body)
+    ensures: Note.created(body: body, mentioned: false)
+}
+
+rule Wrap {
+    when: note: Note.created
+    requires: note.body != "quiet"
+    ensures: Draft.created(note: note, announced: false, watched: false)
+}
+
+rule Mention {
+    when: note: Note.created
+    ensures:
+        for who in mentions(note):
+            note.mentioned = true
+}
+
+rule Cite {
+    when: draft: Draft.created
+    ensures:
+        for who in cites(draft.note):
+            who.announced = true
+}
+
+rule Watch {
+    when: draft: Draft.created
+    ensures:
+        for w in watchers(draft):
+            draft.watched = true
+}
+
+rule Pair {
+    when: Pair(author)
+    ensures:
+        Tag.created(label: "first", seen: false)
+        Tag.created(label: "second", seen: false)
+}
+
+rule Dedup {
+    when: tag: Tag.created
+    requires: tag.label = "first"
+    ensures: not exists tag
+}
+
+rule Look {
+    when: tag: Tag.created
+    requires: tag.label = "second"
+    ensures:
+        for w in watchers(tag):
+            tag.seen = true
+}
+
+surface Desk {
+    facing author: Writer
+    provides:
+        Post(author, body)
+        Pair(author)
+}

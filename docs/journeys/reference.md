@@ -544,6 +544,18 @@ ada does MemberBorrows(ada, copy) on MemberShelf
 `loan` is then a name like any cast member, usable by every clause after it —
 including as the actor of a later step.
 
+An act that makes more than one thing catches each with a line of its own:
+
+```
+ada does MemberBorrows(ada, copy) on MemberShelf
+    creating loan: Loan
+    creating notice: Notice
+```
+
+Each `creating` line is a name, and a name may be caught once per act. Lines of
+one kind catch instances of it in the order they were made — see [which
+instance `creating` catches](#which-instance-creating-catches).
+
 What a call the spec never defines answers for the instance being made is said
 under the same act, with [`where`](#stipulate--say-it-rather-than-show-it):
 `creating issue: Issue` then `where audience(issue) = {}`.
@@ -798,9 +810,28 @@ declares an `Order`. `creating` catches by the entity's name, so
 `creating n: notes/Note` and `creating n: Note` name the same thing, and a
 reaction written `when: n: memo/Note.created` reacts to it.
 
+#### Which instance `creating` catches
+
 `creating` catches the first instance of that kind made since the act began,
 in the order they were made. That is the act's own creation when it made one,
 even if a reaction to it made another of the same kind afterwards.
+
+With several `creating` lines under one act, each catches the first instance of
+its kind that no line above it caught. Two lines of one kind therefore name two
+instances, in the order they were made — `creating first: Comment` then
+`creating second: Comment` under an act whose rule makes two comments names the
+first `first` and the second `second`, not the first one twice. The order the
+lines are written in decides nothing else: lines of different kinds do not
+compete. A line left with nothing of its kind to catch is listed with nothing
+behind it, and the act's outcome says so by name — ``nothing of kind `Comment`
+was created for `second` `` — beside the lines that did catch. That note is on
+the act's line in the browser and the JSON report; the text report prints an
+act's detail only when its step does not hold. A later line reading the name
+says why it is nobody: `` `second` caught nothing, on line 12``.
+
+A line keeps the instance it caught. If something the act set off removes it,
+that line names nothing afterwards, as a single `creating` would, and the lines
+below it of the same kind keep theirs — they are not moved up to fill the gap.
 
 ### How a trigger's arguments reach a rule
 
@@ -1371,6 +1402,18 @@ As many `where` lines as there are calls to answer, each `where <call> =
 <value>`, and each held to what it is for:
 
 - **It needs a `creating`**, because without one there is nothing to wait for.
+  Under an act with more than one, each `where` belongs to the `creating` line
+  above it, and must name that line's instance — `creating review: Review` with
+  `where watchers(review) = {}`, then `creating comment: Comment` with `where
+  mentions(comment) = {}`. A `where` naming only another line's instance is
+  refused with the line it belongs under.
+
+  An answer may also read another line's instance, whichever line is written
+  first: `where mentions(comment) = {review}`. It is weighed once both the
+  comment and the review this act makes exist — a turn later, if a reaction
+  makes the review — and never against whatever `review` named before the act.
+  If the act never makes a review, the answer is refused on the act's line
+  rather than given about something else.
 - **It is a call, never a field.** What the act writes into what it makes is
   what the specification says, and overruling it mid-act would be a `then` that
   cannot fail. `stipulate` it after the act if that is really what you mean.

@@ -44,7 +44,8 @@ pub use evidence::{
     claims, resolve, seal, step_texts,
 };
 pub use journey::{
-    Assertion, Axis, Cast, Clause, Comparison, Given, Journey, Path, Step, Subject, Term, Where,
+    Assertion, Axis, Cast, Caught, Clause, Comparison, Given, Journey, Path, Step, Subject, Term,
+    Where,
 };
 pub use parse::{ParseError, parse};
 pub use report::{Strictness, as_json, passes, render};

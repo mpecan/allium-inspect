@@ -1,0 +1,108 @@
+-- Issue #31: an act that makes more than one thing, and a journey that names
+-- each of them. One `creating` line per name, each with its own `where`.
+
+-- The issue's reproduction: submitting a draft review makes the review and
+-- its code comment, and what reacts to the comment asks about the comment.
+journey ADraftReviewAndItsComment {
+    cast:
+        ada: reviews/Reviewer
+    1. submit a review with a comment on it
+        ada does Submit(ada, "looks good") on PullRequest
+            creating review: reviews/Review
+                where watchers(review) = {}
+            creating comment: reviews/Comment
+                where mentions(comment) = {}
+        then review.body = "looks good"
+        then comment.body = "looks good"
+        then comment.review = review
+        then Announce fires
+        then Mention fires
+}
+
+-- The same, in one file's words: no module named on either type.
+journey UnqualifiedTypes {
+    cast:
+        ada: Reviewer
+    1. submit a review with a comment on it
+        ada does Submit(ada, "looks good") on PullRequest
+            creating review: Review
+            where watchers(review) = {}
+            creating comment: Comment
+            where mentions(comment) = {}
+        then comment.review = review
+        then review.announced = false
+        then comment.mentioned = false
+}
+
+-- Each line's `where` is about its own instance and nothing else: the
+-- review's watchers are answered, the comment's mentions are not.
+journey OnlyOneIsAnswered {
+    cast:
+        ada: reviews/Reviewer
+    1. submit a review and answer for the review alone
+        ada does Submit(ada, "looks good") on PullRequest
+            creating review: reviews/Review
+                where watchers(review) = {}
+            creating comment: reviews/Comment
+}
+
+-- An answer may read what another line caught: everything the act made is
+-- named before any answer is weighed.
+journey AnAnswerNamesTheOther {
+    cast:
+        ada: reviews/Reviewer
+    1. the comment mentions the review
+        ada does Submit(ada, "looks good") on PullRequest
+            creating comment: reviews/Comment
+                where mentions(comment) = {review}
+            creating review: reviews/Review
+                where watchers(review) = {}
+        then comment.mentioned = true
+        then review.announced = false
+}
+
+-- Two of a kind: the lines catch them in the order they were made.
+journey TwoOfAKind {
+    cast:
+        ada: reviews/Reviewer
+    1. a review that opens a thread of two comments
+        ada does Thread(ada, "nit") on PullRequest
+            creating review: reviews/Review
+                where watchers(review) = {}
+            creating first: reviews/Comment
+                where mentions(first) = {ada}
+            creating second: reviews/Comment
+                where mentions(second) = {}
+        then first.body = "first"
+        then second.body = "second"
+        then first.mentioned = true
+        then second.mentioned = false
+}
+
+-- More lines of a kind than the act made of it: the one left over caught
+-- nothing, and says so.
+journey OneMoreThanWasMade {
+    cast:
+        ada: reviews/Reviewer
+    1. one comment, caught twice
+        ada does Submit(ada, "looks good") on PullRequest
+            creating review: reviews/Review
+                where watchers(review) = {}
+            creating first: reviews/Comment
+                where mentions(first) = {}
+            creating second: reviews/Comment
+}
+
+-- Two lines left over: each is said about.
+journey TwoMoreThanWereMade {
+    cast:
+        ada: reviews/Reviewer
+    1. one comment, caught three times
+        ada does Submit(ada, "looks good") on PullRequest
+            creating review: reviews/Review
+                where watchers(review) = {}
+            creating first: reviews/Comment
+                where mentions(first) = {}
+            creating second: reviews/Comment
+            creating third: reviews/Comment
+}

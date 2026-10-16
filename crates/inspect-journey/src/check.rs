@@ -185,8 +185,10 @@ impl Names {
             // And what a step of it caught, which is a name like any other.
             for step in &earlier.steps {
                 for clause in &step.clauses {
-                    if let Clause::Does { creating: Some(caught), .. } = clause {
-                        types.insert(caught.name.clone(), caught.type_expr.clone());
+                    if let Clause::Does { creating, .. } = clause {
+                        for caught in creating {
+                            types.insert(caught.cast.name.clone(), caught.cast.type_expr.clone());
+                        }
                     }
                 }
             }
@@ -244,11 +246,11 @@ fn check_step(
                     program,
                     notes,
                 );
-                if let Some(caught) = creating {
-                    if let Some(note) = missing_type(caught, graph) {
+                for caught in creating {
+                    if let Some(note) = missing_type(&caught.cast, graph) {
                         notes.push(note);
                     }
-                    known.bind(caught);
+                    known.bind(&caught.cast);
                 }
             }
             Clause::Sees { actor, subject, surface, contexts, negated, line } => {

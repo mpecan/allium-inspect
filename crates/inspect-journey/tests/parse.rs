@@ -91,8 +91,8 @@ fn an_act_names_its_actor_its_trigger_its_surface_and_what_it_caught() {
     assert_eq!(trigger, "MemberBorrows");
     assert_eq!(surface, "MemberShelf");
     assert_eq!(arguments.len(), 2);
-    let caught = creating.as_ref().expect("the step caught a loan");
-    assert_eq!((caught.name.as_str(), caught.type_expr.as_str()), ("loan", "Loan"));
+    let [caught] = creating.as_slice() else { panic!("the step caught one loan: {creating:?}") };
+    assert_eq!((caught.cast.name.as_str(), caught.cast.type_expr.as_str()), ("loan", "Loan"));
 }
 
 #[test]
@@ -102,7 +102,7 @@ fn an_act_that_catches_nothing_says_so_by_omission() {
         panic!("expected an act");
     };
     assert_eq!(trigger, "MemberReturns");
-    assert!(creating.is_none());
+    assert!(creating.is_empty());
 }
 
 #[test]
@@ -593,7 +593,8 @@ fn a_wrapped_clause_is_one_clause() {
         panic!("expected an act");
     };
     assert_eq!(surface, "MemberShelf");
-    assert_eq!(creating.as_ref().expect("caught").name, "loan");
+    let names: Vec<&str> = creating.iter().map(|caught| caught.cast.name.as_str()).collect();
+    assert_eq!(names, ["loan"]);
 }
 
 #[test]
@@ -1117,11 +1118,13 @@ fn an_act_can_say_what_a_call_answers_for_what_it_makes() {
          where muted(issue, repo) = false\n}\n",
     )
     .expect("parses");
-    let Clause::Does { creating, answering, surface, .. } = &journeys[0].steps[0].clauses[0] else {
+    let Clause::Does { creating, surface, .. } = &journeys[0].steps[0].clauses[0] else {
         panic!("expected an act");
     };
     assert_eq!(surface, "Tracker");
-    assert_eq!(creating.as_ref().map(|caught| caught.name.as_str()), Some("issue"));
+    let [caught] = creating.as_slice() else { panic!("one catch: {creating:?}") };
+    assert_eq!(caught.cast.name, "issue");
+    let answering = &caught.answering;
     let written: Vec<String> = answering.iter().map(inspect_journey::Where::as_written).collect();
     assert_eq!(written, ["audience(issue)", "muted(issue, repo)"]);
     assert_eq!(answering[0].value, Term::Set(Vec::new()));
@@ -1131,10 +1134,10 @@ fn an_act_can_say_what_a_call_answers_for_what_it_makes() {
 /// An act with no `where` answers nothing.
 #[test]
 fn an_act_without_where_answers_nothing() {
-    let Clause::Does { answering, .. } = &first().steps[0].clauses[0] else {
+    let Clause::Does { creating, .. } = &first().steps[0].clauses[0] else {
         panic!("expected an act");
     };
-    assert!(answering.is_empty());
+    assert!(creating.iter().all(|caught| caught.answering.is_empty()));
 }
 
 /// Without `creating` there is nothing for it to wait for, and it would
@@ -1206,9 +1209,10 @@ fn a_where_whose_answer_quotes_where_parses() {
          creating issue: Issue\n            where label(issue) = \"x where y\"\n}\n",
     )
     .expect("parses");
-    let Clause::Does { answering, .. } = &journeys[0].steps[0].clauses[0] else {
+    let Clause::Does { creating, .. } = &journeys[0].steps[0].clauses[0] else {
         panic!("expected an act");
     };
+    let answering = &creating[0].answering;
     assert_eq!(answering.len(), 1);
     assert_eq!(answering[0].value, Term::Literal(Value::Str("x where y".to_owned())));
 }
@@ -1222,9 +1226,10 @@ fn a_where_after_a_quoted_answer_is_split_where_it_begins() {
          where tag(issue) = \"b\"\n}\n",
     )
     .expect("parses");
-    let Clause::Does { answering, .. } = &journeys[0].steps[0].clauses[0] else {
+    let Clause::Does { creating, .. } = &journeys[0].steps[0].clauses[0] else {
         panic!("expected an act");
     };
+    let answering = &creating[0].answering;
     let read: Vec<(String, &Term)> =
         answering.iter().map(|answer| (answer.as_written(), &answer.value)).collect();
     assert_eq!(
@@ -1295,4 +1300,129 @@ fn an_unclosed_call_in_given_is_refused_with_the_line() {
     .expect_err("an unclosed call");
     assert_eq!(error.line, 5);
     assert!(error.message.contains("opens a call and does not close it"), "{error}");
+}
+
+/// Issue #31: a second `creating` under an act is a second name, not the rest
+/// of the first one's type — and each `where` belongs to the line above it.
+#[test]
+fn each_creating_line_under_an_act_is_a_name_of_its_own() {
+    let journeys = parse(
+        "journey J {\n    1. pack\n        ada does Pack(\"x\") on Desk\n            \
+         creating box: a/Box\n                where weight(box) = 1\n            \
+         creating tag: a/Tag\n                where colour(tag) = \"red\"\n\
+         \x20               where size(tag, box) = 2\n}\n",
+    )
+    .expect("parses");
+    let Clause::Does { creating, surface, arguments, .. } = &journeys[0].steps[0].clauses[0] else {
+        panic!("expected an act");
+    };
+    assert_eq!(surface, "Desk");
+    assert_eq!(arguments.len(), 1);
+    let read: Vec<(&str, &str, Vec<String>)> = creating
+        .iter()
+        .map(|caught| {
+            (
+                caught.cast.name.as_str(),
+                caught.cast.type_expr.as_str(),
+                caught.answering.iter().map(inspect_journey::Where::as_written).collect(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        read,
+        [
+            ("box", "a/Box", vec!["weight(box)".to_owned()]),
+            ("tag", "a/Tag", vec!["colour(tag)".to_owned(), "size(tag, box)".to_owned()]),
+        ]
+    );
+}
+
+/// Written on one line, the same: the line is joined before it is read.
+#[test]
+fn two_creating_on_one_line_are_two_names() {
+    let journeys = parse(
+        "journey J {\n    1. pack\n        ada does Pack(\"x\") on Desk creating box: Box \
+         creating tag: Tag\n}\n",
+    )
+    .expect("parses");
+    let Clause::Does { creating, .. } = &journeys[0].steps[0].clauses[0] else {
+        panic!("expected an act");
+    };
+    let read: Vec<(&str, &str)> = creating
+        .iter()
+        .map(|caught| (caught.cast.name.as_str(), caught.cast.type_expr.as_str()))
+        .collect();
+    assert_eq!(read, [("box", "Box"), ("tag", "Tag")]);
+}
+
+/// An argument that says `creating` is an argument.
+#[test]
+fn creating_inside_a_quoted_argument_is_not_a_catch() {
+    let journeys = parse(
+        "journey J {\n    1. pack\n        ada does Pack(\"a creating b: C\") on Desk\n            \
+         creating box: Box\n}\n",
+    )
+    .expect("parses");
+    let Clause::Does { creating, arguments, surface, .. } = &journeys[0].steps[0].clauses[0] else {
+        panic!("expected an act");
+    };
+    assert_eq!(surface, "Desk");
+    assert_eq!(arguments, &[Term::Literal(Value::Str("a creating b: C".to_owned()))]);
+    assert_eq!(creating.len(), 1);
+}
+
+/// One name caught twice would leave the first quietly replaced.
+#[test]
+fn one_name_caught_twice_by_an_act_is_refused() {
+    let error = parse(
+        "journey J {\n    1. pack\n        ada does Pack(\"x\") on Desk\n            \
+         creating box: Box\n            creating box: Tag\n}\n",
+    )
+    .expect_err("the same name twice");
+    assert!(error.message.contains("catches `box` twice"), "{error:?}");
+}
+
+/// A `where` under the second line naming only the first line's instance is
+/// about something that line did not make, and is told which line it belongs
+/// under — not to `stipulate` it, which could not name an instance the act has
+/// yet to make.
+#[test]
+fn a_where_is_about_the_line_it_is_under() {
+    let error = parse(
+        "journey J {\n    1. pack\n        ada does Pack(\"x\") on Desk\n            \
+         creating box: Box\n            creating tag: Tag\n                \
+         where weight(box) = 1\n}\n",
+    )
+    .expect_err("about the box, under the tag");
+    assert!(
+        error.message.contains(
+            "`where weight(box)` is about `box`, not `tag` — put it under `creating box: …`"
+        ),
+        "{error:?}"
+    );
+    assert!(!error.message.contains("stipulate"), "{error:?}");
+}
+
+/// About nothing the act catches at all: that one is for `stipulate`.
+#[test]
+fn a_where_about_no_line_of_the_act_is_for_stipulate() {
+    let error = parse(
+        "journey J {\n    1. pack\n        ada does Pack(\"x\") on Desk\n            \
+         creating box: Box\n            creating tag: Tag\n                \
+         where weight(crate) = 1\n}\n",
+    )
+    .expect_err("about neither");
+    assert!(error.message.contains("is not about `tag`"), "{error:?}");
+    assert!(error.message.contains("`stipulate` it before the act"), "{error:?}");
+}
+
+/// Still nothing to catch from an act that cannot happen, however many lines.
+#[test]
+fn a_refused_act_catches_nothing_on_any_line() {
+    let error = parse(
+        "journey J {\n    1. pack\n        ada cannot do Pack(\"x\") on Desk\n            \
+         creating box: Box\n            creating tag: Tag\n}\n",
+    )
+    .expect_err("a refused act");
+    assert!(error.message.contains("creates nothing to name"), "{error:?}");
 }

@@ -14,7 +14,7 @@
 use inspect_sim::{Value, seed};
 
 use crate::{
-    journey::{Assertion, Cast, Clause, Comparison, Subject, Term, Where},
+    journey::{Assertion, Caught, Clause, Comparison, Subject, Term, Where},
     parse::{ParseError, cast, fail},
     terms::{path, term},
 };
@@ -72,18 +72,41 @@ pub(crate) fn clause(text: &str, line: usize) -> Result<Clause, ParseError> {
 
 /// `MemberBorrows(ada, copy) on MemberShelf creating loan: Loan`
 fn does(actor: &str, rest: &str, negated: bool, line: usize) -> Result<Clause, ParseError> {
-    let (rest, creating, answering) = match rest.split_once(" creating ") {
-        Some((head, caught)) => {
-            let (caught, answering) = caught_and_answering(caught, line)?;
-            (head.trim(), Some(caught), answering)
+    // Every `creating` is a name of its own, and wrapped lines arrive here
+    // joined by a space — so a second `creating` under the act is split off
+    // rather than read as the rest of the first one's type (issue #31). Split
+    // outside quotes, so an argument that says "creating" stays an argument.
+    let mut parts = unquoted(rest, " creating ").into_iter();
+    let rest = parts.next().unwrap_or_default().trim();
+    let parts: Vec<&str> = parts.collect();
+    // Every name the act catches, so a `where` written under the wrong one
+    // can be told which line it belongs under.
+    let names: Vec<&str> = parts
+        .iter()
+        .filter_map(|part| unquoted(part, " where ").first().copied())
+        .filter_map(|head| head.split_once(':').map(|(name, _)| name.trim()))
+        .collect();
+    let mut creating: Vec<Caught> = Vec::new();
+    for part in parts {
+        let caught = caught_and_answering(part, &names, line)?;
+        // Two lines catching one name would leave the first caught and then
+        // quietly replaced, and every line after it reading the second.
+        if creating.iter().any(|earlier| earlier.cast.name == caught.cast.name) {
+            return fail(
+                line,
+                format!(
+                    "this act catches `{}` twice — give each a name of its own",
+                    caught.cast.name
+                ),
+            );
         }
-        None => (rest, None, Vec::new()),
-    };
+        creating.push(caught);
+    }
 
     // An act the spec refuses makes nothing, so there is nothing to catch. A
     // name bound to whatever happened to be created *anyway* would be the
     // worst of both.
-    if negated && creating.is_some() {
+    if negated && !creating.is_empty() {
         return fail(line, "an act that cannot happen creates nothing to name");
     }
     let Some((call, surface)) = rest.rsplit_once(" on ") else {
@@ -120,7 +143,6 @@ fn does(actor: &str, rest: &str, negated: bool, line: usize) -> Result<Clause, P
         arguments,
         surface: surface.to_owned(),
         creating,
-        answering,
         negated,
         line,
     })
@@ -133,7 +155,11 @@ fn does(actor: &str, rest: &str, negated: bool, line: usize) -> Result<Clause, P
 /// a journey overruling it mid-cascade would be a `then` that cannot fail. A
 /// call about something else is refused too, because `stipulate` before the
 /// act already says that, and one place to say a thing is one place to look.
-fn caught_and_answering(text: &str, line: usize) -> Result<(Cast, Vec<Where>), ParseError> {
+///
+/// A call about another line of the same act is refused with where it
+/// belongs instead: that instance does not exist before the act either, so
+/// `stipulate` could not say it.
+fn caught_and_answering(text: &str, names: &[&str], line: usize) -> Result<Caught, ParseError> {
     let mut parts = unquoted(text, " where ").into_iter();
     let caught = cast(parts.next().unwrap_or_default().trim(), line)?;
     let mut answering = Vec::new();
@@ -155,6 +181,20 @@ fn caught_and_answering(text: &str, line: usize) -> Result<(Cast, Vec<Where>), P
         };
         let answer = Where { call: name, arguments, value: term(right, line)? };
         if !answer.arguments.iter().any(|argument| argument.mentions(&caught.name)) {
+            if let Some(sibling) = names.iter().find(|name| {
+                **name != caught.name
+                    && answer.arguments.iter().any(|argument| argument.mentions(name))
+            }) {
+                return fail(
+                    line,
+                    format!(
+                        "`where {}` is about `{sibling}`, not `{}` — put it under \
+                         `creating {sibling}: …`",
+                        answer.as_written(),
+                        caught.name
+                    ),
+                );
+            }
             return fail(
                 line,
                 format!(
@@ -167,7 +207,7 @@ fn caught_and_answering(text: &str, line: usize) -> Result<(Cast, Vec<Where>), P
         }
         answering.push(answer);
     }
-    Ok((caught, answering))
+    Ok(Caught { cast: caught, answering })
 }
 
 /// `text` split on every `separator` outside a string literal, so an answer of

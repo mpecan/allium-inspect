@@ -125,6 +125,14 @@ pub const KINDS: &[&str] = &["kinds"];
 /// value nothing settled (issue #27).
 pub const OPERATORS: &[&str] = &["operators"];
 
+/// The reviews fixture and the module that reacts to what it makes: one act
+/// that makes more than one thing, each asked about (issue #31).
+pub const REVIEWS: &[&str] = &["reviews", "mentions"];
+
+/// Acts whose instances are not all made at once: one a reaction makes a turn
+/// later, and one a reaction removes (issue #31).
+pub const FOLLOWUPS: &[&str] = &["followups"];
+
 /// `modules`, replayed from their recordings, with each module's source.
 pub fn library(modules: &[&str]) -> (SpecGraph, Program, Sources) {
     let root = fixtures();
