@@ -262,6 +262,7 @@ fn the_fixtures_own_journeys_report_no_word() {
         ("given_answers_moved", common::GRANTS),
         ("grants", common::GRANTS),
         ("guards", common::GUARDS),
+        ("kinds", common::KINDS),
         ("lending", LENDING),
         ("loss", LENDING),
         ("orders", common::ORDERS),

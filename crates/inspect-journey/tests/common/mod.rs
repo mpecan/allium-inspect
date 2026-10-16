@@ -117,6 +117,10 @@ pub const SIBLINGS: &[&str] = &["siblings"];
 /// lists and enumeration values (issue #25).
 pub const DEFAULTS: &[&str] = &["defaults"];
 
+/// The kinds fixture, alone: a set literal of words a rule iterates (issue
+/// #26).
+pub const KINDS: &[&str] = &["kinds"];
+
 /// `modules`, replayed from their recordings, with each module's source.
 pub fn library(modules: &[&str]) -> (SpecGraph, Program, Sources) {
     let root = fixtures();

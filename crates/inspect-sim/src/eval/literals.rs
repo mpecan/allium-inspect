@@ -79,6 +79,15 @@ fn unit_millis(unit: &str) -> Option<i64> {
 /// A set holds each member once — `{a, b, a}` is `{a, b}` — and a list keeps
 /// what it was given. [`Value::set_of`] is the one place a set is made from
 /// what a spec wrote, so a default and a rule spelled alike agree.
+///
+/// A member written as a bare word that nothing binds, and that the spec
+/// declares as a state, is that state: `for k in {a, b}` with `enum Kind { a
+/// | b }` ranges over two words, as `kind = a` and an emission's `a` already
+/// read them (issue #26). The test is the one a definition's bare word is put
+/// to — [`Env::could_be_a_state`] and a declaration — so a parameter nobody
+/// passed, a field nobody set, or a word no enumeration declares stays
+/// undecided and says which. A member bound to a value nobody knows says
+/// that too, rather than leaving the set looking complete.
 #[must_use]
 pub fn set_literal(elements: &[Expr], ordered: bool, env: &Env<'_>) -> Evaluation {
     let mut unresolved = Vec::new();
@@ -86,6 +95,24 @@ pub fn set_literal(elements: &[Expr], ordered: bool, env: &Env<'_>) -> Evaluatio
         .iter()
         .map(|item| {
             let evaluated = super::eval(item, env);
+            if evaluated.value.is_unknown()
+                && let Some(state) = super::ast::bare_name(item)
+                && env.derived.states.contains(state)
+                && env.could_be_a_state(state)
+            {
+                return Value::Enum(state.to_owned());
+            }
+            // A member that is undecided and says nothing — a name bound to a
+            // value nobody knows — says so here, or `{x, b}` reads as a
+            // complete set of two and a loop over it runs as if it knew.
+            if evaluated.value.holds_unknown() && evaluated.unresolved.is_empty() {
+                let name = super::ast::bare_name(item).unwrap_or("this member");
+                unresolved.push(super::unresolved_at(
+                    format!("`{name}` is bound to a value nobody knows"),
+                    item,
+                    env.source,
+                ));
+            }
             unresolved.extend(evaluated.unresolved);
             evaluated.value
         })
@@ -260,6 +287,111 @@ mod tests {
         assert_eq!(
             set_literal(&elements, true, &env(&world)).value,
             Value::Set(vec![Value::Int(1), Value::Int(2), Value::Int(1)])
+        );
+    }
+
+    fn word(name: &str) -> Expr {
+        Expr::Ident(Ident { span: allium_parser::Span { start: 0, end: 1 }, name: name.to_owned() })
+    }
+
+    /// A spec set declaring `enum Kind { a | b }`.
+    fn kinds() -> inspect_model::Derivations {
+        let mut derived = inspect_model::Derivations::default();
+        derived.states.extend(["a".to_owned(), "b".to_owned()]);
+        derived
+    }
+
+    #[test]
+    fn a_set_literal_of_declared_states_holds_the_states() {
+        // Issue #26: `for k in {a, b}` with `enum Kind { a | b }`. Each word
+        // was "nothing is bound", so the loop ran over nothing it could name.
+        let world = World::new();
+        let derived = kinds();
+        let env = env(&world).deriving(&derived);
+        let evaluated = set_literal(&[word("a"), word("b")], false, &env);
+        assert_eq!(
+            evaluated.value,
+            Value::Set(vec![Value::Enum("a".to_owned()), Value::Enum("b".to_owned())])
+        );
+        assert!(evaluated.unresolved.is_empty(), "{:?}", evaluated.unresolved);
+        let listed = set_literal(&[word("b"), word("a"), word("b")], true, &env).value;
+        assert_eq!(
+            listed,
+            Value::Set(vec![
+                Value::Enum("b".to_owned()),
+                Value::Enum("a".to_owned()),
+                Value::Enum("b".to_owned()),
+            ])
+        );
+    }
+
+    #[test]
+    fn a_word_no_enumeration_declares_stays_undecided_in_a_set_literal() {
+        // Only a declared state: `c` may be something this simulator does not
+        // model, and the set says which word.
+        let world = World::new();
+        let derived = kinds();
+        let env = env(&world).deriving(&derived);
+        let evaluated = set_literal(&[word("a"), word("c")], false, &env);
+        assert!(evaluated.value.holds_unknown());
+        assert_eq!(evaluated.unresolved.len(), 1);
+        assert_eq!(evaluated.unresolved[0].reason, "nothing is bound to `c`");
+    }
+
+    #[test]
+    fn a_bound_name_spelled_like_a_state_is_its_binding_in_a_set_literal() {
+        let world = World::new();
+        let derived = kinds();
+        let env = env(&world).deriving(&derived).bind("a", Value::Int(7));
+        let evaluated = set_literal(&[word("a")], false, &env);
+        assert_eq!(evaluated.value, Value::Set(vec![Value::Int(7)]));
+    }
+
+    #[test]
+    fn a_parameter_nobody_passed_is_not_read_as_a_state_in_a_set_literal() {
+        // A rule parameter spelled `a` that nobody passed is a value nobody
+        // knows, not the state `a`.
+        let world = World::new();
+        let derived = kinds();
+        let env = env(&world).deriving(&derived).declaring(["a".to_owned()]);
+        let evaluated = set_literal(&[word("a"), word("b")], false, &env);
+        assert!(evaluated.value.holds_unknown());
+        assert_eq!(evaluated.unresolved[0].reason, "nothing is bound to `a`");
+    }
+
+    #[test]
+    fn a_member_bound_to_a_value_nobody_knows_says_so_in_a_set_literal() {
+        // `let x = box.a` with `a` unset, then `{x, b}`. The binding carries
+        // no reason of its own, and with `b` now read as the state nothing
+        // else in the set did either: a loop over it ran as if it knew both
+        // members, and made two slots where `x = b` would have made one.
+        let world = World::new();
+        let derived = kinds();
+        // The source the note quotes: `word` spans its first byte.
+        let env = Env::new(&world, "m", "x").deriving(&derived).bind("x", Value::Unknown);
+        let evaluated = set_literal(&[word("x"), word("b")], false, &env);
+        assert!(evaluated.value.holds_unknown());
+        assert_eq!(evaluated.unresolved.len(), 1, "{:?}", evaluated.unresolved);
+        assert_eq!(evaluated.unresolved[0].reason, "`x` is bound to a value nobody knows");
+        assert_eq!(evaluated.unresolved[0].expression.as_deref(), Some("x"));
+    }
+
+    #[test]
+    fn a_field_of_this_spelled_like_a_state_is_not_read_as_the_state_in_a_set_literal() {
+        // `options: {a, b}` on an entity that stores a field `a` it never
+        // set. `a` is the field, unset — not the state `a`.
+        let mut world = World::new();
+        let id = world.create("Box", "m");
+        let mut derived = kinds();
+        derived.stored.insert(inspect_model::derived_key("m", "Box", "a"));
+        let env = env(&world).deriving(&derived).bind("this", Value::Ref(id));
+        let evaluated = set_literal(&[word("a"), word("b")], false, &env);
+        assert!(evaluated.value.holds_unknown(), "{:?}", evaluated.value);
+        assert!(!evaluated.unresolved.is_empty());
+        assert!(
+            evaluated.unresolved.iter().all(|note| !note.reason.contains("nothing is bound")),
+            "{:?}",
+            evaluated.unresolved
         );
     }
 

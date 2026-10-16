@@ -1440,10 +1440,26 @@ the spec declares as a state — in any enumeration, or any field's inline
 `stale: status_now != status` is decided. A word no enumeration declares stays
 undecided and names itself (*nothing is bound to `paused`*). Outside a
 definition a bare word is still read as a state only where a comparison's
-other side is one, or a rule hands it on as above — with one exception that
-follows from how a filter is read: inside `Runs where …` in a rule or an
-invariant, each run is `this`, so the run's own unset fields and declared
-words are read there exactly as in a definition.
+other side is one, a rule hands it on as above, or it is a member of a set
+written out, as below — with one exception that follows from how a filter is
+read: inside `Runs where …` in a rule or an invariant, each run is `this`, so
+the run's own unset fields and declared words are read there exactly as in a
+definition.
+
+**A word in a set written out.** `for k in {a, b}:` with `enum Kind { a | b }`
+ranges over the two states, so the clauses inside are applied once with `k` as
+`a` and once as `b`; `[b, a]` is the same, in that order. Each member is put to
+the test a definition's word is: declared as a state somewhere in the spec set,
+and not a name already in scope — a rule parameter, a `let`, a field of `this`
+whether set or not. A name in scope is what it holds; a word declared nowhere
+stays undecided and names itself, so `for k in {a, c}`, with `c` declared
+nowhere, says *`for k in {a, c}` may be missing members it could not decide on
+(nothing is bound to `c`)*, and the step is undecided. So does a member bound
+to a value nobody knows: `let x = box.preferred` with `preferred` unset makes
+`{x, b}` say *`x` is bound to a value nobody knows* rather than read as a set
+of two. A set that is one side of a comparison — `requires: kind in {a, b}` —
+is read by the comparison's rule instead: once one member is a state, the other
+unbound words are read as states too, declared or not.
 
 **A comparison with an undecided side is undecided.** `copy.status =
 available` reads `available` as a state because the other side is one. That
