@@ -1158,9 +1158,10 @@ fn a_loop_that_takes_its_members_apart_is_not_read_with_an_outer_name_in_their_p
     assert_eq!(first.expression.as_deref(), Some("(h, ok)"));
 }
 
-/// The same in what a loop ensures: `for (h, swept) in Hooks` writing
+/// The same in what a loop ensures: `for (h,swept) in Hooks` writing
 /// `h.swept = swept` would write the rule's `let swept = true` to every hook.
-/// Nothing inside it is applied, and what was left undone quotes the binding.
+/// Nothing inside it is applied, and what was left undone quotes the binding
+/// as the spec spells it — without the space a rebuilt `(h, swept)` would have.
 #[test]
 fn a_loop_that_takes_its_members_apart_applies_nothing_inside_it() {
     let (graph, program, sources) = recorded(&["fanout"]);
@@ -1177,8 +1178,8 @@ fn a_loop_that_takes_its_members_apart_applies_nothing_inside_it() {
     let first = &split.unapplied[0];
     assert_eq!(
         first.reason,
-        "`for (h, swept) in Hooks` takes each member apart into names, which this simulator \
+        "`for (h,swept) in Hooks` takes each member apart into names, which this simulator \
          does not do, so the clauses inside it were not applied"
     );
-    assert_eq!(first.expression.as_deref(), Some("(h, swept)"));
+    assert_eq!(first.expression.as_deref(), Some("(h,swept)"));
 }

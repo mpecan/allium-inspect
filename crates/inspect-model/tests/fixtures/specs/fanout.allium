@@ -22,7 +22,8 @@
 -- a loop over a bell's hooks, which a journey may never have stated. `Pair`
 -- takes each hook apart into two names, the second spelled like a `let` of
 -- the rule's own, which the simulator must not read in its place; `Split`
--- does the same in what it ensures.
+-- does the same in what it ensures, spelling its binding without the space
+-- a reader would expect, so a verdict quoting it is seen to quote the spec.
 --
 -- `Hook.rack` is read only through `Rack.hooks`' `with rack = this`, so the
 -- analyse recording carries an info-level `allium.field.unused` about it.
@@ -145,7 +146,7 @@ rule Pair {
 rule Split {
     when: Split(c)
     let swept = true
-    for (h, swept) in Hooks:
+    for (h,swept) in Hooks:
         ensures: h.swept = swept
     ensures: c.done = true
 }
