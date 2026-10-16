@@ -522,20 +522,28 @@ fn collection_named(name: &str, env: &Env<'_>) -> Option<Value> {
         return Some(collection_of(name, env));
     }
     singular(name)
-        .filter(|entity| env.world.count_of(entity) > 0)
+        .into_iter()
+        .find(|entity| env.world.count_of(entity) > 0)
         .map(|entity| collection_of(&entity, env))
 }
 
-/// The entity a plural collection name refers to.
+/// The entities a plural collection name may refer to, most likely first.
 ///
-/// `Loans` -> `Loan`, `Copies` -> `Copy`. Only proposed: the caller uses it only
-/// when the world holds instances of that name, so an over-eager reduction
-/// costs nothing and `Staff` — already plural — falls through unchanged.
-fn singular(collection: &str) -> Option<String> {
+/// `Loans` -> `Loan`, `Copies` -> `Copy`, `Watches` -> `Watch`. Only proposed:
+/// the caller takes the first the world holds instances of, so an over-eager
+/// reduction costs nothing (`Houses` tries `House` before `Hous`) and `Staff`
+/// — already plural — falls through unchanged.
+fn singular(collection: &str) -> Vec<String> {
+    let mut candidates = Vec::new();
     if let Some(stem) = collection.strip_suffix("ies") {
-        return Some(format!("{stem}y"));
+        candidates.push(format!("{stem}y"));
     }
-    collection.strip_suffix('s').filter(|stem| !stem.is_empty()).map(ToOwned::to_owned)
+    for suffix in ["s", "es"] {
+        if let Some(stem) = collection.strip_suffix(suffix).filter(|stem| !stem.is_empty()) {
+            candidates.push(stem.to_owned());
+        }
+    }
+    candidates
 }
 
 /// Every instance of `entity`, as references.

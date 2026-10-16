@@ -988,6 +988,34 @@ fn a_collection_in_another_module_is_named_in_the_plural_too() {
     );
 }
 
+/// A plural made with `es` — `Watches`, `Boxes`, `Branches`. Only the `s` was
+/// taken off, so `Watches` named an entity `Watche` that nothing declares, and
+/// the qualified spelling ranged over an empty set: every claim about it held
+/// vacuously, the checker-that-always-passes the plural reading exists to
+/// prevent.
+#[test]
+fn a_collection_pluralised_with_es_is_named_too() {
+    let mut world = World::new().at(1_000);
+    let watch = world.create("Watch", "repos");
+    world.set_field(&watch, "on", Value::Bool(false));
+    let env = env(&world, "repos");
+    for watches in [
+        ident("Watches"),
+        Expr::QualifiedName(QualifiedName {
+            span: NOWHERE,
+            qualifier: Some("repos".to_owned()),
+            name: "Watches".to_owned(),
+        }),
+    ] {
+        let all_on = quantify("w", watches, compare(ident("on"), "Eq", boolean(true)), None);
+        assert_eq!(
+            truth_of(&all_on, &env),
+            Truth::False,
+            "if it ranged over nothing this would be vacuously true"
+        );
+    }
+}
+
 #[test]
 fn an_invariant_over_an_empty_collection_is_vacuously_true() {
     // A spec with no loans does not violate a rule about loans.
