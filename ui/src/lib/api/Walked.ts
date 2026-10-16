@@ -14,6 +14,21 @@ export type Walked = { number: number, title: string,
  */
 line: number, outcomes: Array<Outcome>, 
 /**
+ * What `check` remarked on this step's lines, which is worth reading and
+ * is no part of the step's verdict.
+ *
+ * Kept apart from `outcomes` on purpose. A remark there would be the
+ * step's verdict whenever nothing worse happened, and two different
+ * things would then read alike: an act that wakes no rule, which the
+ * walk reports `remark` and does not count as holding, and an act whose
+ * every line the spec supports, beside a word worth a second look — a
+ * bare word nobody cast that no rule compares, or an emission some
+ * listener cannot bind *if* it is reached. The second holds, and says so;
+ * the aside is shown under it, in `walk` and in the browser alike, so a
+ * remark `check` makes is never one the walk keeps quiet about.
+ */
+asides: Array<Outcome>, 
+/**
  * The world as it stood when this step finished.
  *
  * Kept per step rather than only at the end, because the question a

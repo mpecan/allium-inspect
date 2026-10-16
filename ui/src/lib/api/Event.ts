@@ -16,10 +16,10 @@ trigger: string,
  * A label for a firing nobody emitted: an act wakes every rule waiting on
  * its name, because which module's trigger a person meant is not
  * something to guess. For an emission it is also a filter, read by
- * [`inspect_model::listening::hears`]: a rule hears its own module and the
- * modules it `use`s — or, written `when: chains/Published(…)`, only the
- * module that names — and not an unrelated module's trigger of the same
- * name.
+ * [`inspect_model::listening::hears`]: a rule hears its own module, the
+ * modules it `use`s and the modules that `use` it — or, written `when:
+ * chains/Published(…)`, only the module that names — and not an unrelated
+ * module's trigger of the same name.
  */
 module: string, 
 /**

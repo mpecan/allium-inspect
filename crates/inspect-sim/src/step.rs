@@ -46,6 +46,12 @@ pub struct ClauseVerdict {
     pub text: String,
     pub truth: Truth,
     /// What could not be decided, when anything could not.
+    ///
+    /// And, first, for a precondition inside a loop that one member failed,
+    /// which member and which loop — about the whole clause, so its
+    /// `expression` is the clause's own text. That one is the clause's alone
+    /// and is never among the rule's `unresolved`, because nothing about it
+    /// was undecided.
     pub unresolved: Vec<Unresolved>,
 }
 
@@ -385,7 +391,7 @@ fn run_rule(
     let mut top_level = detail.clauses_of("requires");
     let scope = || rule_scope(Env::new(world, module, source), program, &declared, &bindings);
     for (index, clause) in ast.requires.iter().enumerate() {
-        let (text, evaluated) = match ast.per_member.get(&index) {
+        let (text, read) = match ast.per_member.get(&index) {
             Some(within) => (
                 crate::eval::span_of(clause)
                     .and_then(|span| span.slice(source))
@@ -395,15 +401,15 @@ fn run_rule(
             ),
             None => (
                 top_level.next().map(|clause| clause.text.clone()).unwrap_or_default(),
-                eval(clause, &scope()),
+                eval(clause, &scope()).into(),
             ),
         };
+        let per_member::Precondition { evaluated, refused_by } = read;
         unresolved.extend(evaluated.unresolved.clone());
-        requires.push(ClauseVerdict {
-            text,
-            truth: evaluated.truth(),
-            unresolved: evaluated.unresolved,
-        });
+        let truth = evaluated.truth();
+        let mut said = evaluated.unresolved;
+        said.splice(0..0, refused_by);
+        requires.push(ClauseVerdict { text, truth, unresolved: said });
     }
 
     let verdict = Truth::all(requires.iter().map(|clause| clause.truth));

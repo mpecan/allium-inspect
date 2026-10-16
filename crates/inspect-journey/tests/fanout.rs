@@ -200,6 +200,14 @@ fn a_precondition_inside_a_loop_one_kept_member_fails_refuses_the_rule() {
     all_held(&walk);
     let detail = walk.steps[0].outcomes[0].detail.clone().unwrap_or_default();
     assert!(detail.contains("h.active = true"), "quotes the clause it refused on: {detail}");
+    // And names the loop and the member that failed it — `dead`, the second
+    // hook made, Hook#2 — so a reader with many members can tell which one it was.
+    assert!(
+        detail.contains(
+            "h.active = true — `for h in Hooks`: Hook#2 does not satisfy this precondition"
+        ),
+        "{detail}"
+    );
 }
 
 /// A kept member nobody said was active is undecided, and the reason names

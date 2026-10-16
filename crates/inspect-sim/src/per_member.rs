@@ -16,15 +16,18 @@
 //! member or any other. It is not a guard that skips the member: the language
 //! already has two of those, the loop's own `where` and an `if` inside it, and
 //! reading `requires` as a third would make it mean something different inside
-//! a loop from everywhere else. `allium`'s own analysis walks the clauses inside
-//! a `for` as the rule's clauses too.
+//! a loop from everywhere else. The language does not settle this, and the
+//! refusal says which reading was taken, naming the loop and the member that
+//! failed, so a reader who meant the other one can see why the rule did not
+//! run.
 //!
 //! So it is decided the way `all` is over the same members, with Kleene's
 //! rules:
 //!
 //! - over a collection with no members — or none the filter keeps — it holds:
 //!   there is nothing for it to be false about;
-//! - one kept member failing it is false, whatever the others are;
+//! - one kept member failing it is false, whatever the others are, and the
+//!   refusal names that member and the loop;
 //! - otherwise a member it could not be decided for leaves it undecided, and
 //!   the reason names the loop and the member before what could not be read;
 //! - a member whose filter could not be decided matters only if it fails: a
@@ -55,6 +58,23 @@ use crate::{
     value::Value,
 };
 
+/// A precondition inside a loop, read for every member: the answer, and when
+/// it is `false`, which member refused it.
+pub(crate) struct Precondition {
+    pub(crate) evaluated: Evaluation,
+    /// Said beside the clause when one kept member fails it: the loop, the
+    /// member, and the reading that made one member enough. Not a reason the
+    /// rule was undecided — it was not — so it is the clause's to show and
+    /// never the rule's.
+    pub(crate) refused_by: Option<Unresolved>,
+}
+
+impl From<Evaluation> for Precondition {
+    fn from(evaluated: Evaluation) -> Self {
+        Self { evaluated, refused_by: None }
+    }
+}
+
 /// `clause`, written inside the loop `within`, read for each member it keeps.
 ///
 /// `scope` makes the environment the rule's own preconditions are read in —
@@ -65,7 +85,7 @@ pub(crate) fn precondition<'a>(
     clause: &Expr,
     scope: &dyn Fn() -> Env<'a>,
     spec: &SpecGraph,
-) -> Evaluation {
+) -> Precondition {
     let base = scope();
     let source = base.source;
     let quoted = |node: &Expr| span_of(node).and_then(|span| span.slice(source)).map(str::to_owned);
@@ -75,7 +95,7 @@ pub(crate) fn precondition<'a>(
         source,
         "this precondition could not be read for its members",
     ) {
-        return Evaluation { value: Value::Unknown, unresolved: vec![why] };
+        return Evaluation { value: Value::Unknown, unresolved: vec![why] }.into();
     }
     let name = bound_name(&within.binding);
     let header = header(&name, &within.collection, source);
@@ -101,7 +121,7 @@ pub(crate) fn precondition<'a>(
                 span: span_of(&within.collection),
             }];
             unresolved.extend(collection.unresolved);
-            return Evaluation { value: Value::Unknown, unresolved };
+            return Evaluation { value: Value::Unknown, unresolved }.into();
         }
     };
 
@@ -121,7 +141,23 @@ pub(crate) fn precondition<'a>(
             (_, Truth::True) => notes.extend(read.unresolved),
             // One kept member failing settles it, whatever else is undecided.
             (Truth::True, Truth::False) => {
-                return Evaluation { value: Value::Bool(false), unresolved: read.unresolved };
+                let refused_by = Unresolved {
+                    reason: format!(
+                        "{header}: {} does not satisfy this precondition, and a `requires` inside \
+                         a loop is read for every member the loop keeps, so the whole rule is \
+                         refused",
+                        item.render()
+                    ),
+                    expression: quoted(clause),
+                    span: span_of(clause),
+                };
+                return Precondition {
+                    evaluated: Evaluation {
+                        value: Value::Bool(false),
+                        unresolved: read.unresolved,
+                    },
+                    refused_by: Some(refused_by),
+                };
             }
             (Truth::True, _) => {
                 undecided.push(Unresolved {
@@ -176,14 +212,14 @@ pub(crate) fn precondition<'a>(
     });
     if !undecided.is_empty() {
         undecided.extend(missing.into_iter().flatten());
-        return Evaluation { value: Value::Unknown, unresolved: undecided };
+        return Evaluation { value: Value::Unknown, unresolved: undecided }.into();
     }
     // Every member it holds passed, which does not settle it when it may have
     // left one out.
     if let Some(unresolved) = missing {
-        return Evaluation { value: Value::Unknown, unresolved };
+        return Evaluation { value: Value::Unknown, unresolved }.into();
     }
-    Evaluation { value: Value::Bool(true), unresolved: notes }
+    Evaluation { value: Value::Bool(true), unresolved: notes }.into()
 }
 
 /// `clause` about one member: the loop's name bound to it, and the `let`s the

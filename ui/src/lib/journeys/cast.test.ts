@@ -54,6 +54,7 @@ function walk(worlds: World[]): Walk {
       title: `step ${at + 1}`,
       line: 8 + at,
       outcomes: [],
+      asides: [],
       world: each,
     })),
   };

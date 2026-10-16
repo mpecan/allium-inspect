@@ -446,26 +446,33 @@ impl SpecGraph {
         let named = field.type_expr.trim().trim_end_matches('?');
         let (qualifier, bare) =
             named.rsplit_once('/').map_or((None, named), |(alias, bare)| (Some(alias), bare));
-        let home = match qualifier {
-            None => Some(module),
-            Some(alias) => self
-                .modules
-                .iter()
-                .find(|declared| declared.name == module)
-                .and_then(|declared| declared.imports.iter().find(|import| import.alias == alias))
-                .and_then(|import| import.target.as_deref())
-                .or(Some(alias)),
-        };
+        let home = self.home_of(module, qualifier);
         let values = |node: &'a Node| node.detail.as_enum().map(|detail| detail.values.as_slice());
-        if let Some(found) = home
-            .and_then(|home| self.node(&NodeId::new(home, NodeKind::Enum, bare)))
-            .and_then(values)
-        {
+        if let Some(found) = self.node(&NodeId::new(home, NodeKind::Enum, bare)).and_then(values) {
             return found;
         }
         let mut named = self.nodes_of(NodeKind::Enum).filter(|node| node.name == bare);
         let Some(first) = named.next().and_then(values) else { return &[] };
         if named.all(|other| values(other) == Some(first)) { first } else { &[] }
+    }
+
+    /// The module a type name written in `module` is declared in: a bare name
+    /// is `module`'s own, and `alias/X` is in whatever `module` imported `as
+    /// alias` — or, when it imported nothing by that name, the module called
+    /// that.
+    ///
+    /// Where a name is read from, and nothing more: whether that module
+    /// declares it is the caller's question, and so is what to do when it
+    /// does not.
+    #[must_use]
+    pub fn home_of<'a>(&'a self, module: &'a str, qualifier: Option<&'a str>) -> &'a str {
+        let Some(alias) = qualifier else { return module };
+        self.modules
+            .iter()
+            .find(|declared| declared.name == module)
+            .and_then(|declared| declared.imports.iter().find(|import| import.alias == alias))
+            .and_then(|import| import.target.as_deref())
+            .unwrap_or(alias)
     }
 
     /// Every state any enumeration or inline status in the spec declares, once

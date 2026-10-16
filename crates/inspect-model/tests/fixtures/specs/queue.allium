@@ -2,7 +2,9 @@
 -- queue.allium
 --
 -- Another module's `Status` and `Item`, with other states. `open` is a state
--- of this module's, and of nothing in `drafts.allium`.
+-- of this module's, and of nothing in `drafts.allium`. An issue's `item` is
+-- this module's `Item` too, read from here and not from whichever `Item` the
+-- set declares first.
 
 use "./drafts.allium" as drafts
 
@@ -11,6 +13,7 @@ enum Status { open | closed }
 entity Issue {
     status: Status
     page: drafts/Page?
+    item: Item?
 }
 
 entity Item {

@@ -38,7 +38,7 @@ mod plan;
 mod prose;
 mod rules;
 mod surfaces;
-mod text;
+pub(crate) mod text;
 mod writes;
 
 use std::path::{Path, PathBuf};

@@ -26,7 +26,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use allium_parser::ast::{CallArg, Expr};
+use allium_parser::ast::{CallArg, Expr, ForBinding};
 
 use crate::{
     Diagnostic, LineIndex, Location, NodeId, NodeKind, Program, Severity, Span, SpecGraph,
@@ -79,9 +79,12 @@ pub fn emitted(function: &Expr) -> Option<&str> {
 }
 
 /// Every emission in `ensures`, in the order written: a clause, the items of
-/// a block, each branch of an `if`, the body of a `for`, and a `let` whose
-/// value is a call — the places the simulator applies a postcondition, and no
-/// others. A call inside a value (`x.n = f(y)`) is evaluated, not emitted.
+/// a block, each branch of an `if`, the body of a `for` that names its member
+/// once, and a `let` whose value is a call — the places the simulator applies
+/// a postcondition, and no others. A call inside a value (`x.n = f(y)`) is
+/// evaluated, not emitted, and the body of a `for (a, b) in …` is never
+/// applied: the simulator binds a member to one name and leaves a loop that
+/// takes it apart undone, so nothing in it can be reached.
 #[must_use]
 pub fn emissions(ensures: &[Expr]) -> Vec<Emission<'_>> {
     let mut found = Vec::new();
@@ -107,7 +110,7 @@ fn collect<'a>(clause: &'a Expr, found: &mut Vec<Emission<'a>>) {
                 collect(body, found);
             }
         }
-        Expr::For { body, .. } => collect(body, found),
+        Expr::For { binding: ForBinding::Single(_), body, .. } => collect(body, found),
         Expr::LetExpr { value, .. } if matches!(value.as_ref(), Expr::Call { .. }) => {
             collect(value, found);
         }
@@ -200,7 +203,9 @@ pub fn listeners<'g>(
 ///
 /// - `when: chains/Published(doc)` hears what the module it imported `as
 ///   chains` emits, and nothing else: the qualifier says whose trigger it is.
-/// - `when: Published(doc)` hears its own module, and any module it `use`s.
+/// - `when: Published(doc)` hears its own module, any module it `use`s, and
+///   any module that `use`s it — whose bare `Published(…)` may be this
+///   module's trigger, named from the module that imported it.
 ///
 /// Two modules that do not import each other and each have a trigger called
 /// `Closed` are two triggers that share a word, and one module's emission
@@ -218,16 +223,24 @@ pub fn hears(graph: &SpecGraph, module: &str, when: Option<&Expr>, from: &str) -
         },
         _ => None,
     };
-    let imports = graph
-        .modules
-        .iter()
-        .find(|it| it.name == module)
-        .map(|it| it.imports.as_slice())
-        .unwrap_or_default();
-    let target = |import: &crate::graph::Import| import.target.as_deref() == Some(from);
+    let imports = |of: &str| {
+        graph
+            .modules
+            .iter()
+            .find(|it| it.name == of)
+            .map(|it| it.imports.as_slice())
+            .unwrap_or_default()
+    };
+    let leads = |import: &crate::graph::Import, to: &str| import.target.as_deref() == Some(to);
     match qualifier {
-        Some(alias) => imports.iter().any(|import| import.alias == alias && target(import)),
-        None => module == from || imports.iter().any(target),
+        Some(alias) => {
+            imports(module).iter().any(|import| import.alias == alias && leads(import, from))
+        }
+        None => {
+            module == from
+                || imports(module).iter().any(|import| leads(import, from))
+                || imports(from).iter().any(|import| leads(import, module))
+        }
     }
 }
 
@@ -253,11 +266,9 @@ impl Unbindable {
             Some(node) => node.name.clone(),
             None => self.listener.name().to_owned(),
         };
-        let emission =
-            source.and_then(|source| source.get(self.span.start..self.span.end)).map_or_else(
-                || self.trigger.clone(),
-                |text| text.split_whitespace().collect::<Vec<_>>().join(" "),
-            );
+        let emission = source
+            .and_then(|source| source.get(self.span.start..self.span.end))
+            .map_or_else(|| self.trigger.clone(), crate::ingest::text::one_line);
         let when = listener
             .and_then(|node| node.detail.as_rule())
             .and_then(|rule| rule.clauses_of("when").next())
@@ -469,6 +480,68 @@ mod tests {
                 ("b::rule::Own", "b::rule::Plain"),
             ]
         );
+    }
+
+    /// The other direction across one `use`: `b` imports `a`, and `b`'s bare
+    /// `B(…)` may be `a`'s trigger, named from the module that imported it —
+    /// so `a`'s unqualified listener hears it. Before, it did not, and the
+    /// walk reported the step refused with nothing saying the emission went
+    /// unheard.
+    #[test]
+    fn a_listener_hears_a_module_that_uses_its_own() {
+        let it = ingested(&[
+            (
+                "a",
+                "-- allium: 3\nentity Doc { seen: Boolean }\n\
+                 rule L {\n    when: B(doc)\n    ensures: doc.seen = true\n}\n",
+            ),
+            (
+                "b",
+                "-- allium: 3\nuse \"./a.allium\" as a\n\
+                 rule E {\n    when: E(doc)\n    ensures: B(item: doc)\n}\n",
+            ),
+        ]);
+        let pairs: Vec<(String, String)> = unbindable(&it.graph, &it.program)
+            .into_iter()
+            .map(|it| (it.emitter.as_str().to_owned(), it.listener.as_str().to_owned()))
+            .collect();
+        assert_eq!(pairs, [("b::rule::E".to_owned(), "a::rule::L".to_owned())]);
+        let when = it.program.rule("a::rule::L").and_then(|ast| ast.when.as_ref());
+        assert!(hears(&it.graph, "a", when, "b"), "the importer's emission is heard");
+        assert!(hears(&it.graph, "b", None, "a"), "and the imported module's, as before");
+        assert!(!hears(&it.graph, "a", when, "c"), "a module neither side imports is not");
+    }
+
+    /// A `for (a, b) in …` is never applied, so an emission inside one is
+    /// never reached and is not reported; the same emission in a loop naming
+    /// its member once is.
+    #[test]
+    fn an_emission_inside_a_loop_that_takes_members_apart_is_not_one() {
+        let listener = "rule L {\n    when: B(doc)\n    ensures: doc.seen = true\n}\n";
+        let single = found(&spec(&format!(
+            "rule A {{\n    when: A(doc)\n    ensures:\n        for d in Docs:\n            \
+             B(item: d)\n}}\n{listener}"
+        )));
+        assert_eq!(single, [("A".to_owned(), "L".to_owned(), "doc".to_owned())]);
+        let apart = found(&spec(&format!(
+            "rule A {{\n    when: A(doc)\n    ensures:\n        for (d, e) in Docs:\n            \
+             B(item: d)\n}}\n{listener}"
+        )));
+        assert_eq!(apart, []);
+    }
+
+    /// A comment inside a multi-line emission is dropped from the quote, the
+    /// way every other one-line form drops it.
+    #[test]
+    fn a_comment_inside_an_emission_is_not_quoted() {
+        let source = spec(
+            "rule A {\n    when: A(doc)\n    ensures: B(\n        item: doc -- the one we had\n    )\n}\n\
+             rule L {\n    when: B(doc)\n    ensures: doc.seen = true\n}\n",
+        );
+        let it = ingested(&[("m", &source)]);
+        let found = unbindable(&it.graph, &it.program);
+        let message = found[0].message(&it.graph, Some(&source));
+        assert!(message.starts_with("`A` emits `B( item: doc )` without"), "{message}");
     }
 
     #[test]

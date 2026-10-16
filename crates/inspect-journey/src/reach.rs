@@ -30,6 +30,11 @@ use crate::check::{Note, Verdict};
 /// A remark on `line` for each listener parameter an emission reachable from
 /// `trigger` leaves unbound, in the order ingestion reported them, saying
 /// where the emission is.
+///
+/// Once a journey: on the first act that reaches it, and not again on every
+/// later act that sets off the same emission. `notes` is the journey's so far,
+/// so a remark already in it is not repeated — the same few hundred
+/// characters under each of a dozen steps is a remark nobody reads.
 pub(crate) fn check(
     trigger: &str,
     line: usize,
@@ -55,7 +60,11 @@ pub(crate) fn check(
             Some(at) => format!("{} (at {}:{})", diagnostic.message, at.file, at.line),
             None => diagnostic.message.clone(),
         };
-        notes.push(Note { line, verdict: Verdict::Remark, message });
+        let said =
+            notes.iter().any(|note| note.verdict == Verdict::Remark && note.message == message);
+        if !said {
+            notes.push(Note { line, verdict: Verdict::Remark, message });
+        }
     }
 }
 
@@ -196,6 +205,22 @@ rule Elsewhere {
         assert!(
             said[0].starts_with("`Hear` emits `Heard(note: doc)` without binding `doc` for `Log`")
         );
+    }
+
+    /// A second act reaching the same emission in the same journey is not
+    /// told again; an act reaching it in another journey, with notes of its
+    /// own, is.
+    #[test]
+    fn the_same_remark_is_made_once_a_journey() {
+        let (graph, program) = ingested(SPEC);
+        let mut notes = Vec::new();
+        check("Start", 7, &graph, &program, &mut notes);
+        check("Middle", 9, &graph, &program, &mut notes);
+        let lines: Vec<usize> = notes.iter().map(|note| note.line).collect();
+        assert_eq!(lines, [7], "{notes:#?}");
+        let mut elsewhere = Vec::new();
+        check("Middle", 9, &graph, &program, &mut elsewhere);
+        assert_eq!(elsewhere.len(), 1);
     }
 
     #[test]

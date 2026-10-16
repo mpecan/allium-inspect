@@ -81,12 +81,13 @@ impl Walker<'_> {
             .collect();
         for (given, made) in given.iter().zip(made) {
             match given {
-                Given::Instance { type_expr, fields, .. } => {
+                Given::Instance { name, type_expr, fields, line } => {
                     let Some(id) = made else { continue };
                     for (field, value) in fields {
                         let declared =
                             words::field_at(self.spec, type_expr, std::slice::from_ref(field));
-                        if self.rejects(value, declared) {
+                        if let Some(why) = self.rejects(value, declared) {
+                            self.unwritten(*line, format!("given {name}: {type_expr}"), why);
                             continue;
                         }
                         let value = self.value_of(value);
@@ -98,7 +99,10 @@ impl Walker<'_> {
                         let declared = self.declared_type(&path.root).and_then(|type_expr| {
                             words::field_at(self.spec, type_expr, &path.segments)
                         });
-                        if self.rejects(term, declared) {
+                        if let Some(why) = self.rejects(term, declared) {
+                            let said =
+                                format!("given {} = {}", path.as_written(), term.as_written());
+                            self.unwritten(*line, said, why);
                             continue;
                         }
                     }
@@ -176,10 +180,27 @@ impl Walker<'_> {
             .map(|member| member.type_expr.as_str())
     }
 
-    /// Whether `term` is a word the checker reports for `field`, and so is
-    /// left unwritten — see [`words::rejected`].
-    fn rejects(&self, term: &Term, field: Option<words::Field<'_>>) -> bool {
+    /// Why `term` is a word the checker reports for `field`, and so is left
+    /// unwritten — see [`words::rejected`].
+    fn rejects(&self, term: &Term, field: Option<words::Field<'_>>) -> Option<String> {
         words::rejected(term, field, &|name| self.bound.contains_key(name), self.spec)
+    }
+
+    /// Say that a `given` line was not written, and why.
+    ///
+    /// Kept apart from the walk's other notes, because the checker usually
+    /// said the same about the line already and the walk adds only what it
+    /// did not (`crate::run::walk`). Not for a journey this one stands on:
+    /// that one's lines are its own walk's to report.
+    fn unwritten(&mut self, line: usize, about: String, why: String) {
+        if self.standing_on.is_none() {
+            self.unwritten.push(Outcome {
+                line,
+                verdict: crate::check::Verdict::Unspecified,
+                about,
+                detail: Some(why),
+            });
+        }
     }
 
     /// Write a value the journey asserted, or say why nothing was written.

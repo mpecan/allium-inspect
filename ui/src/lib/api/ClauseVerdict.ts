@@ -12,5 +12,11 @@ export type ClauseVerdict = {
 text: string, truth: Truth, 
 /**
  * What could not be decided, when anything could not.
+ *
+ * And, first, for a precondition inside a loop that one member failed,
+ * which member and which loop — about the whole clause, so its
+ * `expression` is the clause's own text. That one is the clause's alone
+ * and is never among the rule's `unresolved`, because nothing about it
+ * was undecided.
  */
 unresolved: Array<Unresolved>, };

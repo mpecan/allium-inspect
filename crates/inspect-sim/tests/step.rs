@@ -974,6 +974,17 @@ fn a_precondition_inside_a_loop_one_kept_member_failing_refuses_the_rule() {
     assert_eq!(outcome.disposition, Disposition::Refused, "{:?}", outcome.requires);
     assert_eq!(inside(&outcome).truth, Truth::False);
     assert!(outcome.effects.is_empty(), "{:?}", outcome.effects);
+    // Which member, and which loop, beside the clause: `h.active = true` alone
+    // is a clause about nobody in particular. The clause's to show, and not
+    // the rule's: nothing about a refusal was undecided.
+    let said = &inside(&outcome).unresolved[0];
+    assert_eq!(
+        said.reason,
+        "`for h in Hooks`: Hook#2 does not satisfy this precondition, and a `requires` inside a \
+         loop is read for every member the loop keeps, so the whole rule is refused"
+    );
+    assert_eq!(said.expression.as_deref(), Some("h.active = true"));
+    assert!(outcome.unresolved.is_empty(), "{:?}", outcome.unresolved);
 }
 
 /// False beside undecided is false: one member that fails settles it, whatever
@@ -1128,6 +1139,32 @@ fn a_precondition_inside_a_loop_undecided_for_a_member_of_an_incomplete_collecti
         ),
         "{reasons:?}"
     );
+}
+
+/// Every member the collection holds passes, and it may be missing one it
+/// could not decide on: undecided, not true, because the member it left out
+/// was never asked.
+#[test]
+fn a_precondition_inside_a_loop_every_held_member_passing_an_incomplete_collection_is_undecided() {
+    let outcome = hung(&[(true, Some(true)), (false, Some(true))]);
+    let clause = live(&outcome);
+    assert_eq!(clause.truth, Truth::Unknown, "{:?}", outcome.requires);
+    assert_eq!(outcome.disposition, Disposition::Undecided);
+    assert_eq!(
+        clause.unresolved[0].reason,
+        "`for h in r.hooks` may be missing members it could not decide on, so this precondition \
+         could not be checked for them"
+    );
+}
+
+/// And one member it holds failing settles it even so: refused, whatever the
+/// member it may have left out would have said.
+#[test]
+fn a_precondition_inside_a_loop_a_held_member_failing_an_incomplete_collection_is_refused() {
+    let outcome = hung(&[(true, Some(false)), (false, Some(true))]);
+    let clause = live(&outcome);
+    assert_eq!(clause.truth, Truth::False, "{:?}", outcome.requires);
+    assert_eq!(outcome.disposition, Disposition::Refused);
 }
 
 /// `for (h, ok) in Hooks` takes each member apart. The simulator binds a member

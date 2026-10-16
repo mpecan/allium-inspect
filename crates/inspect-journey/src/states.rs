@@ -30,13 +30,15 @@
 
 use std::collections::BTreeSet;
 
-use allium_parser::ast::{ComparisonOp, Expr};
-use inspect_model::{NodeKind, Program, RuleAst, SpecGraph, graph::TriggerSource, ingest};
+use allium_parser::ast::{ComparisonOp, Expr, ForBinding};
+use inspect_model::{
+    NodeKind, PerMember, Program, RuleAst, SpecGraph, graph::TriggerSource, ingest,
+};
 
 use crate::{
     check::{Note, Verdict},
     journey::Term,
-    words::hint,
+    words::{hint, unbound_word},
 };
 
 /// What the checker needs to say whether one act names a state nobody has.
@@ -57,21 +59,17 @@ pub(crate) fn check(
 ) {
     let mut declared = None;
     for (position, argument) in act.arguments.iter().enumerate() {
+        // One test of what a bare word is, `given`'s and `then`'s: a single
+        // lowercase word nobody bound. A capitalised one is a collection,
+        // which is the walk's.
         let Term::Path(path) = argument else { continue };
-        if !path.segments.is_empty() || knows(&path.root) {
-            continue;
-        }
+        let Some(word) = unbound_word(path, &knows) else { continue };
         let declared = declared.get_or_insert_with(|| graph.declared_states());
-        if declared.contains(path.root.as_str()) {
+        if declared.contains(word) {
             continue;
         }
-        let word = path.root.as_str();
         let Some((rule, parameter, states)) = compared(act.trigger, position, graph, program)
         else {
-            // A capitalised word is a collection, which is the walk's.
-            if word.chars().next().is_some_and(char::is_uppercase) {
-                continue;
-            }
             notes.push(Note {
                 line: act.line,
                 verdict: Verdict::Remark,
@@ -122,21 +120,43 @@ fn compared(
 /// `reason in {changed_mind, found_elsewhere}`.
 ///
 /// A bare name that is another of the rule's own names — a parameter or a
-/// `let` — is a binding, not a state, and is left out.
+/// `let` — is a binding, not a state, and is left out. So, for a precondition
+/// written inside a rule-level `for`, is the loop's own name and a `let` the
+/// loop wrote: `requires: decision = live` compares with a binding, and the
+/// act's argument can match it whatever it is.
 fn states_against(ast: &RuleAst, parameter: &str, parameters: &[String]) -> BTreeSet<String> {
-    let bound = |name: &str| {
+    let rule_bound = |name: &str| {
         parameters.iter().any(|other| other == name) || ast.lets.iter().any(|(own, _)| own == name)
     };
+    let loop_bound = |within: Option<&PerMember>, name: &str| {
+        within.is_some_and(|within| {
+            let binding = match &within.binding {
+                ForBinding::Single(ident) => ident.name == name,
+                ForBinding::Destructured(parts, _) => parts.iter().any(|part| part.name == name),
+            };
+            binding || within.lets.iter().any(|(own, _)| own == name)
+        })
+    };
     let is_parameter = |expr: &Expr| matches!(expr, Expr::Ident(ident) if ident.name == parameter);
-    let state = |expr: &Expr| match expr {
-        Expr::Ident(ident) if !bound(&ident.name) => Some(ident.name.clone()),
+    let state = |within: Option<&PerMember>, expr: &Expr| match expr {
+        Expr::Ident(ident) if !rule_bound(&ident.name) && !loop_bound(within, &ident.name) => {
+            Some(ident.name.clone())
+        }
         _ => None,
     };
 
     let mut states = BTreeSet::new();
-    let mut pending: Vec<&Expr> =
-        ast.lets.iter().map(|(_, value)| value).chain(&ast.requires).chain(&ast.ensures).collect();
-    while let Some(expr) = pending.pop() {
+    let requires =
+        ast.requires.iter().enumerate().map(|(index, clause)| (clause, ast.per_member.get(&index)));
+    let mut pending: Vec<(&Expr, Option<&PerMember>)> = ast
+        .lets
+        .iter()
+        .map(|(_, value)| (value, None))
+        .chain(requires)
+        .chain(ast.ensures.iter().map(|clause| (clause, None)))
+        .collect();
+    while let Some((expr, within)) = pending.pop() {
+        let state = |expr: &Expr| state(within, expr);
         match expr {
             Expr::Comparison {
                 left, op: ComparisonOp::Eq | ComparisonOp::NotEq, right, ..
@@ -158,7 +178,7 @@ fn states_against(ast: &RuleAst, parameter: &str, parameters: &[String]) -> BTre
             }
             _ => {}
         }
-        pending.extend(ingest::subexpressions(expr));
+        pending.extend(ingest::subexpressions(expr).into_iter().map(|inner| (inner, within)));
     }
     states
 }
@@ -187,10 +207,62 @@ mod tests {
                 BlockItemKind::Let { name, value } => {
                     ast.lets.push((name.name.clone(), value.clone()));
                 }
+                // A rule-level loop's preconditions, each with the loop and
+                // the `let`s written above it, as the program keeps them.
+                BlockItemKind::ForBlock { binding, collection, filter, items } => {
+                    let mut lets = Vec::new();
+                    for inner in items {
+                        match &inner.kind {
+                            BlockItemKind::Let { name, value } => {
+                                lets.push((name.name.clone(), value.clone()));
+                            }
+                            BlockItemKind::Clause { keyword, value } if keyword == "requires" => {
+                                ast.per_member.insert(
+                                    ast.requires.len(),
+                                    PerMember {
+                                        binding: binding.clone(),
+                                        collection: collection.clone(),
+                                        filter: filter.clone(),
+                                        lets: lets.clone(),
+                                    },
+                                );
+                                ast.requires.push(value.clone());
+                            }
+                            _ => {}
+                        }
+                    }
+                }
                 _ => {}
             }
         }
         ast
+    }
+
+    /// Inside a rule-level `for`, the loop's own name and a `let` the loop
+    /// wrote are bindings, not states: an act's argument compared with one
+    /// can match it whatever it is. Outside the loop, the same word is a
+    /// state.
+    #[test]
+    fn a_loop_s_own_names_are_bindings_inside_it_and_only_there() {
+        let source = "
+rule Decide {
+    when: Decide(group, decision)
+    for h in group.hooks:
+        let live = h.mode
+        requires: decision = live
+        requires: decision != h
+    requires: decision != keep
+    requires: decision != hh
+}
+";
+        assert_eq!(against(source, "decision"), ["hh", "keep"]);
+        let outside = "
+rule Decide {
+    when: Decide(group, decision)
+    requires: decision = live
+}
+";
+        assert_eq!(against(outside, "decision"), ["live"]);
     }
 
     /// The states `rule` compares `parameter` with.

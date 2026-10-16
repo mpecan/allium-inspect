@@ -76,6 +76,11 @@ pub const FACING: &[&str] = &["admins", "portal"];
 /// different states: which one a field means is the declaring module's.
 pub const QUEUE: &[&str] = &["drafts", "queue"];
 
+/// Listeners for triggers emitted from elsewhere, and the module that `use`s
+/// theirs and emits one of them: who hears an emission, and a listener whose
+/// own `let` binds what its `when` names.
+pub const NEWSROOM: &[&str] = &["newsroom", "press"];
+
 /// `modules`, replayed from their recordings, with each module's source.
 pub fn library(modules: &[&str]) -> (SpecGraph, Program, Sources) {
     let root = fixtures();

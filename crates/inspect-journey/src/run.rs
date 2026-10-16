@@ -83,6 +83,7 @@ pub fn walk(
         firings: 0,
         moved: false,
         notes: Vec::new(),
+        unwritten: Vec::new(),
     };
     // The ground first, when this journey stands on some. Everything below —
     // the world it lays out, the names it binds, the steps it takes — happens
@@ -96,7 +97,17 @@ pub fn walk(
         journey.steps.iter().map(|step| walker.walk_step(step, &checked)).collect();
 
     let mut notes = walker.notes;
-    notes.extend(notes_outside_steps(journey, &checked));
+    let outside = notes_outside_steps(journey, &checked);
+    // A `given` the walk left unwritten, where the checker said nothing about
+    // that line — so nothing is dropped without a word, and nothing is said
+    // twice.
+    let unsaid: Vec<Outcome> = walker
+        .unwritten
+        .into_iter()
+        .filter(|unwritten| !outside.iter().any(|note| note.line == unwritten.line))
+        .collect();
+    notes.extend(outside);
+    notes.extend(unsaid);
     notes.sort_by_key(|note| note.line);
 
     Walk {
@@ -168,14 +179,30 @@ pub(crate) struct Walker<'a> {
     /// consumer filtered notes by *clause* line and neither of these sits on
     /// one — so a journey whose cast is nobody reported as satisfied.
     pub(crate) notes: Vec<Outcome>,
+    /// `given` lines the walk did not write, and why: see `Walker::unwritten`.
+    pub(crate) unwritten: Vec<Outcome>,
 }
 
 impl Walker<'_> {
     /// One step: every clause in the order it was written.
     pub(crate) fn walk_step(&mut self, step: &Step, notes: &[check::Note]) -> Walked {
         let mut outcomes = Vec::new();
+        let mut asides = Vec::new();
         self.moved = false;
         for clause in &step.clauses {
+            // What `check` remarked on this line, shown beside the step and
+            // never as its verdict (see `Walked::asides`).
+            asides.extend(
+                notes
+                    .iter()
+                    .filter(|note| note.line == clause.line() && note.verdict == Verdict::Remark)
+                    .map(|note| Outcome {
+                        line: note.line,
+                        verdict: note.verdict,
+                        about: about(clause),
+                        detail: Some(note.message.clone()),
+                    }),
+            );
             // A line the spec cannot support is not run. Firing an act at a
             // surface nobody specified would produce a second, confusing
             // failure about a world rather than the one that matters.
@@ -184,6 +211,7 @@ impl Walker<'_> {
             // stop, and the walk has the better answer to what one says — an
             // act setting off an emission a listener cannot bind is run, and
             // the listener is reported undecided if the emission is reached.
+            // It is carried as an aside, above.
             let blocking: Vec<&check::Note> = notes
                 .iter()
                 .filter(|note| note.line == clause.line())
@@ -227,6 +255,7 @@ impl Walker<'_> {
             title: step.title.clone(),
             line: step.line,
             outcomes,
+            asides,
             world: self.world.clone(),
         }
     }

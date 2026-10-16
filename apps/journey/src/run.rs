@@ -10,7 +10,7 @@
 
 use std::{collections::BTreeMap, io::Write, path::Path};
 
-use inspect_journey::{Strictness, Walk, journey::Journey};
+use inspect_journey::{Strictness, Verdict, Walk, journey::Journey};
 use inspect_model::{
     AlliumRunner, FileReader, Ingestion, Program, SourceReader, SpecGraph, ingest, module_name,
 };
@@ -150,21 +150,25 @@ fn statically(
         .map(|step| {
             let lines: Vec<usize> =
                 step.clauses.iter().map(inspect_journey::Clause::line).collect();
+            let as_outcome = |note: &inspect_journey::Note| inspect_journey::Outcome {
+                line: note.line,
+                verdict: note.verdict,
+                about: note.message.clone(),
+                detail: None,
+            };
+            let (asides, outcomes): (Vec<_>, Vec<_>) = notes
+                .iter()
+                .filter(|note| lines.contains(&note.line))
+                .partition(|note| note.verdict == Verdict::Remark);
+            // A remark is an aside, as it is in the walk: worth reading, and
+            // no part of whether the step holds.
             inspect_journey::Walked {
                 number: step.number,
                 title: step.title.clone(),
                 line: step.line,
                 world: inspect_sim::World::new(),
-                outcomes: notes
-                    .iter()
-                    .filter(|note| lines.contains(&note.line))
-                    .map(|note| inspect_journey::Outcome {
-                        line: note.line,
-                        verdict: note.verdict,
-                        about: note.message.clone(),
-                        detail: None,
-                    })
-                    .collect(),
+                outcomes: outcomes.into_iter().map(as_outcome).collect(),
+                asides: asides.into_iter().map(as_outcome).collect(),
             }
         })
         .collect();

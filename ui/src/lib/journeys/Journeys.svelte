@@ -424,6 +424,20 @@
                   </div>
                 </li>
               {/each}
+              <!-- What the checker remarked on these lines: worth a look, and
+                   no part of the step's mark above. Keyed by the remark too,
+                   because one act can set off two remarks about one line. -->
+              {#each step.asides as aside (aside.line + aside.about + (aside.detail ?? ""))}
+                <li class="quiet aside">
+                  <Verdict kind={MARK[aside.verdict]} label={MEANING[aside.verdict]} />
+                  <div class="line-body">
+                    <code>{aside.about}</code>
+                    {#if aside.detail}
+                      <p class="detail">{aside.detail}</p>
+                    {/if}
+                  </div>
+                </li>
+              {/each}
             </ul>
             {#if worthShowing(shown)}
               <Evidence

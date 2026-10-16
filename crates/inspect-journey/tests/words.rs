@@ -242,20 +242,65 @@ fn configuration_is_left_to_the_walk() {
     );
 }
 
-/// The fixture journeys in the spec itself are untouched.
+/// Every fixture journey, against its own spec set, is untouched by the word
+/// checks: no word reported as no state or nobody, and no remark but the one
+/// the chains journey exists to show.
 #[test]
 fn the_fixtures_own_journeys_report_no_word() {
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/lending.journey");
-    let journeys = parse(&common::read(&path)).expect("they parse");
-    let (graph, program, _) = common::library(LENDING);
-    for journey in &journeys {
-        let notes = check(journey, &journeys, &graph, &program);
-        assert!(
-            !notes.iter().any(|note| note.message.contains("no state")),
-            "{}: {notes:#?}",
-            journey.name
-        );
+    let sets: &[(&str, &[&str])] = &[
+        ("absence", LENDING),
+        ("chains", common::CHAINS),
+        ("facing", common::FACING),
+        ("fanout", common::FANOUT),
+        ("forms", LENDING),
+        ("grants", common::GRANTS),
+        ("guards", common::GUARDS),
+        ("lending", LENDING),
+        ("loss", LENDING),
+        ("orders", common::ORDERS),
+        ("packing", common::PACKING),
+        ("pinboard", common::PINBOARD),
+        ("reservations", LENDING),
+        ("switches", common::SWITCHES),
+        ("undecided", LENDING),
+    ];
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let on_disk = std::fs::read_dir(&directory)
+        .expect("the fixtures are listed")
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().extension().is_some_and(|it| it == "journey"))
+        .count();
+    assert_eq!(on_disk, sets.len(), "a fixture journey this test does not read");
+    for (file, modules) in sets {
+        let journeys = parse(&common::read(&directory.join(format!("{file}.journey"))))
+            .unwrap_or_else(|error| panic!("{file}: {error}"));
+        let (graph, program, _) = common::library(modules);
+        for journey in &journeys {
+            let notes = check(journey, &journeys, &graph, &program);
+            let worded: Vec<&Note> = notes
+                .iter()
+                .filter(|note| {
+                    ["no state", "is nobody in this journey", "is cast by this journey"]
+                        .iter()
+                        .any(|said| note.message.contains(said))
+                })
+                .collect();
+            assert!(worded.is_empty(), "{file}/{}: {worded:#?}", journey.name);
+            let remarks: Vec<&str> = notes
+                .iter()
+                .filter(|note| note.verdict == Verdict::Remark)
+                .map(|note| note.message.as_str())
+                .collect();
+            let expected = *file == "chains" && journey.name == "ChainedByName";
+            assert!(
+                remarks.is_empty() || expected,
+                "{file}/{}: an unexpected remark: {remarks:#?}",
+                journey.name
+            );
+            if expected {
+                assert!(!remarks.is_empty(), "the chains journey exists to show one");
+            }
+        }
     }
 }
 
@@ -399,4 +444,176 @@ fn the_walk_reads_a_field_from_the_type_the_journey_wrote() {
     );
     assert!(notes.is_empty(), "{notes:#?}");
     assert!(walk.steps[0].verdict().holds(), "{:#?}", walk.steps);
+}
+
+// --- the checker and the walk give one answer -----------------------------------
+
+/// A set with a misspelt member in it is reported by the checker, member by
+/// member — and the walk, asking the same question of the whole set, leaves
+/// the field unset rather than laying the set out with the bare word inside
+/// it. It was laid out, and `then ada in hold.reviewers` *held* beside the
+/// note saying the line was wrong.
+#[test]
+fn a_set_with_a_reported_member_is_left_unset_and_said_once() {
+    let source = "journey J {
+    cast:
+        ada:  lending/Member
+        bob:  lending/Member
+        hold: Hold
+    given:
+        hold.reviewers = {ada, bbo}
+    1. look
+        then ada in hold.reviewers
+}";
+    let journeys = parse(source).expect("the journey parses");
+    let (graph, program, sources) = common::library(common::DESK);
+    let notes = check(&journeys[0], &journeys, &graph, &program);
+    assert_eq!(about(&notes, "bbo").verdict, Verdict::Unspecified);
+    let walk = walk(&journeys[0], &journeys, &graph, &program, &sources);
+    let (verdict, detail) = line(&walk, "then ada in hold.reviewers");
+    assert_eq!(verdict, Verdict::Undecided, "{detail:?}");
+    let said: Vec<_> = walk.notes.iter().filter(|note| note.about.contains("reviewers")).collect();
+    assert_eq!(said.len(), 1, "one note on the line, not one from each side: {said:#?}");
+}
+
+/// The file's world is laid out before the journey's cast, so a world line
+/// naming somebody only the journey casts cannot be written. The checker read
+/// world lines with the journey's names and said nothing; the walk then wrote
+/// nothing and said nothing either, and `then loan.member = ada` read unknown
+/// with no word about why.
+#[test]
+fn a_world_line_naming_somebody_only_the_journey_casts_is_reported() {
+    let source = "world {
+    cast:
+        loan: Loan
+    given:
+        loan.status = open
+        loan.member = ada
+}
+
+journey J {
+    cast:
+        ada: Member
+    1. look
+        then loan.member = ada
+}";
+    let notes = checked(source);
+    let note = about(&notes, "ada");
+    assert_eq!(note.verdict, Verdict::Unspecified);
+    assert!(
+        note.message.contains("is cast by this journey, and the file's world is laid out before"),
+        "{}",
+        note.message
+    );
+    let walk = walked(source);
+    let said: Vec<_> =
+        walk.notes.iter().filter(|note| note.about == "given loan.member = ada").collect();
+    assert_eq!(said.len(), 1, "{:#?}", walk.notes);
+    assert_eq!(said[0].detail.as_deref(), Some(note.message.as_str()));
+}
+
+/// Where the checker has nothing to say about a line the walk did not write,
+/// the walk says it. A journey standing on one whose catching step was
+/// refused names what it would have caught: the checker counts the name, and
+/// the walk has nothing bound to it.
+#[test]
+fn a_given_the_walk_could_not_write_is_said_even_where_the_checker_was_silent() {
+    let source = "journey TriesToBorrow {
+    cast:
+        ada:  Member
+        copy: catalogue/Copy
+    given:
+        ada.is_at_limit = false
+        copy.status = lost
+    1. she tries
+        ada does MemberBorrows(ada, copy) on MemberShelf creating loan: Loan
+}
+
+journey NoticesIt {
+    after: TriesToBorrow
+    given:
+        n: Notice { loan: loan }
+    1. look
+        then n.loan = loan
+}";
+    let journeys = parse(source).expect("the journey parses");
+    let (graph, program, sources) = common::library(LENDING);
+    assert!(check(&journeys[1], &journeys, &graph, &program).is_empty());
+    let walk = walk(&journeys[1], &journeys, &graph, &program, &sources);
+    let note = walk
+        .notes
+        .iter()
+        .find(|note| note.about == "given n: Notice")
+        .unwrap_or_else(|| panic!("the line is reported: {:#?}", walk.notes));
+    assert_eq!(note.verdict, Verdict::Unspecified);
+    assert!(note.detail.as_deref().is_some_and(|detail| detail.contains("`loan`")), "{note:#?}");
+}
+
+/// A bare word an act hands on that no rule compares is `check`'s remark, and
+/// the walk carries it beside the step — the browser shows walks, so a remark
+/// only `check` printed was one nobody there saw. Beside the step and not in
+/// it: the remark is no part of whether the step holds.
+#[test]
+fn an_act_s_remark_is_carried_into_the_walk_beside_the_step() {
+    let source = "journey J {
+    cast:
+        ada:  Member
+        loan: Loan
+    given:
+        loan.member = ada
+        loan.status = open
+    1. report
+        ada does MemberReportsLoss(loan, mislaid) on MemberShelf
+}";
+    let notes = checked(source);
+    assert_eq!(about(&notes, "mislaid").verdict, Verdict::Remark);
+    let walk = walked(source);
+    let step = &walk.steps[0];
+    assert_eq!(step.asides.len(), 1, "{step:#?}");
+    assert_eq!(step.asides[0].verdict, Verdict::Remark);
+    assert_eq!(step.asides[0].about, "ada does MemberReportsLoss(loan, mislaid) on MemberShelf");
+    assert!(
+        step.asides[0].detail.as_deref().is_some_and(|detail| detail.contains("`mislaid`")),
+        "{step:#?}"
+    );
+    assert!(step.outcomes.iter().all(|outcome| outcome.verdict != Verdict::Remark), "{step:#?}");
+}
+
+/// Both modules declare an `Item`, and an issue's `item: Item` is its own
+/// module's. Followed by name alone, the hop landed on the first `Item` in the
+/// set — the drafts', which declares no `open` — and a correct `then` was
+/// reported unspecified and never compared.
+#[test]
+fn a_hop_through_a_field_is_read_in_the_module_declaring_it() {
+    let (notes, walk) = queued(
+        "journey J {
+    cast:
+        bo: Issue
+        it: queue/Item
+    given:
+        bo.status = open
+        bo.item = it
+        it.stage = open
+    1. it closes
+        bo does Close(bo) on Desk
+        then bo.item.stage = open
+        then bo.status = closed
+}",
+    );
+    assert!(notes.is_empty(), "{notes:#?}");
+    assert!(walk.notes.is_empty(), "{:#?}", walk.notes);
+    assert!(walk.steps[0].verdict().holds(), "{:#?}", walk.steps);
+    // And a state of the other `Item` is reported against this one's.
+    let (notes, _) = queued(
+        "journey J {
+    cast:
+        bo: Issue
+    1. it closes
+        then bo.item.stage = draft
+}",
+    );
+    assert!(
+        about(&notes, "draft").message.contains("no state of `Item.stage`, which declares open"),
+        "{notes:#?}"
+    );
 }

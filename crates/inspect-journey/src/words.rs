@@ -43,7 +43,7 @@ use inspect_model::{
 
 use crate::{
     check::{Note, Verdict},
-    journey::{Path, Term},
+    journey::{Given, Path, Term},
 };
 
 /// The field a value is written into, when the checker can name it.
@@ -93,6 +93,13 @@ pub(crate) fn fields_of<'g>(graph: &'g SpecGraph, type_expr: &str) -> Option<Dec
 /// the spec declares; anything else — a collection, a scalar, a name the spec
 /// does not have — and the field is not known, which is not the same as having
 /// none.
+///
+/// `type_expr` is the journey's, and qualified by module. Every hop after it
+/// is the spec's, and read the way [`SpecGraph::states_of`] reads an
+/// enumeration: in the module of the entity declaring the field, a bare name
+/// that module's own and `alias/X` through its imports. Read by name alone, an
+/// issue's `item: Item` was the first `Item` in the set — another module's,
+/// with other states — and a correct `then` was reported unspecified.
 pub(crate) fn field_at<'g>(
     graph: &'g SpecGraph,
     type_expr: &str,
@@ -101,10 +108,43 @@ pub(crate) fn field_at<'g>(
     let (last, hops) = segments.split_last()?;
     let mut owner = fields_of(graph, type_expr)?;
     for hop in hops {
-        owner = fields_of(graph, &owner.detail.field(hop)?.type_expr)?;
+        owner = declared_in(graph, owner.module, &owner.detail.field(hop)?.type_expr)?;
     }
     let field = owner.detail.field(last)?;
     Some(Field { owner: owner.name, module: owner.module, field })
+}
+
+/// The entity or value type `type_expr` names, written in the spec's
+/// `module`.
+///
+/// Where that module leads to no declaration of the name, it is looked up by
+/// name alone — and only when the set declares exactly one, because picking
+/// one of several is a guess, and an unknown field is one the checker already
+/// reads as *not known* rather than *none*.
+fn declared_in<'g>(graph: &'g SpecGraph, module: &str, type_expr: &str) -> Option<Declared<'g>> {
+    let written = type_expr.trim().trim_end_matches('?');
+    let (qualifier, bare) =
+        written.rsplit_once('/').map_or((None, written), |(alias, bare)| (Some(alias), bare));
+    let home = graph.home_of(module, qualifier);
+    let named = |node: &&'g inspect_model::Node| {
+        matches!(node.kind, NodeKind::Entity | NodeKind::Value) && node.name == bare
+    };
+    let node = match graph.nodes.iter().filter(named).find(|node| node.module == home) {
+        Some(node) => node,
+        None => {
+            let mut anywhere = graph.nodes.iter().filter(named);
+            let only = anywhere.next()?;
+            if anywhere.next().is_some() {
+                return None;
+            }
+            only
+        }
+    };
+    Some(Declared {
+        name: node.name.as_str(),
+        module: node.module.as_str(),
+        detail: node.detail.as_entity()?,
+    })
 }
 
 /// A value a journey line writes, and where.
@@ -116,12 +156,62 @@ pub(crate) struct Written<'t, 'g> {
     pub(crate) line: usize,
 }
 
+/// Who a line can name.
+pub(crate) trait Knows {
+    /// Bound by the time the line is laid out.
+    fn now(&self, name: &str) -> bool;
+    /// Bound only afterwards: somebody the journey casts, named by a line of
+    /// the file's world, which is laid out first.
+    fn later(&self, _name: &str) -> bool {
+        false
+    }
+    /// The type `name` was bound under, as the journey wrote it.
+    fn type_of(&self, _name: &str) -> Option<&str> {
+        None
+    }
+}
+
+/// The words one `given` line writes, against the fields it writes them to.
+pub(crate) fn given(given: &Given, known: &dyn Knows, graph: &SpecGraph, notes: &mut Vec<Note>) {
+    match given {
+        Given::Instance { type_expr, fields, line, .. } => {
+            for (field, value) in fields {
+                let into = field_at(graph, type_expr, std::slice::from_ref(field));
+                check(Written { value, into, line: *line }, known, graph, notes);
+            }
+        }
+        Given::Assign { path, value, line } => {
+            written(path, Written { value, into: None, line: *line }, known, graph, notes);
+        }
+    }
+}
+
+/// A word written into `path` — by `given`, `stipulate` or compared in a
+/// `then` — against the field `path` ends on.
+///
+/// `config` is the walk's: it checks a value against the parameter's declared
+/// type, which says more than any state could.
+pub(crate) fn written(
+    path: &Path,
+    written: Written<'_, '_>,
+    known: &dyn Knows,
+    graph: &SpecGraph,
+    notes: &mut Vec<Note>,
+) {
+    if crate::config::is_config(path) {
+        return;
+    }
+    let into =
+        known.type_of(&path.root).and_then(|type_expr| field_at(graph, type_expr, &path.segments));
+    check(Written { into, ..written }, known, graph, notes);
+}
+
 /// Whatever `written` writes that is a word nobody bound and no state of the
 /// field it goes into — or of anything, when the field is not known or
 /// declares none.
 pub(crate) fn check(
     written: Written<'_, '_>,
-    knows: &dyn Fn(&str) -> bool,
+    knows: &dyn Knows,
     graph: &SpecGraph,
     notes: &mut Vec<Note>,
 ) {
@@ -135,8 +225,17 @@ pub(crate) fn check(
             }
         }
         Term::Path(path) => {
-            let Some(word) = unbound_word(path, knows) else { return };
-            if let Some(message) = unknown(word, into, graph) {
+            let Some(word) = unbound_word(path, &|name| knows.now(name)) else { return };
+            let message = if knows.later(word) {
+                Some(format!(
+                    "`{word}` is cast by this journey, and the file's world is laid out before \
+                     the journey's cast, so this line cannot name them — cast `{word}` in the \
+                     world, or write this line in the journey's own `given`"
+                ))
+            } else {
+                unknown(word, into, graph)
+            };
+            if let Some(message) = message {
                 notes.push(Note { line, verdict: Verdict::Unspecified, message });
             }
         }
@@ -144,23 +243,28 @@ pub(crate) fn check(
     }
 }
 
-/// Whether `term` is a word [`check`] reports — one that, laid out, would be a
-/// state the spec has never declared for `field`.
+/// Why `term` is a word [`check`] reports — one that, laid out, would be a
+/// state the spec has never declared for `field` — or `None` when it is not.
+/// A set is reported when any member is, as `check` reports each member.
 ///
 /// The walk asks this before it lays a `given` out, and leaves such a field
 /// unset rather than holding the word. Held, it was compared: `copy.status =
 /// availble` had `BorrowCopy` *refused* on `copy.status = available`, the spec
 /// saying no on the strength of a state it has never heard of. Unset, the rule
-/// is undecided and names the field — and the checker's note on the line says
-/// why nothing was written there.
+/// is undecided and names the field — and a note on the line says why nothing
+/// was written there: the checker's, or the walk's own where the checker said
+/// nothing about that line.
 pub(crate) fn rejected(
     term: &Term,
     field: Option<Field<'_>>,
     knows: &dyn Fn(&str) -> bool,
     graph: &SpecGraph,
-) -> bool {
-    let Term::Path(path) = term else { return false };
-    unbound_word(path, knows).is_some_and(|word| unknown(word, field, graph).is_some())
+) -> Option<String> {
+    match term {
+        Term::Set(items) => items.iter().find_map(|item| rejected(item, field, knows, graph)),
+        Term::Path(path) => unbound_word(path, knows).and_then(|word| unknown(word, field, graph)),
+        Term::Literal(_) | Term::Clock { .. } => None,
+    }
 }
 
 /// The word `path` is, when it is a single lowercase word nobody bound.
@@ -171,6 +275,17 @@ pub(crate) fn unbound_word<'p>(path: &'p Path, knows: &dyn Fn(&str) -> bool) -> 
 }
 
 /// Why `word` is no state for `field`, or `None` when it is one.
+///
+/// A field that declares no states — or whose enumeration's name is ambiguous
+/// from its module, which [`SpecGraph::states_of`] also answers with none —
+/// takes any state the spec declares. The simulator is stricter about the
+/// same field: `x.f = word` in a rule's `ensures` stays undecided unless the
+/// field itself declares the word (`inspect_sim`'s `declared_state`). Both are
+/// honest: a journey's word is the author's own and is read as the state it
+/// spells when the spec has one, while a rule's word written into a field
+/// that names no states could be anything. So a journey may lay out a word
+/// that the spec's own postcondition, writing the same field, leaves
+/// undecided.
 fn unknown(word: &str, field: Option<Field<'_>>, graph: &SpecGraph) -> Option<String> {
     if let Some(Field { owner, module, field }) = field {
         let states = graph.states_of(module, field);
@@ -308,7 +423,13 @@ mod tests {
         let segments: Vec<String> = path.iter().map(|segment| (*segment).to_owned()).collect();
         let into = field_at(&graph, owner, &segments);
         let mut notes = Vec::new();
-        check(Written { value: term, into, line: 7 }, &|name| name == "ada", &graph, &mut notes);
+        struct Ada;
+        impl Knows for Ada {
+            fn now(&self, name: &str) -> bool {
+                name == "ada"
+            }
+        }
+        check(Written { value: term, into, line: 7 }, &Ada, &graph, &mut notes);
         notes
     }
 
@@ -355,6 +476,50 @@ mod tests {
         assert!(field_at(&graph, "Loan", &path(&["nothing"])).is_none());
         assert!(field_at(&graph, "Ghost", &path(&["status"])).is_none());
         assert!(field_at(&graph, "Loan", &[]).is_none());
+    }
+
+    /// Two modules each declare an `Item`. A hop is read in the module of the
+    /// entity declaring the field: bare, that module's own; `alias/X`, through
+    /// its imports; and by name alone only when the set has one.
+    #[test]
+    fn a_hop_is_read_in_the_module_declaring_the_field() {
+        let mut graph = SpecGraph::new("test");
+        let at = |module: &str, name: &str, fields: Vec<EntityField>| {
+            let mut node = entity(name, fields);
+            node.module = module.to_owned();
+            node.id = inspect_model::NodeId::new(module, NodeKind::Entity, name);
+            node
+        };
+        graph.nodes.push(at("d", "Item", vec![field("stage", "draft | live", &["draft", "live"])]));
+        graph.nodes.push(at(
+            "q",
+            "Item",
+            vec![field("stage", "open | closed", &["open", "closed"])],
+        ));
+        graph.nodes.push(at(
+            "q",
+            "Issue",
+            vec![
+                field("item", "Item?", &[]),
+                field("draft", "d/Item", &[]),
+                field("page", "Page", &[]),
+                field("ghost", "Ghost", &[]),
+            ],
+        ));
+        graph.nodes.push(at("d", "Page", vec![field("stage", "draft | live", &["draft", "live"])]));
+        graph.nodes.push(at("z", "Lone", vec![field("item", "Item", &[])]));
+        let path = |segments: &[&str]| -> Vec<String> {
+            segments.iter().map(|segment| (*segment).to_owned()).collect()
+        };
+        let module_of = |type_expr: &str, segments: &[&str]| {
+            field_at(&graph, type_expr, &path(segments)).map(|found| found.module)
+        };
+        assert_eq!(module_of("q/Issue", &["item", "stage"]), Some("q"), "its own module's");
+        assert_eq!(module_of("q/Issue", &["draft", "stage"]), Some("d"), "the module it names");
+        assert_eq!(module_of("q/Issue", &["page", "stage"]), Some("d"), "the only `Page`");
+        assert_eq!(module_of("q/Issue", &["ghost", "stage"]), None);
+        // `z` declares no `Item`, and two modules do: which is a guess.
+        assert_eq!(module_of("z/Lone", &["item", "stage"]), None);
     }
 
     #[test]

@@ -242,6 +242,12 @@ impl Application<'_> {
     /// asks `not exists Receipt{…, kind: read}` before creating one could
     /// never tell whether it already had, and a person reading the same
     /// message twice was undecidable from the second time on.
+    ///
+    /// A field declaring no states — an enumeration name ambiguous from its
+    /// module among them — takes no word here. A journey's checker is more
+    /// willing with the same field, accepting any state the spec declares,
+    /// because a journey's word is the author's own (`inspect_journey`'s
+    /// `words::unknown`).
     pub(super) fn declared_state(
         &self,
         home: &str,
