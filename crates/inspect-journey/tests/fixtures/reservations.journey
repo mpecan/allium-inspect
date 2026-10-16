@@ -15,6 +15,9 @@ journey TwoReadersWaitingOnOneBook {
 
     given:
         book.status = listed
+        -- `CatalogueDesk` faces a `Librarian`, which is staff whose role is
+        -- librarian. Unsaid, nothing can tell whether the desk is theirs.
+        staff.role = librarian
 
     1. two readers reserve the same book
         ada does MemberReserves(ada, book) on MemberShelf

@@ -23,10 +23,13 @@
 //! message)` on the next line finds what to send. The binding is the lower-cased
 //! entity name, which is the convention the language uses throughout.
 
+mod calls;
+mod iteration;
+
 use std::collections::BTreeMap;
 
-use allium_parser::ast::{CallArg, ComparisonOp, Expr, ForBinding};
-use inspect_model::{NodeKind, SpecGraph, graph::NodeId};
+use allium_parser::ast::{ComparisonOp, Expr};
+use inspect_model::{Node, NodeKind, SpecGraph, graph::NodeId};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -55,7 +58,17 @@ pub enum Effect {
     /// and `QueueOnSend` cannot fill the outbox without knowing which message.
     /// The simulator still stops here and offers the trigger to the reader —
     /// one step is one step — but a walk has already said the act happened.
-    Emitted { trigger: String, module: String, arguments: BTreeMap<String, Value> },
+    ///
+    /// Named arguments under the name written, positional ones in order: which
+    /// name a positional argument goes by is the *listener's* to say, and two
+    /// listeners may say differently (see [`crate::world::Event::positional`]).
+    Emitted {
+        trigger: String,
+        module: String,
+        arguments: BTreeMap<String, Value>,
+        #[serde(default)]
+        positional: Vec<Value>,
+    },
     /// A state change the entity's lifecycle does not permit.
     ///
     /// Reported rather than performed. The lifecycle is part of the spec, and a
@@ -74,21 +87,42 @@ pub enum Effect {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Applied {
     pub effects: Vec<Effect>,
+    /// Every note the clause left, whether or not it mattered.
     pub unresolved: Vec<Unresolved>,
+    /// What the clause promised and the world does not show, and why.
+    ///
+    /// Apart from `unresolved`, because a note is not that. An `if` whose
+    /// `or` was settled by its left side still carries a note about the right,
+    /// and `c.done = Hooks.any(…)` settled by one hook carries one about every
+    /// other; both were applied in full. Read off the notes, those rules were
+    /// reported as leaving something undone. Said here only by the paths that
+    /// actually left something undone: a member of a `for` nobody could
+    /// decide about, a `for` over something that is not a collection, a
+    /// branch nobody could choose, an assignment to nothing, and a form the
+    /// simulator does not model.
+    pub unapplied: Vec<Unresolved>,
 }
 
 impl Applied {
     fn note(unresolved: Vec<Unresolved>) -> Self {
-        Self { effects: Vec::new(), unresolved }
+        Self { effects: Vec::new(), unresolved, unapplied: Vec::new() }
     }
 
     fn effect(effect: Effect) -> Self {
-        Self { effects: vec![effect], unresolved: Vec::new() }
+        Self { effects: vec![effect], ..Self::default() }
+    }
+
+    /// Something promised and not applied, said first among the notes so it
+    /// is what a reader is shown.
+    fn left_undone(&mut self, why: Unresolved) {
+        self.unresolved.insert(0, why.clone());
+        self.unapplied.push(why);
     }
 
     fn merge(&mut self, other: Applied) {
         self.effects.extend(other.effects);
         self.unresolved.extend(other.unresolved);
+        self.unapplied.extend(other.unapplied);
     }
 }
 
@@ -145,8 +179,8 @@ impl<'a> Application<'a> {
             Expr::Conditional { branches, else_body, .. } => {
                 self.conditional(clause, branches, else_body.as_deref())
             }
-            Expr::For { binding, collection, body, .. } => {
-                self.iteration(binding, collection, body)
+            Expr::For { binding, collection, filter, body, .. } => {
+                self.iteration(binding, collection, filter.as_deref(), body)
             }
             // `let group = Group.created(…)`, and the lines below it that refer
             // to `group`. A rule that creates two things and joins them writes
@@ -201,130 +235,6 @@ impl<'a> Application<'a> {
         self.bindings
     }
 
-    /// `Entity.created(...)` or `TriggerName(...)`.
-    fn call(&mut self, function: &Expr, args: &[CallArg]) -> Applied {
-        // `Message.created(...)`: a member access whose field is `created`.
-        if let Expr::MemberAccess { object, field, .. } = function
-            && field.name == "created"
-            && let Some(entity) = bare_name(object)
-        {
-            return self.creation(entity, args);
-        }
-
-        // Otherwise a bare name: a trigger emission.
-        match bare_name(function) {
-            Some(trigger) => Applied::effect(Effect::Emitted {
-                trigger: trigger.to_owned(),
-                module: self.against.module.to_owned(),
-                arguments: self.emission_arguments(trigger, args),
-            }),
-            None => self.unmodelled(function, "this call is neither a creation nor a trigger"),
-        }
-    }
-
-    /// What an emission carries, by the parameter name the trigger declares.
-    ///
-    /// `MessageSent(message: message)` names its argument and most emissions
-    /// do; a positional one is matched against the trigger's own parameter
-    /// list, which is where the receiving rule's `when` gets its names from.
-    /// An argument that cannot be placed is dropped rather than invented —
-    /// the receiving rule then reports the binding as unset, which is the
-    /// honest answer and points at the emission.
-    fn emission_arguments(&self, trigger: &str, args: &[CallArg]) -> BTreeMap<String, Value> {
-        let declared = self
-            .against
-            .spec
-            .nodes_of(NodeKind::Trigger)
-            .find(|node| node.name == trigger)
-            .and_then(|node| node.detail.as_trigger())
-            .map(|detail| detail.parameters.clone())
-            .unwrap_or_default();
-
-        let mut carried = BTreeMap::new();
-        for (at, argument) in args.iter().enumerate() {
-            let (name, value) = match argument {
-                CallArg::Named(named) => (Some(named.name.name.clone()), &named.value),
-                CallArg::Positional(value) => (declared.get(at).cloned(), value),
-            };
-            let Some(name) = name else { continue };
-            carried.insert(name, self.evaluate(value).value);
-        }
-        carried
-    }
-
-    /// `let group = Group.created(…)`.
-    ///
-    /// The value is applied — it is usually a creation, and a creation is a
-    /// postcondition rather than an expression — and then bound under the name
-    /// the rule gave it, which is the whole point of writing one. `creation`
-    /// already binds a new instance under its own lowercased type name; this
-    /// binds it under the author's name as well, so
-    ///
-    /// ```text
-    /// let group = Group.created(…)
-    /// Membership.created(group: group, …)
-    /// ```
-    ///
-    /// joins the two. Without the binding the second line's `group` is
-    /// undecided and the membership is created pointing at nothing.
-    fn binding(&mut self, name: &str, value: &Expr) -> Applied {
-        let applied = self.apply(value);
-
-        // What the value produced, if it produced an instance. A `let` over
-        // anything else is bound to what it evaluates to.
-        let bound = applied.effects.iter().rev().find_map(|effect| match effect {
-            Effect::Created { id, .. } => Some(Value::Ref(id.clone())),
-            _ => None,
-        });
-
-        match bound {
-            Some(value) => {
-                self.bindings.insert(name.to_owned(), value);
-                applied
-            }
-            None => {
-                let evaluated = self.evaluate(value);
-                let mut applied = applied;
-                applied.unresolved.extend(evaluated.unresolved);
-                self.bindings.insert(name.to_owned(), evaluated.value);
-                applied
-            }
-        }
-    }
-
-    /// `Entity.created(field: value, ...)`.
-    fn creation(&mut self, entity: &str, args: &[CallArg]) -> Applied {
-        let home = self.declaring_module(entity).unwrap_or_else(|| self.against.module.to_owned());
-        let id = self.world.create(entity, &home);
-        let mut applied =
-            Applied::effect(Effect::Created { id: id.clone(), entity: entity.to_owned() });
-
-        for argument in args {
-            let CallArg::Named(named) = argument else { continue };
-            let field = named.name.name.as_str();
-            let value_node = &named.value;
-
-            let mut evaluated = self.evaluate(value_node);
-            // `Loan.created(status: open)` — `open` is a state, and at creation
-            // there is no previous value to say so. The entity's declared states
-            // are what settle it, and they come from the spec rather than from
-            // the world. Without this the new instance starts with an undecided
-            // status, and every rule that later reads it is undecided too.
-            if evaluated.value.is_unknown()
-                && let Some(name) = bare_name(value_node)
-                && let Some(state) = self.declared_state(entity, field, name)
-            {
-                evaluated = Evaluation { value: state, unresolved: Vec::new() };
-            }
-            applied.unresolved.extend(evaluated.unresolved);
-            self.world.set_field(&id, field, evaluated.value);
-        }
-
-        // The instance binds its own name, so the next clause can refer to it.
-        self.bindings.insert(entity.to_lowercase(), Value::Ref(id));
-        applied
-    }
-
     /// `copy.status = on_loan`.
     fn assignment(
         &mut self,
@@ -349,7 +259,24 @@ impl<'a> Application<'a> {
         let field = field.name.clone();
         let located = self.evaluate(object);
         let mut unresolved = located.unresolved;
-        let Value::Ref(id) = located.value else { return Applied::note(unresolved) };
+        let Value::Ref(id) = located.value else {
+            let mut applied = Applied::note(unresolved);
+            applied.left_undone(Unresolved {
+                reason: match located.value {
+                    Value::Unknown => {
+                        format!("`{field}` was not assigned: what it belongs to was never settled")
+                    }
+                    other => format!(
+                        "`{field}` was not assigned: it would belong to {}, which is not an \
+                         instance",
+                        other.described()
+                    ),
+                },
+                expression: self.describe(whole),
+                span: span_of(whole),
+            });
+            return applied;
+        };
 
         let mut evaluated = self.evaluate(value_node);
         // A bare name on the right of a status assignment is a state, the same
@@ -362,8 +289,11 @@ impl<'a> Application<'a> {
         // inventing a state nothing declares.
         if evaluated.value.is_unknown()
             && let Some(name) = bare_name(value_node)
-            && let Some(entity) = self.world.instance(&id).map(|instance| instance.entity.clone())
-            && let Some(state) = self.declared_state(&entity, &field, name)
+            && let Some((home, entity)) = self
+                .world
+                .instance(&id)
+                .map(|instance| (instance.module.clone(), instance.entity.clone()))
+            && let Some(state) = self.declared_state(&home, &entity, &field, name)
         {
             evaluated = Evaluation { value: state, unresolved: Vec::new() };
         }
@@ -375,13 +305,14 @@ impl<'a> Application<'a> {
         if let (Value::Enum(from), Value::Enum(to)) = (&previous, &evaluated.value)
             && let Some(refusal) = self.forbidden_transition(&id, &field, from, to)
         {
-            return Applied { effects: vec![refusal], unresolved };
+            return Applied { effects: vec![refusal], unresolved, unapplied: Vec::new() };
         }
 
         self.world.set_field(&id, &field, evaluated.value.clone());
         Applied {
             effects: vec![Effect::Assigned { id, field, from: previous, to: evaluated.value }],
             unresolved,
+            unapplied: Vec::new(),
         }
     }
 
@@ -428,9 +359,14 @@ impl<'a> Application<'a> {
     /// for a form nobody has taught the simulator yet.
     fn unmodelled(&self, whole: &Expr, why: &str) -> Applied {
         let description = self.describe(whole).unwrap_or_else(|| why.to_owned());
-        Applied::effect(Effect::Noted {
-            description: format!("{why}, so the world does not show it: {description}"),
-        })
+        let said = format!("{why}, so the world does not show it: {description}");
+        let mut applied = Applied::effect(Effect::Noted { description: said.clone() });
+        applied.left_undone(Unresolved {
+            reason: said,
+            expression: self.describe(whole),
+            span: span_of(whole),
+        });
+        applied
     }
 
     /// A branch neither taken nor skipped, because nobody could tell which.
@@ -439,82 +375,37 @@ impl<'a> Application<'a> {
     /// would leave a world that is missing a change with no record of why.
     fn skipped(&self, whole: &Expr, unresolved: Vec<Unresolved>) -> Applied {
         let description = self.describe(whole).unwrap_or_else(|| "its condition".to_owned());
+        let said = format!("a conditional postcondition was skipped: {description}");
         let mut applied = Applied::note(unresolved);
-        applied.effects.push(Effect::Noted {
-            description: format!("a conditional postcondition was skipped: {description}"),
+        applied.effects.push(Effect::Noted { description: said.clone() });
+        // After the condition's own reason, which says what could not be read;
+        // this says what went unapplied because of it.
+        applied.unresolved.push(Unresolved {
+            reason: said.clone(),
+            expression: self.describe(whole),
+            span: span_of(whole),
         });
-        applied
-    }
-
-    /// `for x in collection: …`.
-    fn iteration(&mut self, binding: &ForBinding, collection: &Expr, body: &Expr) -> Applied {
-        let binding = match binding {
-            ForBinding::Single(ident) => ident.name.clone(),
-            ForBinding::Destructured(parts, _) => {
-                parts.first().map_or_else(|| "it".to_owned(), |ident| ident.name.clone())
-            }
-        };
-        let body = body.clone();
-
-        let evaluated = self.evaluate(collection);
-        let mut applied = Applied::note(evaluated.unresolved);
-        let Value::Set(items) = evaluated.value else { return applied };
-
-        for item in items {
-            let restore = self.bindings.insert(binding.clone(), item);
-            let step = self.apply(&body);
-            applied.merge(step);
-            match restore {
-                Some(previous) => self.bindings.insert(binding.clone(), previous),
-                None => self.bindings.remove(&binding),
-            };
-        }
+        applied.unapplied.push(Unresolved {
+            reason: said,
+            expression: self.describe(whole),
+            span: span_of(whole),
+        });
         applied
     }
 
     // --- helpers ---------------------------------------------------------
 
     fn evaluate(&self, node: &Expr) -> Evaluation {
+        eval(node, &self.scope())
+    }
+
+    /// The environment a clause is read in: this world, this module, and
+    /// every name the rule has bound so far.
+    fn scope(&self) -> Env<'_> {
         let mut scope = Env::new(self.world, self.against.module, self.against.source)
             .deriving(self.against.derived);
         scope.bindings.clone_from(&self.bindings);
-        eval(node, &scope)
-    }
-
-    /// The module that declares `entity`, so a created instance knows where it
-    /// is from even when the rule creating it lives elsewhere.
-    fn declaring_module(&self, entity: &str) -> Option<String> {
-        self.against
-            .spec
-            .nodes
-            .iter()
-            .find(|node| node.kind == NodeKind::Entity && node.name == entity)
-            .map(|node| node.module.clone())
-    }
-
-    /// `name` as a state of `entity.field`, when the spec declares it as one.
-    ///
-    /// Checked against the declared states rather than accepted on sight: a
-    /// misspelled state should stay undecided and be reported, not become a
-    /// state nothing in the lifecycle mentions.
-    ///
-    /// A field's states are written in one of two places, and both count.
-    /// `status: open | returned` carries its own; `kind: ReceiptKind` carries
-    /// none and names an enumeration that does. Reading only the first left
-    /// `Receipt.created(kind: read)` storing an unknown — so the rule that
-    /// asks `not exists Receipt{…, kind: read}` before creating one could
-    /// never tell whether it already had, and a person reading the same
-    /// message twice was undecidable from the second time on.
-    fn declared_state(&self, entity: &str, field: &str, name: &str) -> Option<Value> {
-        let node = self
-            .against
-            .spec
-            .nodes
-            .iter()
-            .find(|node| node.kind == NodeKind::Entity && node.name == entity)?;
-        let declared = node.detail.as_entity()?.field(field)?;
-        let known = self.against.spec.states_of(declared).iter().any(|state| state == name);
-        known.then(|| Value::Enum(name.to_owned()))
+        scope
     }
 
     /// The transition graph governing `field`, if the spec declares one.
@@ -564,4 +455,13 @@ impl<'a> Application<'a> {
         span.slice(self.against.source)
             .map(|text| text.split_whitespace().collect::<Vec<_>>().join(" "))
     }
+}
+
+/// The entity `name` that `module` declares, or the first of that name when it
+/// declares none: two modules may each have an `Order`, and need not give it
+/// the same fields.
+fn entity_node<'s>(spec: &'s SpecGraph, module: &str, name: &str) -> Option<&'s Node> {
+    spec.node(&NodeId::new(module, NodeKind::Entity, name)).or_else(|| {
+        spec.nodes.iter().find(|node| node.kind == NodeKind::Entity && node.name == name)
+    })
 }

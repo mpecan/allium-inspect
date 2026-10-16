@@ -1,0 +1,1 @@
+{"diagnostics":[],"entities":[{"fields":[{"name":"placed","type_expr":"Boolean"},{"name":"child","type_expr":"Boolean"},{"name":"greeted","type_expr":"Boolean"}],"kind":"internal","name":"Ticket"}],"version":3}

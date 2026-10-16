@@ -51,24 +51,25 @@ pub struct RuleAst {
     /// conjunctive, but a reader looking at why a rule did not fire reads them
     /// top to bottom against the file.
     pub requires: Vec<Expr>,
+    /// The `requires` written inside a rule-level `for`, by their index in
+    /// `requires`, each with the loop's name.
+    ///
+    /// Whether one member failing a per-member precondition refuses the rule
+    /// or only skips that member is a reading the language does not settle,
+    /// so these are undecided whatever they say. Without the mark they were
+    /// read as the rule's own, and a trigger argument sharing the loop's name
+    /// decided them about the argument instead.
+    pub per_member: BTreeMap<usize, String>,
     /// One entry per `ensures` clause, in declaration order.
+    ///
+    /// A rule-level `for x in collection [where filter]:` is one entry here,
+    /// an `Expr::For` whose body holds the clauses (and `let`s) written inside
+    /// it, so they are applied once per member rather than once about nothing.
     ///
     /// Order matters here for real: `Message.created(...)` binds `message`, and
     /// a later clause emitting `MessageSent(message: message)` depends on the
     /// earlier one having run.
     pub ensures: Vec<Expr>,
-    /// The `for x in collection` clause, when the rule iterates.
-    ///
-    /// Recorded and **not yet applied**. The clauses inside the loop are
-    /// hoisted into `requires` and `ensures` above, where they mention a
-    /// binding nothing has bound — so a `for`-wrapped rule comes back
-    /// undecided naming that binding rather than running once per element.
-    /// That is the honest answer and not a useful one; keeping the iteration
-    /// here is what makes the useful one a later change rather than a re-parse.
-    ///
-    /// The fixture specs use `for` only inside invariants, which is why this
-    /// costs nothing today and would be easy to keep believing works.
-    pub iterate: Option<Expr>,
 }
 
 impl RuleAst {
@@ -113,6 +114,8 @@ pub struct Program {
     invariants: BTreeMap<String, Expr>,
     /// Each surface's boundary, by node id.
     boundaries: BTreeMap<String, Boundary>,
+    /// Each actor's identity, by node id.
+    actors: BTreeMap<String, Party>,
     /// What a spec computes rather than stores.
     derived: Derivations,
 }
@@ -167,6 +170,25 @@ pub struct Boundary {
     pub exposes: Option<Expr>,
 }
 
+/// Who an actor is, as an expression rather than as text.
+///
+/// The graph keeps `identified_by` as the author's words for a panel. This is
+/// what a walk needs to answer whether *this* person is one: `actor SiteAdmin
+/// { identified_by: User where is_admin = true }` is a demand on a user's
+/// fields, and a surface facing a `SiteAdmin` is closed to a user who does not
+/// meet it.
+#[derive(Debug, Clone, Default)]
+pub struct Party {
+    /// The entity an actor is an instance of, unqualified — compared against an
+    /// instance's entity, which is bare.
+    pub entity: Option<String>,
+    /// The `where` of `identified_by`, when it narrows.
+    pub condition: Option<Expr>,
+    /// `within: Workspace` — the context the actor is identified within, which
+    /// the condition reads as `within`.
+    pub within: Option<String>,
+}
+
 /// `context request: ContactRequest where status = pending`.
 #[derive(Debug, Clone)]
 pub struct Context {
@@ -210,6 +232,17 @@ impl Program {
     #[must_use]
     pub fn boundary(&self, id: &str) -> Option<&Boundary> {
         self.boundaries.get(id)
+    }
+
+    /// Record who the actor with `id` is.
+    pub fn add_actor(&mut self, id: impl Into<String>, party: Party) {
+        self.actors.insert(id.into(), party);
+    }
+
+    /// Who the actor with `id` is.
+    #[must_use]
+    pub fn actor(&self, id: &str) -> Option<&Party> {
+        self.actors.get(id)
     }
 
     /// Record `expr` as how `field` on `entity` is computed.
@@ -300,7 +333,7 @@ mod tests {
                 lets: vec![("standing".to_owned(), expr("let"))],
                 requires: vec![expr("requires")],
                 ensures: vec![expr("first"), expr("second")],
-                iterate: None,
+                per_member: BTreeMap::new(),
             },
         );
         let ast = program.rule("lending::rule::BorrowCopy").expect("the rule");

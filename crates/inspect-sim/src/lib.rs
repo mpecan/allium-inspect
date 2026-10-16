@@ -17,6 +17,8 @@
 #![forbid(unsafe_code)]
 
 pub mod apply;
+mod binding;
+pub mod creation;
 pub mod eval;
 pub mod seed;
 pub mod step;
@@ -25,6 +27,7 @@ pub mod value;
 pub mod world;
 
 pub use apply::{Against, Application, Applied, Effect};
+pub use creation::reactions;
 pub use eval::{Env, Evaluation, Unresolved, eval};
 pub use seed::seed;
 pub use step::{

@@ -1,0 +1,28 @@
+-- allium: 3
+-- pinboard.allium
+--
+-- Creates an entity another module declares, and reacts to its creation, both
+-- through a qualified name. The alias is not the module's own name on purpose:
+-- `memo/Note` has to be read through the `use` to find `notes`.
+
+use "./notes.allium" as memo
+
+entity Board {
+    title: String
+}
+
+rule Pin {
+    when: Pin(board, text)
+    ensures: memo/Note.created(text: text, seen: false)
+}
+
+rule Notice {
+    when: note: memo/Note.created
+    ensures: note.seen = true
+}
+
+surface BoardPage {
+    facing board: Board
+    provides:
+        Pin(board, text)
+}

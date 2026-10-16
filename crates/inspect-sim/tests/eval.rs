@@ -187,6 +187,36 @@ fn a_bound_name_evaluates_to_what_it_is_bound_to() {
     assert_eq!(value_of(&ident("copy"), &env), Value::Ref(copy));
 }
 
+/// A field read through a name bound to something already undecided — an
+/// argument an emission could not settle — says so, and quotes the name. Read
+/// bare, it was an unknown with no reason at all, and the chained rule
+/// reported "something could not be evaluated" (issue #6).
+#[test]
+fn a_field_read_through_something_undecided_in_silence_says_so() {
+    let source = "webhook.active";
+    let world = library();
+    let env = Env::new(&world, "lending", source).bind("webhook", Value::Unknown);
+    let node = Expr::MemberAccess {
+        span: AstSpan { start: 0, end: 14 },
+        object: Box::new(Expr::Ident(Ident {
+            span: AstSpan { start: 0, end: 7 },
+            name: "webhook".to_owned(),
+        })),
+        field: Ident { span: AstSpan { start: 8, end: 14 }, name: "active".to_owned() },
+    };
+    let evaluated = eval(&node, &env);
+    assert_eq!(evaluated.value, Value::Unknown);
+    let said: Vec<_> =
+        evaluated.unresolved.into_iter().map(|note| (note.reason, note.expression)).collect();
+    assert_eq!(
+        said,
+        [(
+            "`active` was read from something nothing settled".to_owned(),
+            Some("webhook".to_owned())
+        )]
+    );
+}
+
 #[test]
 fn an_unbound_name_is_undecided_and_says_which_one() {
     // A rule argument nobody supplied. Defaulting it either way would report a
@@ -293,7 +323,75 @@ fn config_is_a_namespace_rather_than_an_entity() {
 fn a_config_parameter_nobody_set_is_undecided() {
     let world = library();
     let env = env(&world, "lending");
-    assert_eq!(value_of(&field(ident("config"), "absent"), &env), Value::Unknown);
+    let node = field(ident("config"), "absent");
+    assert_eq!(value_of(&node, &env), Value::Unknown);
+    // With a reason naming the parameter. A config read was the one path that
+    // came back unknown with nothing attached, so a rule guarded by a
+    // parameter with no default said only "something could not be evaluated"
+    // — which is indistinguishable from a bug (issue #11).
+    let why = reasons(&node, &env);
+    assert!(why.iter().any(|reason| reason.contains("`config.absent`")), "{why:?}");
+    assert!(why.iter().any(|reason| reason.contains("nothing set it")), "{why:?}");
+}
+
+#[test]
+fn a_config_parameter_set_to_something_undecided_says_that_instead() {
+    // It has a default and somebody wrote over it, so "no default, and nothing
+    // set it" would be false on both counts.
+    let mut world = library();
+    world.set_config("lending", "loan_limit", Value::Unknown);
+    let env = env(&world, "lending");
+    let node = field(ident("config"), "loan_limit");
+    assert_eq!(value_of(&node, &env), Value::Unknown);
+    let why = reasons(&node, &env);
+    assert!(why.iter().any(|reason| reason.contains("itself undecided")), "{why:?}");
+    assert!(!why.iter().any(|reason| reason.contains("nothing set it")), "{why:?}");
+}
+
+#[test]
+fn a_config_parameter_nobody_set_is_anchored_by_byte_offset() {
+    // An em-dash in a comment above the rule: a span counted in characters
+    // would land two bytes short and slice something else.
+    const SOURCE: &str = "-- allium: 3
+-- a switch \u{2014} with nothing said about it
+
+config {
+    sync_mode: String
+}
+
+rule Sync {
+    when: Sync(repo)
+    requires: config.sync_mode = \"push\"
+    ensures: repo.synced = true
+}
+";
+    let module = allium_parser::parse(SOURCE).module;
+    let requires = module
+        .declarations
+        .iter()
+        .filter_map(|declaration| match declaration {
+            allium_parser::ast::Decl::Block(block) => Some(block),
+            _ => None,
+        })
+        .flat_map(|block| block.items.iter())
+        .find_map(|item| match &item.kind {
+            allium_parser::ast::BlockItemKind::Clause { keyword, value }
+                if keyword == "requires" =>
+            {
+                Some(value.clone())
+            }
+            _ => None,
+        })
+        .expect("a requires clause");
+    let world = World::new();
+    let env = Env::new(&world, "switches", SOURCE);
+    let evaluation = eval(&requires, &env);
+    assert_eq!(evaluation.truth(), Truth::Unknown);
+    let note = evaluation.unresolved.first().expect("a reason");
+    let span = note.span.expect("a span");
+    assert!(!SOURCE[..span.start].is_ascii(), "the em-dash is before the rule");
+    assert_eq!(span.slice(SOURCE), Some("config.sync_mode"));
+    assert_eq!(note.expression.as_deref(), Some("config.sync_mode"));
 }
 
 // --- comparison ----------------------------------------------------------
@@ -611,7 +709,6 @@ fn every_form_the_language_has_is_either_evaluated_or_named() {
     let unmodelled = [
         Expr::Lambda { span: NOWHERE, param: Box::new(ident("x")), body: Box::new(ident("x")) },
         Expr::Pipe { span: NOWHERE, left: Box::new(ident("a")), right: Box::new(ident("b")) },
-        Expr::Within { span: NOWHERE },
     ];
     for node in unmodelled {
         assert_eq!(value_of(&node, &env), Value::Unknown);
@@ -620,6 +717,27 @@ fn every_form_the_language_has_is_either_evaluated_or_named() {
         assert!(said[0].ends_with("is not simulated"), "{}", said[0]);
         assert!(said[0].len() > "is not simulated".len() + 4, "{}", said[0]);
     }
+}
+
+/// `within` in an actor's condition is the context the actor is identified
+/// within (issue #13). It was reported as "a `within` deadline is not
+/// simulated", which is neither what it is nor something a reader can act on.
+#[test]
+fn within_is_whatever_the_caller_bound_it_to() {
+    let world = library();
+    let node = Expr::Within { span: NOWHERE };
+    let bound = env(&world, "lending").bind(inspect_sim::eval::WITHIN, Value::Bool(true));
+    assert_eq!(value_of(&node, &bound), Value::Bool(true));
+    assert!(reasons(&node, &bound).is_empty());
+}
+
+#[test]
+fn within_bound_to_nothing_says_so() {
+    let world = library();
+    let env = env(&world, "lending");
+    let node = Expr::Within { span: NOWHERE };
+    assert_eq!(value_of(&node, &env), Value::Unknown);
+    assert_eq!(reasons(&node, &env), ["nothing is bound to `within`"]);
 }
 
 #[test]
@@ -1600,4 +1718,693 @@ fn a_set_plus_something_undecided_is_undecided() {
     let sum = arithmetic(ident("some"), "Add", ident("nobody"));
     assert_eq!(value_of(&sum, &env), Value::Unknown);
     assert_eq!(reasons(&sum, &env), vec!["nothing is bound to `nobody`"]);
+}
+
+// --- `all` and `any` over a lambda (issue #7) ----------------------------
+
+fn lambda(param: &str, body: Expr) -> Expr {
+    Expr::Lambda { span: NOWHERE, param: Box::new(ident(param)), body: Box::new(body) }
+}
+
+/// `object.method(param => body)`.
+fn asked(object: Expr, method: &str, param: &str, body: Expr) -> Expr {
+    call(field(object, method), vec![lambda(param, body)])
+}
+
+/// `c.status = <state>`, the predicate these cases ask of every copy.
+fn status_is(state: &str) -> Expr {
+    compare(field(ident("c"), "status"), "Eq", ident(state))
+}
+
+#[test]
+fn all_asks_every_member_and_any_asks_for_one() {
+    // The library holds one available copy and one on loan.
+    let world = library();
+    let env = env(&world, "catalogue");
+
+    let every_available = asked(ident("Copy"), "all", "c", status_is("available"));
+    assert_eq!(truth_of(&every_available, &env), Truth::False);
+    assert!(reasons(&every_available, &env).is_empty(), "{:?}", reasons(&every_available, &env));
+
+    let one_available = asked(ident("Copy"), "any", "c", status_is("available"));
+    assert_eq!(truth_of(&one_available, &env), Truth::True);
+    assert!(reasons(&one_available, &env).is_empty());
+
+    let none_lost = asked(ident("Copy"), "any", "c", status_is("lost"));
+    assert_eq!(truth_of(&none_lost, &env), Truth::False);
+
+    let all_shelved = asked(
+        ident("Copy"),
+        "all",
+        "c",
+        logical(status_is("available"), "Or", status_is("on_loan")),
+    );
+    assert_eq!(truth_of(&all_shelved, &env), Truth::True);
+}
+
+#[test]
+fn over_a_stipulated_set_the_members_are_the_ones_it_holds() {
+    // The issue's shape: a set somebody said outright, not every instance.
+    let world = library();
+    let first = Value::Ref(EntityId::new("Copy", 1));
+    let env = env(&world, "catalogue").bind("items", Value::Set(vec![first]));
+    let node = asked(ident("items"), "all", "c", status_is("available"));
+    assert_eq!(truth_of(&node, &env), Truth::True);
+    assert!(reasons(&node, &env).is_empty());
+}
+
+#[test]
+fn over_nothing_all_is_vacuously_true_and_any_is_false() {
+    let world = library();
+    let env = env(&world, "catalogue").bind("none", Value::Set(Vec::new()));
+    assert_eq!(truth_of(&asked(ident("none"), "all", "c", status_is("lost")), &env), Truth::True);
+    assert_eq!(truth_of(&asked(ident("none"), "any", "c", status_is("lost")), &env), Truth::False);
+}
+
+#[test]
+fn a_member_nobody_described_leaves_it_open_only_when_nothing_settled_it() {
+    // Copy#3 has no status. Kleene: `all … = available` is already false on
+    // Copy#2, and `any … = available` already true on Copy#1, whatever Copy#3
+    // is. Asked about `on_loan` alone, though, the answer turns on Copy#3 for
+    // `all`, and the reason has to say which field nobody stated.
+    let mut world = library();
+    world.create("Copy", "catalogue");
+    let env = env(&world, "catalogue");
+
+    assert_eq!(
+        truth_of(&asked(ident("Copy"), "all", "c", status_is("available")), &env),
+        Truth::False
+    );
+    assert_eq!(
+        truth_of(&asked(ident("Copy"), "any", "c", status_is("available")), &env),
+        Truth::True
+    );
+
+    let pair = Value::Set(vec![
+        Value::Ref(EntityId::new("Copy", 2)),
+        Value::Ref(EntityId::new("Copy", 3)),
+    ]);
+    let env = env.bind("pair", pair);
+    let open = asked(ident("pair"), "all", "c", status_is("on_loan"));
+    assert_eq!(value_of(&open, &env), Value::Unknown);
+    let said = reasons(&open, &env);
+    assert!(said.iter().any(|why| why == "`Copy#3` has no `status` set"), "{said:?}");
+}
+
+#[test]
+fn a_member_that_is_itself_unknown_is_named_as_such() {
+    // `{x, nobody}` — the second member is the thing nobody settled, and the
+    // predicate read on it would otherwise come back undecided in silence.
+    let world = library();
+    let env = env(&world, "catalogue")
+        .bind("items", Value::Set(vec![Value::Ref(EntityId::new("Copy", 1)), Value::Unknown]));
+    let node = asked(ident("items"), "all", "c", status_is("available"));
+    assert_eq!(value_of(&node, &env), Value::Unknown);
+    let said = reasons(&node, &env);
+    assert!(
+        said.iter()
+            .any(|why| why == "a member of this collection is not known, so `all` cannot check it"),
+        "{said:?}"
+    );
+}
+
+#[test]
+fn a_predicate_that_is_not_a_condition_says_so() {
+    let world = library();
+    let env = env(&world, "catalogue");
+    let node = asked(ident("Copy"), "any", "c", field(ident("c"), "shelfmark"));
+    assert_eq!(value_of(&node, &env), Value::Unknown);
+    assert_eq!(
+        reasons(&node, &env),
+        ["a string is not a condition", "a string is not a condition"]
+    );
+}
+
+#[test]
+fn a_collection_nothing_settled_stays_undecided_and_says_why() {
+    let world = library();
+    let env = env(&world, "catalogue");
+    let node = asked(ident("nowhere"), "all", "c", status_is("available"));
+    assert_eq!(value_of(&node, &env), Value::Unknown);
+    assert_eq!(reasons(&node, &env), ["nothing is bound to `nowhere`"]);
+}
+
+#[test]
+fn all_on_something_that_is_not_a_collection_says_so() {
+    let world = library();
+    let env = env(&world, "catalogue").bind("n", Value::Int(3));
+    let node = asked(ident("n"), "all", "c", status_is("available"));
+    assert_eq!(value_of(&node, &env), Value::Unknown);
+    assert_eq!(
+        reasons(&node, &env),
+        ["`all` asks about every member of a collection, and was called on an integer"]
+    );
+}
+
+#[test]
+fn a_lambda_with_a_parameter_that_is_not_a_name_is_named_as_not_simulated() {
+    let world = library();
+    let env = env(&world, "catalogue");
+    let node = call(
+        field(ident("Copy"), "all"),
+        vec![Expr::Lambda {
+            span: NOWHERE,
+            param: Box::new(number("1")),
+            body: Box::new(status_is("available")),
+        }],
+    );
+    assert_eq!(value_of(&node, &env), Value::Unknown);
+    assert_eq!(
+        reasons(&node, &env),
+        ["a lambda whose parameter is not a single name is not simulated"]
+    );
+}
+
+#[test]
+fn another_method_taking_a_lambda_is_still_not_guessed_at() {
+    // Only `all` and `any` are quantifiers. `filter` is not modelled, and
+    // stays undecided with a reason rather than being read as either.
+    let world = library();
+    let env = env(&world, "catalogue");
+    let node = asked(ident("Copy"), "filter", "c", status_is("available"));
+    assert_eq!(value_of(&node, &env), Value::Unknown);
+    let said = reasons(&node, &env);
+    assert!(said.iter().any(|why| why == "a lambda is not simulated"), "{said:?}");
+}
+
+#[test]
+fn the_lambda_s_name_does_not_leak_or_shadow_outside_it() {
+    // `c` bound outside is the outer `c` again after the lambda, and inside the
+    // lambda the element's fields are not bare names: `status` here is the
+    // outer binding, not the copy's.
+    let world = library();
+    let env = env(&world, "catalogue")
+        .bind("c", Value::Int(7))
+        .bind("status", Value::Enum("lost".to_owned()));
+    let inner = compare(ident("status"), "Eq", ident("lost"));
+    let node = asked(ident("Copy"), "all", "c", inner);
+    assert_eq!(truth_of(&node, &env), Truth::True);
+    assert_eq!(value_of(&ident("c"), &env), Value::Int(7));
+}
+
+#[test]
+fn an_undecided_collection_or_predicate_that_said_nothing_is_given_a_reason() {
+    // Both shapes reach the quantifier as an unknown with no reason attached —
+    // a binding holding an unknown is read without complaint — and an unknown
+    // with no reason is indistinguishable from a bug.
+    let world = library();
+    let env = env(&world, "catalogue").bind("items", Value::Unknown).bind("flag", Value::Unknown);
+
+    let over_nothing_known = asked(ident("items"), "all", "c", status_is("available"));
+    assert_eq!(value_of(&over_nothing_known, &env), Value::Unknown);
+    assert_eq!(
+        reasons(&over_nothing_known, &env),
+        ["`all` was asked of something nothing settled"]
+    );
+
+    let silent = asked(ident("Copy"), "any", "c", ident("flag"));
+    assert_eq!(value_of(&silent, &env), Value::Unknown);
+    assert_eq!(
+        reasons(&silent, &env),
+        [
+            "the predicate could not be decided for `Copy#1`",
+            "the predicate could not be decided for `Copy#2`"
+        ]
+    );
+}
+
+#[test]
+fn all_asked_of_one_instance_is_left_to_the_function_its_entity_defines() {
+    // `copy.all(…)` is not a quantifier — `copy` is not a collection — so it is
+    // the call path's question, and with no function of that name it stays
+    // undecided with that path's reasons.
+    let world = library();
+    let env = env(&world, "catalogue").bind("copy", Value::Ref(EntityId::new("Copy", 1)));
+    let node = asked(ident("copy"), "all", "c", status_is("available"));
+    assert_eq!(value_of(&node, &env), Value::Unknown);
+    let said = reasons(&node, &env);
+    assert!(said.iter().any(|why| why == "a function call is not simulated"), "{said:?}");
+}
+
+// --- `all`, `any` and `for` over a relationship the spec computes ----------
+
+/// `entity Box { items: Item with box = this }`, and a world with one box,
+/// `x` placed in it and of kind a, and `y` of kind b that nobody placed
+/// anywhere.
+fn packed() -> (World, inspect_model::Derivations) {
+    let mut derived = inspect_model::Derivations::default();
+    derived.fields.insert(
+        inspect_model::derived_key("packing", "Box", "items"),
+        filtered(ident("Item"), compare(ident("box"), "Eq", ident("this"))),
+    );
+    let mut world = World::new();
+    let bx = world.create("Box", "packing");
+    let x = world.create("Item", "packing");
+    world.set_field(&x, "box", Value::Ref(bx));
+    world.set_field(&x, "kind", Value::Enum("a".to_owned()));
+    let y = world.create("Item", "packing");
+    world.set_field(&y, "kind", Value::Enum("b".to_owned()));
+    (world, derived)
+}
+
+fn kind_is(state: &str) -> Expr {
+    compare(field(ident("i"), "kind"), "Eq", ident(state))
+}
+
+#[test]
+fn a_relationship_missing_a_member_it_could_not_decide_on_settles_nothing_by_omission() {
+    // `y` is of kind b and nothing says whether it is in the box. Leaving it
+    // out and answering over `x` alone would read `all … = a` as true and
+    // `any … = b` as false — conclusions nobody reached.
+    let (world, derived) = packed();
+    let env =
+        env(&world, "packing").deriving(&derived).bind("bx", Value::Ref(EntityId::new("Box", 1)));
+    let items = || field(ident("bx"), "items");
+
+    for node in [
+        asked(items(), "all", "i", kind_is("a")),
+        asked(items(), "any", "i", kind_is("b")),
+        quantify("i", items(), kind_is("a"), None),
+    ] {
+        assert_eq!(value_of(&node, &env), Value::Unknown, "{node:?}");
+        let said = reasons(&node, &env);
+        assert!(said.iter().any(|why| why.contains("`box`")), "names y's field: {said:?}");
+        assert!(
+            said.iter().any(|why| why.starts_with("this collection may be missing members")),
+            "{said:?}"
+        );
+    }
+
+    // What a member it does hold settles is still settled.
+    assert_eq!(truth_of(&asked(items(), "all", "i", kind_is("b")), &env), Truth::False);
+    assert_eq!(truth_of(&asked(items(), "any", "i", kind_is("a")), &env), Truth::True);
+    assert_eq!(truth_of(&quantify("i", items(), kind_is("b"), None), &env), Truth::False);
+}
+
+#[test]
+fn a_relationship_whose_every_candidate_was_decided_is_complete() {
+    let (mut world, derived) = packed();
+    let elsewhere = world.create("Box", "packing");
+    world.set_field(&EntityId::new("Item", 2), "box", Value::Ref(elsewhere));
+    let env =
+        env(&world, "packing").deriving(&derived).bind("bx", Value::Ref(EntityId::new("Box", 1)));
+    let items = || field(ident("bx"), "items");
+    assert_eq!(truth_of(&asked(items(), "all", "i", kind_is("a")), &env), Truth::True);
+    assert_eq!(truth_of(&asked(items(), "any", "i", kind_is("b")), &env), Truth::False);
+    assert_eq!(truth_of(&quantify("i", items(), kind_is("a"), None), &env), Truth::True);
+}
+
+/// `count`, `exists` and `in` over the same relationship ask the same thing
+/// of it that `all` does: `y` may be in the box, so `items.count = 1`, `not
+/// exists items` and `y not in items` were conclusions nobody reached.
+#[test]
+fn a_relationship_missing_a_member_has_no_count_and_no_absence() {
+    let (world, derived) = packed();
+    let env =
+        env(&world, "packing").deriving(&derived).bind("bx", Value::Ref(EntityId::new("Box", 1)));
+    let items = || field(ident("bx"), "items");
+    let env = env.bind("y", Value::Ref(EntityId::new("Item", 2)));
+    let env = env.bind("x", Value::Ref(EntityId::new("Item", 1)));
+
+    let count = field(items(), "count");
+    assert_eq!(value_of(&count, &env), Value::Unknown);
+    let said = reasons(&count, &env);
+    assert!(said.iter().any(|why| why.contains("its `count` is not known")), "{said:?}");
+    assert!(said.iter().any(|why| why.contains("`box`")), "names y's field: {said:?}");
+
+    // Absent from what it holds is not absent.
+    assert_eq!(truth_of(&within(ident("y"), items()), &env), Truth::Unknown);
+    assert!(
+        reasons(&within(ident("y"), items()), &env)
+            .iter()
+            .any(|why| why.starts_with("this collection may be missing members")),
+    );
+    // What it does hold settles the rest.
+    assert_eq!(truth_of(&within(ident("x"), items()), &env), Truth::True);
+    assert_eq!(truth_of(&exists(items()), &env), Truth::True);
+
+    // Nothing held, from a collection that may have left `y` out.
+    let only_b = filtered(items(), kind_is_bare("b"));
+    assert_eq!(truth_of(&exists(only_b), &env), Truth::Unknown);
+}
+
+/// The same three, once every candidate was decided, are answered.
+#[test]
+fn a_complete_relationship_has_a_count_and_an_absence() {
+    let (mut world, derived) = packed();
+    let elsewhere = world.create("Box", "packing");
+    world.set_field(&EntityId::new("Item", 2), "box", Value::Ref(elsewhere));
+    let env = env(&world, "packing")
+        .deriving(&derived)
+        .bind("bx", Value::Ref(EntityId::new("Box", 1)))
+        .bind("y", Value::Ref(EntityId::new("Item", 2)));
+    let items = || field(ident("bx"), "items");
+    assert_eq!(value_of(&field(items(), "count"), &env), Value::Int(1));
+    assert_eq!(truth_of(&within(ident("y"), items()), &env), Truth::False);
+    assert_eq!(truth_of(&exists(filtered(items(), kind_is_bare("b"))), &env), Truth::False);
+}
+
+fn kind_is_bare(state: &str) -> Expr {
+    compare(ident("kind"), "Eq", ident(state))
+}
+
+#[test]
+fn a_relationship_is_computed_in_its_own_scope_not_the_caller_s() {
+    // The rule's parameter is called `box`, and so is the field `y` never had
+    // set. Inside the definition `box` is `y`'s field or nothing — never the
+    // rule's argument — so the verdict cannot turn on what the parameter is
+    // called.
+    let (world, derived) = packed();
+    let the_box = Value::Ref(EntityId::new("Box", 1));
+    let named_bx = env(&world, "packing").deriving(&derived).bind("bx", the_box.clone());
+    let named_box = env(&world, "packing").deriving(&derived).bind("box", the_box);
+    let all_a = |name: &str| asked(field(ident(name), "items"), "all", "i", kind_is("a"));
+    assert_eq!(value_of(&all_a("box"), &named_box), value_of(&all_a("bx"), &named_bx));
+    assert_eq!(value_of(&all_a("box"), &named_box), Value::Unknown);
+}
+
+#[test]
+fn a_filter_that_could_not_decide_leaves_for_open_rather_than_vacuous() {
+    // `for c in Copy where nobody = 1: …` — the filter decides nothing, so
+    // nothing is known to be claimed about, which is not the same as nothing
+    // being claimed about.
+    let world = library();
+    let env = env(&world, "catalogue");
+    let node = quantify(
+        "c",
+        ident("Copy"),
+        status_is("lost"),
+        Some(compare(ident("nobody"), "Eq", number("1"))),
+    );
+    assert_eq!(value_of(&node, &env), Value::Unknown);
+}
+
+#[test]
+fn the_new_reasons_point_at_the_source_they_are_about() {
+    // A multibyte character first, so a span counted in anything but bytes
+    // lands somewhere else (stipulation 4).
+    let source = "-- an em\u{2014}dash\nrequires: n.all(c => c.status = available)";
+    let world = library();
+    let at = |text: &str| {
+        let start = source.find(text).expect("present");
+        AstSpan { start, end: start + text.len() }
+    };
+    let name = |text: &str, span: AstSpan| Expr::Ident(Ident { span, name: text.to_owned() });
+    let first = |text: &str| AstSpan { start: at(text).start, end: at(text).start + 1 };
+    let receiver = name("n", first("n.all"));
+    let body = Expr::Comparison {
+        span: at("c.status = available"),
+        left: Box::new(Expr::MemberAccess {
+            span: at("c.status"),
+            object: Box::new(name("c", first("c.status"))),
+            field: Ident { span: NOWHERE, name: "status".to_owned() },
+        }),
+        op: comparison_op("Eq"),
+        right: Box::new(name("available", at("available"))),
+    };
+    let lambda_at = at("c => c.status = available");
+    let param_at = first("c => c.status = available");
+    let whole = |param: Expr| Expr::Call {
+        span: at("n.all(c => c.status = available)"),
+        function: Box::new(Expr::MemberAccess {
+            span: at("n.all"),
+            object: Box::new(receiver.clone()),
+            field: Ident { span: NOWHERE, name: "all".to_owned() },
+        }),
+        args: vec![allium_parser::ast::CallArg::Positional(Expr::Lambda {
+            span: lambda_at,
+            param: Box::new(param),
+            body: Box::new(body.clone()),
+        })],
+    };
+    let quoted = |env: &Env<'_>, param: Expr| -> Vec<(String, Option<String>)> {
+        eval(&whole(param), env)
+            .unresolved
+            .into_iter()
+            .map(|note| (note.reason, note.expression))
+            .collect()
+    };
+    let c = || name("c", param_at);
+
+    // Not a collection: the whole call.
+    let env = Env::new(&world, "catalogue", source).bind("n", Value::Int(3));
+    assert_eq!(
+        quoted(&env, c()),
+        [(
+            "`all` asks about every member of a collection, and was called on an integer"
+                .to_owned(),
+            Some("n.all(c => c.status = available)".to_owned())
+        )]
+    );
+
+    // A collection undecided in silence: the collection.
+    let env = Env::new(&world, "catalogue", source).bind("n", Value::Unknown);
+    assert_eq!(
+        quoted(&env, c()),
+        [("`all` was asked of something nothing settled".to_owned(), Some("n".to_owned()))]
+    );
+
+    // A member that is itself unknown: the collection.
+    let env = Env::new(&world, "catalogue", source).bind("n", Value::Set(vec![Value::Unknown]));
+    let said = quoted(&env, c());
+    assert!(
+        said.contains(&(
+            "a member of this collection is not known, so `all` cannot check it".to_owned(),
+            Some("n".to_owned())
+        )),
+        "{said:?}"
+    );
+
+    // A predicate undecided in silence, and one that is not a condition: the
+    // predicate.
+    let silent = Env::new(&world, "catalogue", source)
+        .bind("n", Value::Set(vec![Value::Ref(EntityId::new("Copy", 1))]));
+    let silent_body = |env: &Env<'_>, body: Expr| -> Vec<(String, Option<String>)> {
+        let node = Expr::Call {
+            span: at("n.all(c => c.status = available)"),
+            function: Box::new(Expr::MemberAccess {
+                span: at("n.all"),
+                object: Box::new(receiver.clone()),
+                field: Ident { span: NOWHERE, name: "all".to_owned() },
+            }),
+            args: vec![allium_parser::ast::CallArg::Positional(Expr::Lambda {
+                span: lambda_at,
+                param: Box::new(c()),
+                body: Box::new(body),
+            })],
+        };
+        eval(&node, env).unresolved.into_iter().map(|note| (note.reason, note.expression)).collect()
+    };
+    let flag = Env::new(&world, "catalogue", source)
+        .bind("n", Value::Set(vec![Value::Ref(EntityId::new("Copy", 1))]))
+        .bind("flag", Value::Unknown);
+    assert_eq!(
+        silent_body(&flag, name("flag", at("c.status = available"))),
+        [(
+            "the predicate could not be decided for `Copy#1`".to_owned(),
+            Some("c.status = available".to_owned())
+        )]
+    );
+    let shelfmark = Expr::MemberAccess {
+        span: at("c.status = available"),
+        object: Box::new(c()),
+        field: Ident { span: NOWHERE, name: "shelfmark".to_owned() },
+    };
+    assert_eq!(
+        silent_body(&silent, shelfmark),
+        [("a string is not a condition".to_owned(), Some("c.status = available".to_owned()))]
+    );
+
+    // A parameter that is not a name: the parameter.
+    let not_a_name = Expr::NumberLiteral { span: param_at, value: "1".to_owned() };
+    assert_eq!(
+        quoted(&silent, not_a_name),
+        [(
+            "a lambda whose parameter is not a single name is not simulated".to_owned(),
+            Some("c".to_owned())
+        )]
+    );
+}
+
+#[test]
+fn a_predicate_that_said_why_is_not_given_a_second_vaguer_reason() {
+    let mut world = library();
+    world.create("Copy", "catalogue");
+    let env = env(&world, "catalogue").bind(
+        "pair",
+        Value::Set(vec![
+            Value::Ref(EntityId::new("Copy", 2)),
+            Value::Ref(EntityId::new("Copy", 3)),
+        ]),
+    );
+    let said = reasons(&asked(ident("pair"), "all", "c", status_is("on_loan")), &env);
+    assert!(said.iter().any(|why| why == "`Copy#3` has no `status` set"), "{said:?}");
+    assert!(
+        !said.iter().any(|why| why.starts_with("the predicate could not be decided")),
+        "{said:?}"
+    );
+}
+
+#[test]
+fn an_entity_that_defines_all_has_its_own_called() {
+    // `copy.all(…)` on one instance is that entity's function, when it has
+    // one, and not the quantifier.
+    let world = library();
+    let mut derived = inspect_model::Derivations::default();
+    derived.functions.insert(
+        inspect_model::derived_key("catalogue", "Copy", "all"),
+        inspect_model::Function {
+            params: vec!["p".to_owned()],
+            body: compare(field(ident("this"), "status"), "Eq", ident("available")),
+        },
+    );
+    let env = env(&world, "catalogue")
+        .deriving(&derived)
+        .bind("copy", Value::Ref(EntityId::new("Copy", 1)));
+    let node = asked(ident("copy"), "all", "c", status_is("lost"));
+    assert_eq!(truth_of(&node, &env), Truth::True, "{:?}", reasons(&node, &env));
+}
+
+// --- a black box called with a word nothing binds -------------------------------
+
+/// A world where somebody said what `can(Copy#1, code)` comes back as.
+fn told_can(answer: bool) -> World {
+    let mut world = library();
+    world.answers.push(inspect_sim::world::Answer {
+        call: "can".to_owned(),
+        arguments: vec![Value::Ref(EntityId::new("Copy", 1)), Value::Enum("code".to_owned())],
+        value: Value::Bool(answer),
+    });
+    world
+}
+
+/// `can(repo, code)`, with `repo` bound to `Copy#1`.
+fn can(word: &str) -> Expr {
+    call(ident("can"), vec![ident("repo"), ident(word)])
+}
+
+/// `code` is bound to nothing, and the journey that stipulated `can(r, code)`
+/// read its own `code` as the state it spells. The two are the same call.
+#[test]
+fn a_stipulation_naming_the_same_word_answers_a_call_with_an_unbound_argument() {
+    for answer in [true, false] {
+        let world = told_can(answer);
+        let env = env(&world, "lending").bind("repo", Value::Ref(EntityId::new("Copy", 1)));
+        let evaluated = eval(&can("code"), &env);
+        assert_eq!(evaluated.value, Value::Bool(answer), "{:?}", evaluated.unresolved);
+        assert!(evaluated.unresolved.is_empty(), "settled: {:?}", evaluated.unresolved);
+    }
+}
+
+/// Another word is another call. Answering it would be the simulator inventing
+/// a policy nobody stated.
+#[test]
+fn a_stipulation_about_another_word_does_not_answer_it() {
+    let world = told_can(true);
+    let env = env(&world, "lending").bind("repo", Value::Ref(EntityId::new("Copy", 1)));
+    assert_eq!(truth_of(&can("issues"), &env), Truth::Unknown);
+    let said = reasons(&can("issues"), &env);
+    assert!(said.iter().any(|why| why == "nothing is bound to `issues`"), "{said:?}");
+}
+
+/// About another repo, likewise: the word matching is not the call matching.
+#[test]
+fn a_stipulation_about_the_same_word_and_another_instance_does_not_answer_it() {
+    let world = told_can(true);
+    let env = env(&world, "lending").bind("repo", Value::Ref(EntityId::new("Copy", 2)));
+    assert_eq!(truth_of(&can("code"), &env), Truth::Unknown);
+}
+
+/// A name that *is* bound — to a value nobody knows — is a question about that
+/// value, not about a state called `code`. Matching it would answer
+/// `can(repo, how)` with whatever was said about a state spelled `how`.
+#[test]
+fn a_bound_name_is_never_read_as_its_spelling() {
+    let world = told_can(true);
+    let env = env(&world, "lending")
+        .bind("repo", Value::Ref(EntityId::new("Copy", 1)))
+        .bind("code", Value::Unknown);
+    assert_eq!(truth_of(&can("code"), &env), Truth::Unknown);
+}
+
+/// Something else in the call still undecided keeps the call undecided, and
+/// keeps its own reason.
+#[test]
+fn a_spelling_does_not_settle_an_argument_nobody_bound_elsewhere() {
+    let world = told_can(true);
+    let env = env(&world, "lending");
+    let evaluated = eval(&can("code"), &env);
+    assert_eq!(evaluated.truth(), Truth::Unknown);
+    let said: Vec<String> = evaluated.unresolved.into_iter().map(|note| note.reason).collect();
+    assert!(said.iter().any(|why| why == "nothing is bound to `repo`"), "{said:?}");
+}
+
+/// A world where somebody said what `can(Copy#1, <word>)` comes back as.
+fn told_can_about(word: &str) -> World {
+    let mut world = library();
+    world.answers.push(inspect_sim::world::Answer {
+        call: "can".to_owned(),
+        arguments: vec![Value::Ref(EntityId::new("Copy", 1)), Value::Enum(word.to_owned())],
+        value: Value::Bool(true),
+    });
+    world
+}
+
+/// `Copies` is the collection of copies, not a state spelled `Copies`. A name
+/// that already reads as something is that thing, and a stipulation about its
+/// spelling is about something else.
+#[test]
+fn a_name_that_already_reads_as_something_is_not_its_spelling() {
+    let world = told_can_about("Copies");
+    let env = env(&world, "lending").bind("repo", Value::Ref(EntityId::new("Copy", 1)));
+    assert_eq!(truth_of(&can("Copies"), &env), Truth::Unknown);
+}
+
+/// Inside an entity's own definition a bare name may be one of its fields that
+/// nobody set, which reads exactly like a word nothing binds. `allowed:
+/// can(this, level)` with `level` unset is a question about an unknown number,
+/// and a stipulation about a state spelled `level` must not answer it.
+#[test]
+fn inside_an_entity_a_bare_name_is_never_read_as_its_spelling() {
+    let world = told_can_about("level");
+    let env = env(&world, "lending")
+        .bind("repo", Value::Ref(EntityId::new("Copy", 1)))
+        .bind("this", Value::Ref(EntityId::new("Copy", 1)));
+    assert_eq!(truth_of(&can("level"), &env), Truth::Unknown);
+    // `Copy` defines no `can`, so this is the same black box it is outside an
+    // entity, and says the same thing about it.
+    let said = reasons(&can("level"), &env);
+    assert_eq!(
+        said.first().map(String::as_str),
+        Some("nothing defines `can`, and no stipulation answers this call"),
+        "{said:?}"
+    );
+}
+
+/// A parameter of the rule that nobody passed is a question about what would
+/// have been passed, not about a state with its name.
+#[test]
+fn a_parameter_nobody_passed_is_never_read_as_its_spelling() {
+    let world = told_can_about("kind");
+    let env = env(&world, "lending")
+        .bind("repo", Value::Ref(EntityId::new("Copy", 1)))
+        .declaring(["repo".to_owned(), "kind".to_owned()]);
+    assert_eq!(truth_of(&can("kind"), &env), Truth::Unknown);
+    let said = reasons(&can("kind"), &env);
+    assert!(said.iter().any(|why| why == "nothing is bound to `kind`"), "{said:?}");
+}
+
+/// A call nobody defined and nobody answered says so, and says what would
+/// answer it — the generic "not simulated" sent readers looking for a missing
+/// feature when what was missing was a stipulation.
+#[test]
+fn an_unanswered_black_box_says_a_stipulation_would_answer_it() {
+    let world = library();
+    let env = env(&world, "lending").bind("repo", Value::Ref(EntityId::new("Copy", 1)));
+    let said = reasons(&can("code"), &env);
+    assert_eq!(
+        said.first().map(String::as_str),
+        Some("nothing defines `can`, and no stipulation answers this call"),
+        "{said:?}"
+    );
 }

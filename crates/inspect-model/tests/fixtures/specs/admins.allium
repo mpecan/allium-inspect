@@ -1,0 +1,135 @@
+-- allium: 3
+-- admins.allium
+--
+-- Who a surface faces (issue #13). `AdminPanel` faces a `SiteAdmin`, who is a
+-- user whose `is_admin` is true, and `Flip` has no `requires` of its own — so
+-- the only thing standing between a user who is not an admin and the panel is
+-- the actor the surface faces. `is_admin` is declared after `flag`, so a field
+-- left unset is not named only because it comes first. `OpenPanel` faces any user at all, `TeamPanel`
+-- faces an entity directly, and `WorkspacePanel` faces somebody identified
+-- `within` the workspace it is at, while `BarePanel` faces the same owner and
+-- is at no workspace at all. `Lock` restates a permission as a `requires`, so
+-- a rule that refuses can be told apart from a surface that does. `portal.allium`
+-- faces `SiteAdmin` from another module. `StewardPanel` faces somebody
+-- identified by an `or` its left side can settle alone, and `TransferPanel` is
+-- at two workspaces at once, so which one its owner is identified within is
+-- not said. `clash.allium` declares an entity named like `SiteAdmin`.
+
+entity User {
+    flag: Boolean
+    is_admin: Boolean
+}
+
+entity Team {
+    flag: Boolean
+}
+
+entity Workspace {
+    archived: Boolean
+}
+
+entity Seat {
+    workspace: Workspace
+    left: Boolean
+}
+
+-- Not tidying: every condition below is sliced from this file by byte span,
+-- and this line puts multi-byte text — “quotes”, an em-dash — ahead of all of
+-- them, so a slice taken by character instead of by byte comes out wrong.
+
+actor SiteAdmin {
+    identified_by: User where is_admin = true
+}
+
+actor Steward {
+    identified_by: User where is_admin = true or flag = true
+}
+
+actor Anyone {
+    identified_by: User
+}
+
+actor WorkspaceOwner {
+    within: Workspace
+    identified_by: Seat where workspace = within
+}
+
+rule Flip {
+    when: Flip(u)
+    ensures: u.flag = true
+}
+
+rule Lock {
+    when: Lock(u)
+    requires: u.flag = false
+    ensures: u.flag = true
+}
+
+rule Leave {
+    when: Leave(s)
+    ensures: s.left = true
+}
+
+rule Transfer {
+    when: Transfer(source, target)
+    ensures: source.archived = true
+}
+
+rule Archive {
+    when: Archive(w)
+    ensures: w.archived = true
+}
+
+surface AdminPanel {
+    facing admin: SiteAdmin
+    exposes:
+        admin.flag
+    provides:
+        Flip(admin)
+        Lock(admin)
+}
+
+surface OpenPanel {
+    facing anyone: Anyone
+    provides:
+        Flip(anyone)
+}
+
+surface TeamPanel {
+    facing team: Team
+    provides:
+        Flip(team)
+}
+
+surface WorkspacePanel {
+    facing owner: WorkspaceOwner
+    context workspace: Workspace
+    exposes:
+        workspace.archived
+    provides:
+        Archive(workspace)
+}
+
+surface BarePanel {
+    facing owner: WorkspaceOwner
+    exposes:
+        owner.left
+    provides:
+        Leave(owner)
+}
+
+surface StewardPanel {
+    facing steward: Steward
+    exposes:
+        steward.is_admin
+    provides:
+        Flip(steward)
+}
+
+surface TransferPanel {
+    facing owner: WorkspaceOwner
+    context source: Workspace
+    context target: Workspace
+    provides:
+        Transfer(source, target)
+}

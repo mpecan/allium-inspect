@@ -31,6 +31,47 @@ pub const LENDING: &[&str] = &["catalogue", "lending"];
 /// The lending fixture and the desk beside it.
 pub const DESK: &[&str] = &["catalogue", "lending", "desk"];
 
+/// The packing fixture, alone: a set asked about through `all` and `any`.
+pub const PACKING: &[&str] = &["packing"];
+
+/// The grants fixture, alone: literals a journey says back to a spec.
+pub const GRANTS: &[&str] = &["grants"];
+
+/// The guards fixture, alone: exposures shown only while a `when` holds.
+pub const GUARDS: &[&str] = &["guards"];
+
+/// The orders fixture, alone: a rule that reacts to a creation.
+pub const ORDERS: &[&str] = &["orders"];
+
+/// The pinboard fixture and the module whose entity it creates.
+pub const PINBOARD: &[&str] = &["notes", "pinboard"];
+
+/// The cells fixture, alone: a reaction that makes another of its own kind.
+pub const CELLS: &[&str] = &["cells"];
+
+/// The tickets fixture, alone: reactions that refuse, split, and are reached
+/// one emission away from the act.
+pub const TICKETS: &[&str] = &["tickets"];
+
+/// Two modules that each declare an `Order`.
+pub const SHOPS: &[&str] = &["shop", "warehouse"];
+
+/// The chains fixture and the module that listens to it across a boundary:
+/// emitted triggers, and how what they carry reaches a listener's names.
+pub const CHAINS: &[&str] = &["chains", "relay"];
+
+/// The fanout fixture, alone: a rule that iterates an entity collection and
+/// emits once per member, and the rule chained from that emission.
+pub const FANOUT: &[&str] = &["fanout"];
+
+/// The switches fixture, alone: behaviour that is off until configuration
+/// turns it on.
+pub const SWITCHES: &[&str] = &["switches"];
+
+/// The admins fixture and the module that faces its actor from outside: who a
+/// surface faces, and whether somebody is one.
+pub const FACING: &[&str] = &["admins", "portal"];
+
 /// `modules`, replayed from their recordings, with each module's source.
 pub fn library(modules: &[&str]) -> (SpecGraph, Program, Sources) {
     let root = fixtures();

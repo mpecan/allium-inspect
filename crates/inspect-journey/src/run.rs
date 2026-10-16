@@ -72,9 +72,16 @@ pub fn walk(
         inherited: Vec::new(),
         after: None,
         standing_on: None,
+        worlds: Vec::new(),
         cast: Vec::new(),
         fired: Vec::new(),
         undecided: Vec::new(),
+        unapplied: Vec::new(),
+        refused: Vec::new(),
+        created: Vec::new(),
+        cut_off: None,
+        firings: 0,
+        moved: false,
         notes: Vec::new(),
     };
     // The ground first, when this journey stands on some. Everything below —
@@ -107,6 +114,13 @@ pub fn walk(
     }
 }
 
+/// A rule the engine could not decide, and the first reason it gave.
+#[derive(Debug, Clone)]
+pub(crate) struct Undecided {
+    pub(crate) rule: String,
+    pub(crate) why: String,
+}
+
 pub(crate) struct Walker<'a> {
     pub(crate) spec: &'a SpecGraph,
     pub(crate) program: &'a Program,
@@ -119,12 +133,34 @@ pub(crate) struct Walker<'a> {
     pub(crate) after: Option<Ground>,
     /// Which journey's steps are running, when it is not this one's.
     pub(crate) standing_on: Option<String>,
+    /// Every file world this walk has laid out, so a chain lays each out once.
+    pub(crate) worlds: Vec<crate::journey::Shared>,
     /// Everybody the journey has named, in the order they were bound.
     pub(crate) cast: Vec<CastMember>,
     /// Rules that ran since the last clause, for `then … fires`.
     pub(crate) fired: Vec<String>,
-    /// Rules that could not be decided since it, for the same.
-    pub(crate) undecided: Vec<String>,
+    /// Rules that could not be decided since it, for the same, and why.
+    pub(crate) undecided: Vec<Undecided>,
+    /// Rules that fired since it and left part of what they ensure unapplied,
+    /// and the first thing they left. Apart from `undecided`: these did run,
+    /// and `then Fan fires` saying so beside "`Fan` could not be decided"
+    /// was two answers to one question.
+    pub(crate) unapplied: Vec<Undecided>,
+    /// Rules that were woken and refused since it, and the clauses that did.
+    pub(crate) refused: Vec<Undecided>,
+    /// Every instance made since it, in the order it was made — the act's own
+    /// first, then whatever it set off.
+    pub(crate) created: Vec<EntityId>,
+    /// A cascade since it that was cut off before it settled, and where. Kept
+    /// apart from `undecided`: it names triggers still waiting, not a rule.
+    pub(crate) cut_off: Option<String>,
+    /// Events fired since it, the act's own included, against the budget that
+    /// stops a cascade that grows faster than the round bound can catch.
+    pub(crate) firings: usize,
+    /// Whether the step being walked has acted or moved the clock yet. What a
+    /// step set off belongs to that step: a later step's `then` answered by a
+    /// `stipulate` is the journey's own words, not the cascade's.
+    pub(crate) moved: bool,
     /// Faults that belong to no step clause.
     ///
     /// A cast member whose type the spec does not have, or a `given` that
@@ -138,6 +174,7 @@ impl Walker<'_> {
     /// One step: every clause in the order it was written.
     pub(crate) fn walk_step(&mut self, step: &Step, notes: &[check::Note]) -> Walked {
         let mut outcomes = Vec::new();
+        self.moved = false;
         for clause in &step.clauses {
             // A line the spec cannot support is not run. Firing an act at a
             // surface nobody specified would produce a second, confusing
@@ -191,11 +228,19 @@ impl Walker<'_> {
     fn walk_clause(&mut self, clause: &Clause) -> Outcome {
         let about = about(clause);
         match clause {
-            Clause::Does { trigger, arguments, creating, negated, line, .. } => self.act(
-                &Act { trigger, arguments, creating: creating.as_ref(), negated: *negated },
-                *line,
-                about,
-            ),
+            Clause::Does { actor, trigger, arguments, surface, creating, negated, line } => self
+                .act(
+                    &Act {
+                        actor,
+                        trigger,
+                        arguments,
+                        surface,
+                        creating: creating.as_ref(),
+                        negated: *negated,
+                    },
+                    *line,
+                    about,
+                ),
             Clause::After { duration, line, .. } => self.advance(duration, *line, about),
             Clause::Then { assertion, line } => self.assert(assertion, *line, about),
             Clause::Sees { actor, subject, surface, contexts, negated, line } => self.observe(
@@ -223,12 +268,9 @@ impl Walker<'_> {
                                 detail: None,
                             }
                         }
-                        Err(reason) => Outcome {
-                            line: *line,
-                            verdict: Verdict::Undecided,
-                            about,
-                            detail: Some(reason),
-                        },
+                        Err(crate::config::Unwritten { verdict, reason }) => {
+                            Outcome { line: *line, verdict, about, detail: Some(reason) }
+                        }
                     },
                     // A call writes nowhere: there is no field to set, which is
                     // the whole reason it needs saying. It is remembered and
@@ -246,23 +288,27 @@ impl Walker<'_> {
         }
     }
 
-    /// Fire an act and keep what it caught.
+    /// An act, once the surface it is on has been asked whether it faces
+    /// whoever does it (see `facing`).
     fn act(&mut self, act: &Act<'_>, line: usize, about: String) -> Outcome {
-        let Act { trigger, arguments, creating, negated } = *act;
+        self.forget();
+        self.moved = true;
+        self.at_the_surface(act, line, about)
+    }
+
+    /// Fire an act and keep what it caught.
+    pub(crate) fn fire_act(&mut self, act: &Act<'_>, line: usize, about: String) -> Outcome {
+        let Act { trigger, arguments, creating, negated, .. } = *act;
         let module = trigger_module(self.spec, trigger);
 
-        // Positional, matched against the trigger's declared parameters — which
-        // is how the spec writes the act and how a person reads it back.
-        let (parameters, _) = self.parameters_of(trigger);
+        // Positional, as the spec writes the act and a person reads it back:
+        // each rule that wakes takes them under its own `when` clause's names,
+        // and two of them may name one argument differently.
         let mut event = Event::new(trigger, &module);
-        for (at, argument) in arguments.iter().enumerate() {
-            let name = parameters.get(at).cloned().unwrap_or_else(|| format!("arg{at}"));
-            event = event.with(name, self.value_of(argument));
+        for argument in arguments {
+            event = event.passing(self.value_of(argument));
         }
 
-        let before: Vec<EntityId> = self.world.entities.keys().cloned().collect();
-        self.fired.clear();
-        self.undecided.clear();
         let outcome = self.fire(&event);
 
         // `bruno cannot do MemberAsksToChat(…)`: the journey asserting a
@@ -279,13 +325,15 @@ impl Walker<'_> {
         }
 
         if let Some(caught) = creating {
+            // The first made, not the first in the world's order: ids sort as
+            // text, so `Order#10` comes before `Order#9`, and a reaction that
+            // made another order would be caught instead of the act's own
+            // whenever the count crossed a digit.
             let bare = caught.type_expr.rsplit('/').next().unwrap_or(&caught.type_expr);
             let fresh = self
-                .world
-                .entities
-                .keys()
-                .filter(|id| !before.contains(id))
-                .find(|id| id.entity() == bare)
+                .created
+                .iter()
+                .find(|id| id.entity() == bare && self.world.instance(id).is_some())
                 .cloned();
             match fresh {
                 Some(id) => {
@@ -319,7 +367,19 @@ impl Walker<'_> {
             }
         }
 
-        Outcome { line, verdict: verdict_of(&outcome), about, detail: refusal(&outcome) }
+        let verdict = verdict_of(&outcome);
+        // The act's own rule fired, and something it set off could not be
+        // decided. That rule is on no line of the journey, so without this the
+        // step held — and a `then` about what it would have written read as
+        // the spec answering, either way, when nothing had been decided.
+        // Undecided here, the same as the clock moving into a rule nobody
+        // could decide, and every refusal after it in this step with it.
+        if verdict == Verdict::Specified
+            && let Some(why) = self.unsettled()
+        {
+            return Outcome { line, verdict: Verdict::Undecided, about, detail: Some(why) };
+        }
+        Outcome { line, verdict, about, detail: refusal(&outcome) }
     }
 
     /// What a `cannot do` came to: the verdicts, mirrored.
@@ -347,16 +407,6 @@ impl Walker<'_> {
         Outcome { line, verdict, about, detail }
     }
 
-    /// The trigger's parameters, in the order the spec declares them.
-    fn parameters_of(&self, trigger: &str) -> (Vec<String>, Vec<String>) {
-        self.spec
-            .nodes_of(NodeKind::Trigger)
-            .find(|node| node.name == trigger)
-            .and_then(|node| node.detail.as_trigger())
-            .map(|detail| (detail.parameters.clone(), detail.optional.clone()))
-            .unwrap_or_default()
-    }
-
     /// Move the clock, and let whatever becomes true fire.
     ///
     /// A temporal rule is not fired by anybody: the clock passing a due date is
@@ -372,8 +422,8 @@ impl Walker<'_> {
             };
         };
         self.world.now = self.world.now.saturating_add(*by);
-        self.fired.clear();
-        self.undecided.clear();
+        self.forget();
+        self.moved = true;
 
         // Time passing is a claim about the world, so it answers like one.
         // It used to report `Specified` whatever happened underneath it: two
@@ -391,29 +441,30 @@ impl Walker<'_> {
                 )),
             };
         }
-        if self.undecided.is_empty() {
-            Outcome { line, verdict: Verdict::Specified, about, detail: None }
-        } else {
-            Outcome {
+        // What the clock set off is said the way an act's is — each rule
+        // once, with its reason, beside what fired and was not applied in full
+        // and a cascade that never settled — under the clock's name.
+        match self.unsettled() {
+            None => Outcome { line, verdict: Verdict::Specified, about, detail: None },
+            Some(why) => Outcome {
                 line,
                 verdict: Verdict::Undecided,
                 about,
-                detail: Some(format!(
-                    "{} could not be decided while the clock moved",
-                    self.undecided.join(", ")
-                )),
-            }
+                detail: Some(format!("while the clock moved, {why}")),
+            },
         }
     }
 }
 
 /// An act, gathered so the walk does not take six arguments.
-struct Act<'a> {
-    trigger: &'a str,
-    arguments: &'a [Term],
-    creating: Option<&'a crate::journey::Cast>,
+pub(crate) struct Act<'a> {
+    pub(crate) actor: &'a str,
+    pub(crate) trigger: &'a str,
+    pub(crate) arguments: &'a [Term],
+    pub(crate) surface: &'a str,
+    pub(crate) creating: Option<&'a crate::journey::Cast>,
     /// Whether the journey said this *cannot* happen.
-    negated: bool,
+    pub(crate) negated: bool,
 }
 
 /// Whether this rule has already run for this instance.

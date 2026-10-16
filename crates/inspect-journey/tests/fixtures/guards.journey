@@ -1,0 +1,25 @@
+-- Issue #8, as it was filed: a `when`-guarded exposure was never shown.
+--
+-- The guard is plainly true in both journeys. The first was reported
+-- unexposed; the second held, which is a privacy claim that passed because
+-- nothing checked it.
+
+journey APublicSecretIsShown {
+    cast:
+        d: Doc
+    given:
+        d.is_private = false
+        d.secret = "s"
+    1. the guard is satisfied, so the field should be shown
+        d sees d.secret on DocPage in d
+}
+
+journey APublicSecretCannotBeSeen {
+    cast:
+        d: Doc
+    given:
+        d.is_private = false
+        d.secret = "s"
+    1. the guard is satisfied, yet cannot see passes
+        d cannot see d.secret on DocPage in d
+}

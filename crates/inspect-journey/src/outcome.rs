@@ -6,7 +6,10 @@
 //! and a rule nobody could evaluate are different things, and only one of them
 //! is the specification saying no.
 
-use inspect_sim::{Disposition, Truth, step::StepOutcome};
+use inspect_sim::{
+    Disposition, Truth,
+    step::{RuleOutcome, StepOutcome},
+};
 
 use crate::check::Verdict;
 
@@ -42,29 +45,10 @@ pub(crate) fn refusal(outcome: &StepOutcome) -> Option<String> {
     for rule in &outcome.rules {
         match rule.disposition {
             Disposition::Refused => {
-                let blocking: Vec<&str> = rule
-                    .requires
-                    .iter()
-                    .filter(|clause| clause.truth == Truth::False)
-                    .map(|clause| clause.text.as_str())
-                    .collect();
-                return Some(format!("`{}` refused: {}", rule.name, blocking.join("; ")));
+                return Some(format!("`{}` refused: {}", rule.name, refused(rule)));
             }
             Disposition::Undecided => {
-                let reason = rule.unresolved.first().map_or_else(
-                    || "something could not be evaluated".to_owned(),
-                    // The sub-expression as well as the reason, when the note
-                    // located one. "`Member#1` has no `is_at_limit` set" says
-                    // what is missing; it does not say which clause asked, and
-                    // a rule with four preconditions has four candidates. The
-                    // quote comes from the spec text, which is why the walker
-                    // is handed it.
-                    |note| match &note.expression {
-                        Some(expression) => format!("{} — in `{expression}`", note.reason),
-                        None => note.reason.clone(),
-                    },
-                );
-                return Some(format!("`{}` could not be decided: {reason}", rule.name));
+                return Some(format!("`{}` could not be decided: {}", rule.name, undecided(rule)));
             }
             Disposition::Unsimulatable => {
                 return Some(format!("`{}`'s clauses did not parse", rule.name));
@@ -76,6 +60,49 @@ pub(crate) fn refusal(outcome: &StepOutcome) -> Option<String> {
         return Some("no rule waits for this".to_owned());
     }
     None
+}
+
+/// Why a rule refused: the clauses that were false, as the spec wrote them.
+pub(crate) fn refused(rule: &RuleOutcome) -> String {
+    let blocking: Vec<&str> = rule
+        .requires
+        .iter()
+        .filter(|clause| clause.truth == Truth::False)
+        .map(|clause| clause.text.as_str())
+        .collect();
+    blocking.join("; ")
+}
+
+/// Why a rule could not be decided: its first reason, and where.
+pub(crate) fn undecided(rule: &RuleOutcome) -> String {
+    rule.unresolved.first().map_or_else(
+        || "something could not be evaluated".to_owned(),
+        // The sub-expression as well as the reason, when the note located one.
+        // "`Member#1` has no `is_at_limit` set" says what is missing; it does
+        // not say which clause asked, and a rule with four preconditions has
+        // four candidates. The quote comes from the spec text, which is why the
+        // walker is handed it.
+        located,
+    )
+}
+
+/// A note's reason, and the sub-expression it is about when it located one.
+fn located(note: &inspect_sim::Unresolved) -> String {
+    match &note.expression {
+        Some(expression) => format!("{} — in `{expression}`", note.reason),
+        None => note.reason.clone(),
+    }
+}
+
+/// What a fired rule's postconditions could not apply, as its first reason —
+/// or `None` when everything it ensures was applied.
+///
+/// Read off the simulator's own mark rather than off the notes: a clause can be
+/// decided, applied in full and still carry notes — an `if` whose `or` was
+/// settled by its left side, an `any` settled by one member — and those say
+/// nothing about whether the world is missing a change.
+pub(crate) fn unapplied(rule: &RuleOutcome) -> Option<String> {
+    rule.unapplied.first().map(located)
 }
 
 #[cfg(test)]
@@ -95,6 +122,7 @@ mod tests {
             requires: Vec::new(),
             effects: Vec::new(),
             unresolved: Vec::new(),
+            unapplied: Vec::new(),
         }
     }
 
@@ -162,5 +190,48 @@ mod tests {
         // With nothing fired, the refusal is the answer.
         let refused = outcome(vec![rule("AtLimit", Disposition::Refused)]);
         assert_eq!(verdict_of(&refused), Verdict::Refused);
+    }
+
+    mod unapplied {
+        use super::*;
+        use inspect_sim::Unresolved;
+
+        fn note(reason: &str, expression: Option<&str>) -> Unresolved {
+            Unresolved {
+                reason: reason.to_owned(),
+                expression: expression.map(str::to_owned),
+                span: None,
+            }
+        }
+
+        #[test]
+        fn a_rule_that_applied_everything_has_nothing_unapplied() {
+            assert_eq!(super::super::unapplied(&rule("Fan", Disposition::Fired)), None);
+        }
+
+        /// An `if` whose `or` was settled by its left side carries a note about
+        /// the right, and applied everything. A note is not a change the world
+        /// is missing.
+        #[test]
+        fn notes_alone_are_not_unapplied() {
+            let mut fired = rule("Poke", Disposition::Fired);
+            fired.unresolved.push(note("`Clock#1` has no `b` set", Some("c.b")));
+            assert_eq!(super::super::unapplied(&fired), None);
+        }
+
+        /// What the simulator marked as not applied is, and it is quoted with
+        /// where.
+        #[test]
+        fn what_was_marked_unapplied_is_and_says_where() {
+            let mut fired = rule("Fan", Disposition::Fired);
+            fired.unresolved.push(note("`Item#2` has no `packed` set", None));
+            let undone = note("`for w in Hooks` could not tell", Some("active = true"));
+            fired.unresolved.push(undone.clone());
+            fired.unapplied.push(undone);
+            assert_eq!(
+                super::super::unapplied(&fired).as_deref(),
+                Some("`for w in Hooks` could not tell — in `active = true`")
+            );
+        }
     }
 }

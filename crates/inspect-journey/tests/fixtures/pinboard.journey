@@ -1,0 +1,15 @@
+-- Issue #9, the second half: `memo/Note.created(...)` creates an entity another
+-- module declares, and `creating n: notes/Note` caught nothing, because the
+-- qualified creation was never performed at all. The reaction to it is written
+-- through the qualified name too.
+
+journey PinNote {
+    cast:
+        b: Board
+    1. pinning creates a note in another module
+        b does Pin(b, "hello") on BoardPage
+            creating n: notes/Note
+        then n.text = "hello"
+        then Notice fires
+        then n.seen = true
+}

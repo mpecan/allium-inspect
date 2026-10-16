@@ -109,6 +109,17 @@ pub fn iteration(binding: &str, collection: Expr, body: Expr) -> Expr {
     }
 }
 
+/// `for binding in collection where filter: body`.
+pub fn filtered_iteration(binding: &str, collection: Expr, filter: Expr, body: Expr) -> Expr {
+    Expr::For {
+        span: NOWHERE,
+        binding: ForBinding::Single(name(binding)),
+        collection: Box::new(collection),
+        filter: Some(Box::new(filter)),
+        body: Box::new(body),
+    }
+}
+
 /// `not exists X`, at `span` so a note can quote it.
 pub fn not_exists_at(operand: Expr, span: Span) -> Expr {
     Expr::NotExists { span, operand: Box::new(operand) }

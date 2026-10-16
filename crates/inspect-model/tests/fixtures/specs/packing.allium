@@ -1,0 +1,92 @@
+-- allium: 3
+-- packing.allium
+--
+-- A fixture of its own, standing alone: a collection asked about through a
+-- lambda. `items.all(i => …)` and `items.any(i => …)` are how a real spec says
+-- "every one of these" and "at least one of these" about a set it holds, and
+-- for a while this tool answered both as undecided even when a journey had
+-- said exactly what was in the set (issue #7).
+
+entity Item {
+    kind: a | b
+}
+
+entity Box {
+    items: Set<Item>
+    sealed: Boolean
+    flagged: Boolean
+}
+
+-- The same question asked of a relationship the spec computes rather than a
+-- set a journey states. The rule's parameter shares its name with the field
+-- the relationship reads, so a definition that saw the rule's names would
+-- count a parcel nobody placed as in the crate.
+--
+-- `Ship` iterates the same relationship in an `ensures`, emitting `Packed`
+-- once per parcel, and `Stamp` stamps each parcel of kind a; `Retire` asks
+-- for a crate with no parcels. A parcel whose `crate` nobody set may be in
+-- any crate, so none of the three may answer as if it were not.
+entity Parcel {
+    crate: Crate
+    kind: a | b
+    stamped: Boolean
+}
+
+entity Crate {
+    parcels: Parcel with crate = this
+    sealed: Boolean
+    shipped: Boolean
+    retired: Boolean
+}
+
+rule Seal {
+    when: Seal(box)
+    requires: box.items.all(i => i.kind = a)
+    ensures: box.sealed = true
+}
+
+rule Flag {
+    when: Flag(box)
+    requires: box.items.any(i => i.kind = b)
+    ensures: box.flagged = true
+}
+
+rule SealCrate {
+    when: SealCrate(crate)
+    requires: crate.parcels.all(p => p.kind = a)
+    ensures: crate.sealed = true
+}
+
+rule Ship {
+    when: Ship(crate)
+    for p in crate.parcels:
+        ensures: Packed(parcel: p)
+    ensures: crate.shipped = true
+}
+
+rule Stamp {
+    when: Packed(parcel)
+    requires: parcel.kind = a
+    ensures: parcel.stamped = true
+}
+
+rule Retire {
+    when: Retire(crate)
+    requires: crate.parcels.count = 0
+    ensures: crate.retired = true
+}
+
+surface Packing {
+    facing box: Box
+    provides:
+        Seal(box)
+        Flag(box)
+}
+
+surface Loading {
+    facing crate: Crate
+    provides:
+        SealCrate(crate)
+        Ship(crate)
+        Retire(crate)
+}

@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 
 use allium_parser::{
     Span,
-    ast::{CallArg, ComparisonOp, Expr, Ident, NamedArg},
+    ast::{CallArg, ComparisonOp, Expr, Ident, LogicalOp, NamedArg},
 };
 use inspect_model::{
     Node, NodeDetail, NodeKind, SpecGraph,
@@ -29,7 +29,7 @@ use inspect_model::{
     },
 };
 use inspect_sim::{
-    Effect, Value,
+    Applied, Effect, Value,
     apply::{Against, Application},
     value::EntityId,
     world::World,
@@ -335,14 +335,20 @@ fn an_emission_is_reported_without_changing_anything() {
 /// `MessageSent(message: message)` hands the message on, and `QueueOnSend`
 /// reads it to file the outbox entry. Recording the trigger's name alone left
 /// every chained rule firing against nothing.
+///
+/// Positional, in order and unnamed: which name it goes by is each listener's
+/// own `when` clause's to say (issue #12). Named here after the trigger's
+/// first-listed listener, it reached that listener and no other.
 #[test]
-fn an_emission_carries_its_arguments_under_the_names_the_trigger_declares() {
+fn an_emission_carries_a_positional_argument_in_its_place_and_unnamed() {
     let loan = EntityId::new("Loan", 7);
     let (effects, _, _) =
         apply(&emission("CopyBorrowed"), &[("whatever", Value::Ref(loan.clone()))]);
-    let Effect::Emitted { arguments, .. } = &effects[0] else { panic!("expected an emission") };
-    // Positional, so placed against `CopyBorrowed(loan)`.
-    assert_eq!(arguments.get("loan"), Some(&Value::Ref(loan)));
+    let Effect::Emitted { arguments, positional, .. } = &effects[0] else {
+        panic!("expected an emission")
+    };
+    assert_eq!(positional, &[Value::Ref(loan)]);
+    assert!(arguments.is_empty(), "named after nobody: {arguments:?}");
 }
 
 #[test]
@@ -358,23 +364,67 @@ fn a_named_argument_keeps_the_name_it_was_written_with() {
         })],
     };
     let (effects, _, _) = apply(&clause, &[("whatever", Value::Ref(loan.clone()))]);
-    let Effect::Emitted { arguments, .. } = &effects[0] else { panic!("expected an emission") };
+    let Effect::Emitted { arguments, positional, .. } = &effects[0] else {
+        panic!("expected an emission")
+    };
     assert_eq!(arguments.get("loan"), Some(&Value::Ref(loan)));
+    assert!(positional.is_empty(), "{positional:?}");
 }
 
-/// An argument with nowhere to go is dropped rather than invented. The rule
-/// waiting on it then reports the binding as unset, which points at the
-/// emission; a made-up name would point nowhere.
+/// More positional arguments than any listener names are still carried, each
+/// in its place: whether one has nowhere to go is the listener's to find out,
+/// and a listener taking two is entitled to the second.
 #[test]
-fn an_argument_the_trigger_has_no_parameter_for_is_dropped() {
+fn every_positional_argument_is_carried_in_order() {
     let clause = Expr::Call {
         span: Span { start: 0, end: 0 },
         function: Box::new(ident("CopyBorrowed")),
-        args: vec![CallArg::Positional(ident("whatever")), CallArg::Positional(ident("whatever"))],
+        args: vec![CallArg::Positional(ident("first")), CallArg::Positional(ident("second"))],
     };
-    let (effects, _, _) = apply(&clause, &[("whatever", Value::Int(1))]);
-    let Effect::Emitted { arguments, .. } = &effects[0] else { panic!("expected an emission") };
-    assert_eq!(arguments.len(), 1, "one parameter declared, one argument placed");
+    let (effects, _, _) = apply(&clause, &[("first", Value::Int(1)), ("second", Value::Int(2))]);
+    let Effect::Emitted { positional, .. } = &effects[0] else { panic!("expected an emission") };
+    assert_eq!(positional, &[Value::Int(1), Value::Int(2)]);
+}
+
+/// `CopyBorrowed(word)`, one positional argument the clause names bare.
+fn emitting(word: &str) -> Expr {
+    Expr::Call {
+        span: Span { start: 0, end: 0 },
+        function: Box::new(ident("CopyBorrowed")),
+        args: vec![CallArg::Positional(ident(word))],
+    }
+}
+
+fn carried(word: &str, bindings: &[(&str, Value)]) -> Option<Value> {
+    let (effects, _, _) = apply(&emitting(word), bindings);
+    let Effect::Emitted { positional, .. } = &effects[0] else { panic!("expected an emission") };
+    positional.first().cloned()
+}
+
+/// Issue #10. `Finish(repo, cancel)` passes a word nothing binds, and the rule
+/// waiting on it was handed nothing — so its `how = cancel` was undecided
+/// however plainly the spec had said which. A word the spec declares as a state
+/// is that state.
+#[test]
+fn a_declared_state_an_emission_names_bare_is_carried_as_that_state() {
+    assert_eq!(carried("audio", &[]), Some(Value::Enum("audio".to_owned())));
+    // A field's inline states count as declared too.
+    assert_eq!(carried("on_loan", &[]), Some(Value::Enum("on_loan".to_owned())));
+}
+
+/// A trigger's parameters carry no types, so nothing else says an undeclared
+/// word is a state. Carried as unknown, and the rule reading it says so.
+#[test]
+fn an_undeclared_word_an_emission_names_is_carried_undecided() {
+    assert_eq!(carried("abort", &[]), Some(Value::Unknown));
+}
+
+/// A bound name is its binding, even when the binding is unknown and its name
+/// happens to be spelled like a state.
+#[test]
+fn a_bound_name_is_carried_as_its_binding_whatever_it_is_spelled() {
+    assert_eq!(carried("audio", &[("audio", Value::Unknown)]), Some(Value::Unknown));
+    assert_eq!(carried("audio", &[("audio", Value::Int(3))]), Some(Value::Int(3)));
 }
 
 #[test]
@@ -461,6 +511,391 @@ fn iterating_over_something_that_is_not_a_collection_applies_nothing() {
     let (effects, reasons, _) = apply(&clause, &[]);
     assert!(effects.is_empty());
     assert!(!reasons.is_empty());
+}
+
+/// A collection nothing settled is named as unsettled, quoted from the
+/// source, not described as "an unknown" the reader cannot find in the file.
+#[test]
+fn an_iteration_over_an_unsettled_collection_quotes_it_as_never_settled() {
+    let source = "for x in nobody";
+    let collection = Expr::Ident(Ident { span: Span::new(9, 15), name: "nobody".to_owned() });
+    let clause = iteration("x", collection, emission("Seen"));
+    let graph = spec();
+    let mut world = World::new();
+    let mut application = Application::new(
+        Against { spec: &graph, module: "lending", source, derived: &NOTHING },
+        &mut world,
+        BTreeMap::new(),
+    );
+    let applied = application.apply(&clause);
+    assert_eq!(
+        unapplied(&applied),
+        vec![
+            "`for x in nobody`: `nobody` was never settled, so the clauses inside it were not applied"
+        ]
+    );
+}
+
+/// An instance whose module is not where its entity is declared still has
+/// that entity's fields found, by name — and only that entity's. Another
+/// entity ahead of it in the graph, declaring nothing, is not it.
+#[test]
+fn a_member_from_another_module_is_still_read_against_its_own_entity() {
+    let mut graph = spec();
+    graph.nodes.insert(
+        0,
+        Node::new("circulation", NodeKind::Entity, "Shelf").with(NodeDetail::Entity(
+            EntityDetail {
+                kind: EntityKind::Internal,
+                fields: Vec::new(),
+                transitions: Vec::new(),
+                parent: None,
+            },
+        )),
+    );
+    let mut world = World::new();
+    let unset = world.create("Copy", "elsewhere");
+    let bound = BTreeMap::from([("status".to_owned(), Value::Enum("available".to_owned()))]);
+    let clause = filtered_iteration(
+        "c",
+        ident("Copies"),
+        compare(ident("status"), ComparisonOp::Eq, ident("available")),
+        seen_for("c"),
+    );
+    let mut application = Application::new(
+        Against { spec: &graph, module: "lending", source: "", derived: &NOTHING },
+        &mut world,
+        bound,
+    );
+    let applied = application.apply(&clause);
+    assert!(emitted_for(&applied.effects).is_empty(), "{:?}", applied.effects);
+    assert!(
+        unapplied(&applied).iter().any(|reason| reason.contains(&unset.to_string())),
+        "{:?}",
+        unapplied(&applied)
+    );
+}
+
+/// Apply `clause` against `world`, with nothing bound beforehand.
+fn apply_in(world: &mut World, clause: &Expr) -> (Vec<Effect>, Vec<String>) {
+    let applied = applied_in(world, BTreeMap::new(), clause);
+    (applied.effects, applied.unresolved.into_iter().map(|note| note.reason).collect())
+}
+
+/// Apply `clause` against `world` with `bound` in scope, and keep everything.
+fn applied_in(world: &mut World, bound: BTreeMap<String, Value>, clause: &Expr) -> Applied {
+    let graph = spec();
+    let mut application = Application::new(
+        Against { spec: &graph, module: "lending", source: "", derived: &NOTHING },
+        world,
+        bound,
+    );
+    application.apply(clause)
+}
+
+/// What a clause left unapplied, by reason.
+fn unapplied(applied: &Applied) -> Vec<&str> {
+    applied.unapplied.iter().map(|note| note.reason.as_str()).collect()
+}
+
+/// A trigger argument named like a field the member has not set is not the
+/// member's field. `when: Raised(status)` beside `for c in Copies where status
+/// = available` asks about each copy's status; reading the argument instead
+/// decided the filter about the wrong thing and applied the body to a copy
+/// whose status nobody said.
+#[test]
+fn a_filter_does_not_read_a_rule_binding_in_place_of_a_field_the_member_has_not_set() {
+    let mut world = World::new();
+    let unset = world.create("Copy", "catalogue");
+    let bound = BTreeMap::from([("status".to_owned(), Value::Enum("available".to_owned()))]);
+    let clause = filtered_iteration(
+        "c",
+        ident("Copies"),
+        compare(ident("status"), ComparisonOp::Eq, ident("available")),
+        seen_for("c"),
+    );
+    let applied = applied_in(&mut world, bound, &clause);
+    assert!(emitted_for(&applied.effects).is_empty(), "{:?}", applied.effects);
+    let undone = unapplied(&applied);
+    assert!(
+        undone.iter().any(|reason| reason.contains(&unset.to_string())),
+        "the copy nobody gave a status is left unapplied, and named: {undone:?}"
+    );
+}
+
+/// A field the member *has* set is still read bare, whatever the rule bound
+/// under the same name.
+#[test]
+fn a_filter_reads_a_field_the_member_has_set_over_a_rule_binding_of_the_same_name() {
+    let (mut world, available, _, _) = shelf();
+    let bound = BTreeMap::from([("status".to_owned(), Value::Enum("lost".to_owned()))]);
+    let clause = filtered_iteration(
+        "c",
+        ident("Copies"),
+        compare(ident("status"), ComparisonOp::Eq, ident("available")),
+        seen_for("c"),
+    );
+    let applied = applied_in(&mut world, bound, &clause);
+    assert_eq!(emitted_for(&applied.effects), vec![Value::Ref(available)]);
+}
+
+/// `let flag = c.shelfmark = "QA76"` inside a `for` is a value bound per
+/// member, not an assignment: it writes nothing and leaves nothing unresolved.
+/// A field with no lifecycle, so a write would not be refused on its way in.
+#[test]
+fn a_let_inside_an_iteration_binds_a_value_and_writes_nothing() {
+    let mut world = World::new();
+    let copy = world.create("Copy", "catalogue");
+    world.set_field(&copy, "shelfmark", Value::Str("PR6".to_owned()));
+    let body = block(vec![
+        Expr::LetExpr {
+            span: NOWHERE,
+            name: name("flag"),
+            value: Box::new(compare(
+                field(ident("c"), "shelfmark"),
+                ComparisonOp::Eq,
+                text("QA76"),
+            )),
+        },
+        seen_for("c"),
+    ]);
+    let clause = iteration("c", ident("Copies"), body);
+    let applied = applied_in(&mut world, BTreeMap::new(), &clause);
+    assert_eq!(
+        world.instance(&copy).map(|it| it.field("shelfmark")),
+        Some(Value::Str("PR6".to_owned())),
+        "the let did not write"
+    );
+    assert!(
+        !applied.effects.iter().any(|effect| matches!(effect, Effect::Assigned { .. })),
+        "{:?}",
+        applied.effects
+    );
+    assert_eq!(emitted_for(&applied.effects), vec![Value::Ref(copy)]);
+    assert!(applied.unresolved.is_empty(), "{:?}", applied.unresolved);
+}
+
+/// What was applied in full is not marked unapplied, whatever notes it
+/// carries: an `if` whose `or` its left side settled was taken.
+#[test]
+fn a_decided_conditional_carrying_notes_is_not_marked_unapplied() {
+    let (mut world, available, _, _) = shelf();
+    let clause = conditional(
+        logical(
+            compare(field(ident("it"), "status"), ComparisonOp::Eq, ident("available")),
+            LogicalOp::Or,
+            compare(field(ident("it"), "shelfmark"), ComparisonOp::Eq, text("x")),
+        ),
+        assign(field(ident("it"), "shelfmark"), text("QA76")),
+    );
+    let bound = BTreeMap::from([("it".to_owned(), Value::Ref(available))]);
+    let applied = applied_in(&mut world, bound, &clause);
+    assert!(applied.unapplied.is_empty(), "{:?}", applied.unapplied);
+    assert!(
+        applied.effects.iter().any(|effect| matches!(effect, Effect::Assigned { .. })),
+        "{:?}",
+        applied.effects
+    );
+}
+
+/// Every path that leaves something undone says so in `unapplied`: a member
+/// the filter could not decide about, a `for` over something that is not a
+/// collection, a branch nobody could choose, an assignment to nothing, and a
+/// form the simulator does not model.
+#[test]
+fn every_path_that_leaves_something_undone_marks_it_unapplied() {
+    let (mut world, _, _, unset) = shelf();
+    let undecided_member = filtered_iteration(
+        "c",
+        ident("Copies"),
+        compare(ident("status"), ComparisonOp::Eq, ident("available")),
+        seen_for("c"),
+    );
+    let applied = applied_in(&mut world, BTreeMap::new(), &undecided_member);
+    assert!(
+        unapplied(&applied).iter().any(|it| it.contains(&unset.to_string())),
+        "{:?}",
+        applied.unapplied
+    );
+
+    let cases = [
+        ("not a collection", iteration("x", ident("nobody"), emission("Seen"))),
+        (
+            "a branch nobody could choose",
+            conditional(
+                compare(field(ident("nobody"), "status"), ComparisonOp::Eq, ident("lost")),
+                emission("Seen"),
+            ),
+        ),
+        ("an assignment to nothing", assign(field(ident("nobody"), "status"), ident("lost"))),
+        ("unmodelled", unmodelled()),
+    ];
+    for (what, clause) in cases {
+        let applied = applied_in(&mut world, BTreeMap::new(), &clause);
+        assert!(!applied.unapplied.is_empty(), "{what}: {applied:?}");
+        assert!(
+            applied.unapplied.iter().all(|note| applied.unresolved.contains(note)),
+            "{what}: what is unapplied is among the notes too: {applied:?}"
+        );
+    }
+}
+
+/// A world of three copies: one available, one lost, and one whose status
+/// nobody set.
+fn shelf() -> (World, EntityId, EntityId, EntityId) {
+    let mut world = World::new();
+    let available = world.create("Copy", "catalogue");
+    world.set_field(&available, "status", Value::Enum("available".to_owned()));
+    let lost = world.create("Copy", "catalogue");
+    world.set_field(&lost, "status", Value::Enum("lost".to_owned()));
+    let unset = world.create("Copy", "catalogue");
+    (world, available, lost, unset)
+}
+
+fn emitted_for(effects: &[Effect]) -> Vec<Value> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Emitted { arguments, .. } => arguments.get("copy").cloned(),
+            _ => None,
+        })
+        .collect()
+}
+
+/// `Seen(copy: c)`, so each emission says which element it was for.
+fn seen_for(binding: &str) -> Expr {
+    Expr::Call {
+        span: Span::new(0, 0),
+        function: Box::new(ident("Seen")),
+        args: vec![CallArg::Named(NamedArg {
+            span: Span::new(0, 0),
+            name: Ident { span: Span::new(0, 0), name: "copy".to_owned() },
+            value: ident(binding),
+        })],
+    }
+}
+
+/// Issue #6: a `where` on an iteration was dropped, so every member was
+/// iterated whatever the filter said.
+#[test]
+fn an_iteration_applies_its_body_only_to_the_members_its_filter_keeps() {
+    let mut world = World::new();
+    let available = world.create("Copy", "catalogue");
+    world.set_field(&available, "status", Value::Enum("available".to_owned()));
+    let lost = world.create("Copy", "catalogue");
+    world.set_field(&lost, "status", Value::Enum("lost".to_owned()));
+
+    // `for c in Copies where status = available` — the element's field bare.
+    let bare = filtered_iteration(
+        "c",
+        ident("Copies"),
+        compare(ident("status"), ComparisonOp::Eq, ident("available")),
+        seen_for("c"),
+    );
+    let (effects, reasons) = apply_in(&mut world, &bare);
+    assert_eq!(emitted_for(&effects), vec![Value::Ref(available.clone())], "{effects:?}");
+    assert!(reasons.is_empty(), "{reasons:?}");
+
+    // `for c in Copies where c.status = available` — through the loop's name.
+    let named = filtered_iteration(
+        "c",
+        ident("Copies"),
+        compare(field(ident("c"), "status"), ComparisonOp::Eq, ident("available")),
+        seen_for("c"),
+    );
+    let (effects, reasons) = apply_in(&mut world, &named);
+    assert_eq!(emitted_for(&effects), vec![Value::Ref(available)], "{effects:?}");
+    assert!(reasons.is_empty(), "{reasons:?}");
+}
+
+/// A member the filter cannot decide about is neither iterated nor quietly
+/// left out: it is skipped, and the reason names the iteration.
+#[test]
+fn a_member_the_filter_cannot_decide_about_is_skipped_and_said_so() {
+    let (mut world, available, _, _) = shelf();
+    let clause = filtered_iteration(
+        "c",
+        ident("Copies"),
+        compare(ident("status"), ComparisonOp::Eq, ident("available")),
+        seen_for("c"),
+    );
+    let (effects, reasons) = apply_in(&mut world, &clause);
+    assert_eq!(emitted_for(&effects), vec![Value::Ref(available)], "{effects:?}");
+    assert!(!reasons.is_empty(), "the unset copy is reported: {effects:?}");
+    assert!(
+        reasons.iter().any(|reason| reason.contains("Copy#3") && reason.contains("`for c in`")),
+        "names the member and the iteration: {reasons:?}"
+    );
+}
+
+/// A filter that decided — `or` settled by its left side — keeps or drops the
+/// member and leaves nothing unresolved behind it, even though the right side
+/// could not be read. A note there would read as a member left unapplied.
+#[test]
+fn a_filter_that_decided_leaves_nothing_unresolved_whatever_it_could_not_read() {
+    let mut world = World::new();
+    let available = world.create("Copy", "catalogue");
+    world.set_field(&available, "status", Value::Enum("available".to_owned()));
+    let lost = world.create("Copy", "catalogue");
+    world.set_field(&lost, "status", Value::Enum("lost".to_owned()));
+    world.set_field(&lost, "shelfmark", Value::Str("QA76".to_owned()));
+
+    // available: `status = available` is true, the `shelfmark` nobody set does
+    // not matter. lost: `status = available` false, `shelfmark = "x"` false.
+    let clause = filtered_iteration(
+        "c",
+        ident("Copies"),
+        logical(
+            compare(ident("status"), ComparisonOp::Eq, ident("available")),
+            LogicalOp::Or,
+            compare(field(ident("c"), "shelfmark"), ComparisonOp::Eq, text("x")),
+        ),
+        seen_for("c"),
+    );
+    let (effects, reasons) = apply_in(&mut world, &clause);
+    assert_eq!(emitted_for(&effects), vec![Value::Ref(available)], "{effects:?}");
+    assert!(reasons.is_empty(), "{reasons:?}");
+}
+
+/// Issue #6: a collection with no members is iterated zero times, and that is
+/// a decided answer — nothing left unresolved behind it.
+#[test]
+fn an_iteration_over_a_type_with_no_instances_applies_nothing_and_is_decided() {
+    let mut world = World::new();
+    let clause = filtered_iteration(
+        "w",
+        ident("Hooks"),
+        compare(ident("active"), ComparisonOp::Eq, boolean(true)),
+        seen_for("w"),
+    );
+    let (effects, reasons) = apply_in(&mut world, &clause);
+    assert!(effects.is_empty(), "{effects:?}");
+    assert!(reasons.is_empty(), "{reasons:?}");
+}
+
+/// The filter sees the loop's name, but the binding still does not leak past
+/// the loop.
+#[test]
+fn a_filtered_iteration_restores_the_binding_it_shadowed() {
+    let graph = spec();
+    let (mut world, _, _, _) = shelf();
+    let scope = BTreeMap::from([("c".to_owned(), Value::Str("outer".to_owned()))]);
+    let clause = filtered_iteration(
+        "c",
+        ident("Copies"),
+        compare(field(ident("c"), "status"), ComparisonOp::Eq, ident("available")),
+        seen_for("c"),
+    );
+    let bindings = {
+        let mut application = Application::new(
+            Against { spec: &graph, module: "lending", source: "", derived: &NOTHING },
+            &mut world,
+            scope,
+        );
+        application.apply(&clause);
+        application.into_bindings()
+    };
+    assert_eq!(bindings.get("c"), Some(&Value::Str("outer".to_owned())));
 }
 
 /// `not exists presence` names one instance, and afterwards it is gone —
@@ -580,6 +1015,33 @@ fn a_state_of_some_other_enumeration_is_not_this_fields() {
     assert_eq!(loan.fields.get("copy"), Some(&Value::Unknown));
 }
 
+/// An instance filed in a module that does not declare its entity — a world
+/// written by hand, or one placed before its module was known — still has its
+/// states read from the entity of that name. Looking only in the instance's
+/// own module would leave every bare state assigned to it undecided.
+#[test]
+fn a_state_is_read_by_name_when_the_instances_module_does_not_declare_it() {
+    let graph = spec();
+    let (mut world, _) = world();
+    let loan = world.create("Loan", "elsewhere");
+    world.set_field(&loan, "status", Value::Enum("open".to_owned()));
+
+    let scope = BTreeMap::from([("loan".to_owned(), Value::Ref(loan.clone()))]);
+    let applied = {
+        let mut application = Application::new(
+            Against { spec: &graph, module: "lending", source: "", derived: &NOTHING },
+            &mut world,
+            scope,
+        );
+        application.apply(&assign(field(ident("loan"), "status"), ident("returned")))
+    };
+    assert!(applied.unresolved.is_empty(), "{:?}", applied.unresolved);
+    assert_eq!(
+        world.instance(&loan).expect("the loan").field("status"),
+        Value::Enum("returned".to_owned())
+    );
+}
+
 // --- where a created instance comes from ----------------------------------
 
 #[test]
@@ -604,6 +1066,164 @@ fn an_instance_of_a_type_the_spec_does_not_declare_falls_back_to_the_rule() {
         panic!("expected a creation, got {effects:?}");
     };
     assert_eq!(world.instance(id).expect("it was created").module, "lending");
+}
+
+// --- a creation through a qualified name (issue #9) ------------------------
+
+/// `alias/Entity.created(field: value, …)`.
+fn qualified_creation(alias: &str, entity: &str, fields: Vec<(&str, Expr)>) -> Expr {
+    let Expr::Call { span, args, .. } = creation(entity, fields) else { unreachable!() };
+    let qualified = Expr::QualifiedName(allium_parser::ast::QualifiedName {
+        span: NOWHERE,
+        qualifier: Some(alias.to_owned()),
+        name: entity.to_owned(),
+    });
+    Expr::Call { span, function: Box::new(field(qualified, "created")), args }
+}
+
+/// `lending` imports `catalogue` as `cat`, and a second module, `archive`,
+/// declares a `Copy` of its own ahead of it in the graph — so finding the
+/// module by the entity's name alone would pick the wrong one.
+fn spec_with_alias() -> SpecGraph {
+    let mut graph = spec();
+    graph.nodes.insert(
+        0,
+        Node::new("archive", NodeKind::Entity, "Copy").with(NodeDetail::Entity(EntityDetail {
+            kind: EntityKind::Internal,
+            fields: Vec::new(),
+            transitions: Vec::new(),
+            parent: None,
+        })),
+    );
+    graph.modules.push(inspect_model::graph::Module {
+        name: "lending".to_owned(),
+        path: "lending.allium".to_owned(),
+        imports: vec![inspect_model::graph::Import {
+            alias: "cat".to_owned(),
+            path: "./catalogue.allium".to_owned(),
+            target: Some("catalogue".to_owned()),
+            span: None,
+        }],
+        language_version: Some(3),
+    });
+    graph
+}
+
+fn apply_qualified(graph: &SpecGraph, clause: &Expr) -> (Vec<Effect>, World) {
+    let (mut world, _) = world();
+    let mut application = Application::new(
+        Against { spec: graph, module: "lending", source: "", derived: &NOTHING },
+        &mut world,
+        BTreeMap::new(),
+    );
+    let effects = application.apply(clause).effects;
+    (effects, world)
+}
+
+/// What applying `clause` in `lending` left unresolved.
+fn unresolved_of(graph: &SpecGraph, clause: &Expr) -> Vec<String> {
+    let (mut world, _) = world();
+    let mut application = Application::new(
+        Against { spec: graph, module: "lending", source: "", derived: &NOTHING },
+        &mut world,
+        BTreeMap::new(),
+    );
+    application.apply(clause).unresolved.into_iter().map(|note| note.reason).collect()
+}
+
+#[test]
+fn a_qualified_creation_is_a_creation() {
+    // It was read as neither a creation nor a trigger: the rule fired and the
+    // world held nothing new.
+    let (effects, world) = apply_qualified(
+        &spec(),
+        &qualified_creation("cat", "Copy", vec![("shelfmark", text("QA76"))]),
+    );
+    let Some(Effect::Created { id, entity }) = effects.first() else {
+        panic!("expected a creation, got {effects:?}");
+    };
+    assert_eq!(entity, "Copy");
+    let copy = world.instance(id).expect("created");
+    assert_eq!(copy.field("shelfmark"), Value::Str("QA76".to_owned()));
+}
+
+#[test]
+fn a_qualified_creation_lands_in_the_module_its_alias_names() {
+    let (effects, world) =
+        apply_qualified(&spec_with_alias(), &qualified_creation("cat", "Copy", vec![]));
+    let Some(Effect::Created { id, .. }) = effects.first() else {
+        panic!("expected a creation, got {effects:?}");
+    };
+    assert_eq!(world.instance(id).expect("created").module, "catalogue");
+}
+
+/// The alias is the creating module's: another module that imports something
+/// else `as cat` says nothing about what `cat` means in `lending`.
+#[test]
+fn the_alias_is_read_from_the_imports_of_the_module_creating() {
+    let mut graph = spec_with_alias();
+    graph.modules.insert(
+        0,
+        inspect_model::graph::Module {
+            name: "archive".to_owned(),
+            path: "archive.allium".to_owned(),
+            imports: vec![inspect_model::graph::Import {
+                alias: "cat".to_owned(),
+                path: "./archive.allium".to_owned(),
+                target: Some("archive".to_owned()),
+                span: None,
+            }],
+            language_version: Some(3),
+        },
+    );
+    let (effects, world) = apply_qualified(&graph, &qualified_creation("cat", "Copy", vec![]));
+    let Some(Effect::Created { id, .. }) = effects.first() else {
+        panic!("expected a creation, got {effects:?}");
+    };
+    assert_eq!(world.instance(id).expect("created").module, "catalogue");
+}
+
+#[test]
+fn an_alias_that_resolves_leaves_nothing_unresolved() {
+    let notes = unresolved_of(&spec_with_alias(), &qualified_creation("cat", "Copy", vec![]));
+    assert!(notes.is_empty(), "{notes:?}");
+}
+
+#[test]
+fn an_unqualified_creation_is_still_placed_by_name() {
+    // The alias is consulted only when one was written.
+    let (effects, world) = apply_qualified(&spec_with_alias(), &creation("Copy", vec![]));
+    let Some(Effect::Created { id, .. }) = effects.first() else {
+        panic!("expected a creation, got {effects:?}");
+    };
+    assert_eq!(world.instance(id).expect("created").module, "archive");
+}
+
+#[test]
+fn an_alias_this_module_does_not_import_falls_back_to_the_name() {
+    let (effects, world) =
+        apply_qualified(&spec_with_alias(), &qualified_creation("nowhere", "Copy", vec![]));
+    let Some(Effect::Created { id, .. }) = effects.first() else {
+        panic!("expected a creation, got {effects:?}");
+    };
+    assert_eq!(world.instance(id).expect("created").module, "archive");
+    // Placed, and said to be a guess: the spec gave no home for it.
+    let notes = unresolved_of(&spec_with_alias(), &qualified_creation("nowhere", "Copy", vec![]));
+    assert!(notes.iter().any(|note| note.contains("`nowhere/Copy`")), "{notes:?}");
+}
+
+#[test]
+fn an_alias_whose_module_does_not_declare_the_entity_falls_back_to_the_name() {
+    // `cat/Loan`: `catalogue` declares no `Loan`, so the alias is no help and
+    // the entity is placed where it is declared rather than nowhere.
+    let (effects, world) =
+        apply_qualified(&spec_with_alias(), &qualified_creation("cat", "Loan", vec![]));
+    let Some(Effect::Created { id, .. }) = effects.first() else {
+        panic!("expected a creation, got {effects:?}");
+    };
+    assert_eq!(world.instance(id).expect("created").module, "lending");
+    let notes = unresolved_of(&spec_with_alias(), &qualified_creation("cat", "Loan", vec![]));
+    assert!(notes.iter().any(|note| note.contains("`cat/Loan`")), "{notes:?}");
 }
 
 // --- quoting the clause the author wrote ----------------------------------

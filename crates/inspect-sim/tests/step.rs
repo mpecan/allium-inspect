@@ -40,13 +40,18 @@ fn read(path: &Path) -> String {
 
 /// The library spec set, ingested exactly as the server ingests it.
 fn library_spec() -> (SpecGraph, Program, Sources) {
+    recorded(&["catalogue", "lending"])
+}
+
+/// The recorded fixture modules named, ingested exactly as the server does.
+fn recorded(modules: &[&str]) -> (SpecGraph, Program, Sources) {
     let root = fixtures();
     let mut runner = MapRunner::new(read(&root.join("cli/VERSION")).trim());
     let mut reader = MemoryReader::default();
     let mut sources: Sources = BTreeMap::new();
     let mut paths = Vec::new();
 
-    for module in ["catalogue", "lending"] {
+    for &module in modules {
         let path = root.join(format!("specs/{module}.allium"));
         for command in Command::ALL {
             let document = read(&root.join(format!("cli/{module}.{command}.json")));
@@ -596,6 +601,7 @@ fn rule_outcome(name: &str, unresolved: Vec<Unresolved>) -> RuleOutcome {
         requires: Vec::<ClauseVerdict>::new(),
         effects: Vec::new(),
         unresolved,
+        unapplied: Vec::new(),
     }
 }
 
@@ -737,7 +743,7 @@ fn a_rule_the_parser_did_read_is_judged_on_its_preconditions() {
                 value: false,
             }],
             ensures: Vec::new(),
-            iterate: None,
+            per_member: std::collections::BTreeMap::new(),
         },
     );
     assert_eq!(only_rule(&graph, &program), Disposition::Refused);
@@ -843,4 +849,74 @@ fn a_state_event_carrying_other_entities_still_names_its_one_instance() {
         .with("who", Value::Ref(member));
     let outcome = outcome_for("ReportLostCopy", &step(&graph, &program, &sources, &world, &event));
     assert_eq!(outcome.disposition, Disposition::Fired, "{outcome:?}");
+}
+
+// --- a parameter nobody passed is not a word ------------------------------
+
+/// `rule Ask { when: Ask(repo, kind)  requires: can(repo, kind) }`, fired with
+/// or without `kind`, against a world that stipulates `can(repo, kind)`.
+fn ask(kind: Option<&str>) -> inspect_sim::RuleOutcome {
+    ask_answered(kind, true)
+}
+
+/// [`ask`], with the stipulation answering `answer`.
+fn ask_answered(kind: Option<&str>, answer: bool) -> inspect_sim::RuleOutcome {
+    let (graph, program, sources) = recorded(&["grants"]);
+    let mut world = World::new().at(1_000);
+    let repo = world.create("Repo", "grants");
+    world.answers.push(inspect_sim::world::Answer {
+        call: "can".to_owned(),
+        arguments: vec![Value::Ref(repo.clone()), Value::Enum("kind".to_owned())],
+        value: Value::Bool(answer),
+    });
+    let mut event = Event::new("Ask", "grants").with("repo", Value::Ref(repo));
+    if let Some(kind) = kind {
+        event = event.with("kind", Value::Enum(kind.to_owned()));
+    }
+    outcome_for("Ask", &step(&graph, &program, &sources, &world, &event))
+}
+
+/// The control: passed as the word the stipulation names, the call is
+/// answered and the rule fires — so the case below is not undecided for some
+/// reason that has nothing to do with the parameter.
+#[test]
+fn a_parameter_passed_as_the_stipulated_word_is_answered() {
+    let fired = ask(Some("kind"));
+    assert_eq!(fired.disposition, Disposition::Fired, "{:?}", fired.requires);
+}
+
+/// Not passed, `kind` is unbound and reads exactly like a word nothing binds.
+/// It is the rule's own parameter, so a stipulation spelling `kind` is about a
+/// different thing, and the rule is undecided rather than fired on it.
+#[test]
+fn a_parameter_nobody_passed_is_not_answered_by_its_spelling() {
+    let undecided = ask(None);
+    assert_eq!(undecided.disposition, Disposition::Undecided, "{:?}", undecided.requires);
+}
+
+/// The same, where it would show: a stipulation answering `can(repo, kind)`
+/// *false*. Read as its spelling, the unbound `kind` would be answered, the
+/// precondition would be definitely false, and the rule would be reported
+/// refused — the spec saying no about a parameter nobody passed. Undecided,
+/// because whether the rule refuses depends on what `kind` would have been.
+#[test]
+fn a_parameter_nobody_passed_is_not_refused_on_by_its_spelling() {
+    let undecided = ask_answered(None, false);
+    assert_eq!(undecided.disposition, Disposition::Undecided, "{:?}", undecided.requires);
+}
+
+/// A `requires` inside a rule-level `for` is shown as written. The graph lists
+/// only a rule's own clauses, so its text was looked up there by position and
+/// came back empty — or as another clause's.
+#[test]
+fn a_precondition_inside_a_loop_is_shown_as_the_spec_wrote_it() {
+    let (graph, program, sources) = recorded(&["fanout"]);
+    let mut world = World::new();
+    let hook = world.create("Hook", "fanout");
+    let event = Event::new("Check", "fanout").passing(Value::Ref(hook));
+    let outcome = step(&graph, &program, &sources, &world, &event);
+    let check = outcome_for("Check", &outcome);
+    let texts: Vec<&str> = check.requires.iter().map(|it| it.text.as_str()).collect();
+    assert_eq!(texts, ["w.active = true"], "{:?}", check.requires);
+    assert_eq!(check.requires[0].truth, Truth::Unknown);
 }

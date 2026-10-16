@@ -7,4 +7,12 @@ import type { Unresolved } from "./Unresolved";
 /**
  * What one rule did with the trigger.
  */
-export type RuleOutcome = { rule: string, name: string, module: string, disposition: Disposition, requires: Array<ClauseVerdict>, effects: Array<Effect>, unresolved: Array<Unresolved>, };
+export type RuleOutcome = { rule: string, name: string, module: string, disposition: Disposition, requires: Array<ClauseVerdict>, effects: Array<Effect>, unresolved: Array<Unresolved>, 
+/**
+ * What a fired rule promised and the world does not show, and why.
+ *
+ * A subset of `unresolved`, kept apart because a note is not this: a
+ * postcondition can be decided and applied in full and still carry one.
+ * What counts is listed on `Applied::unapplied`.
+ */
+unapplied: Array<Unresolved>, };

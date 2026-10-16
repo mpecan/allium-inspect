@@ -11,10 +11,15 @@ import {
   configOf,
   fieldsOf,
   instanceOf,
+  setByJourney,
   stateAt,
 } from "./cast";
 
-function instance(id: string, entity: string, fields: Instance["fields"] = {}): Instance {
+function instance(
+  id: string,
+  entity: string,
+  fields: Instance["fields"] = {},
+): Instance {
   return { id, entity, module: "lending", fields };
 }
 
@@ -55,8 +60,12 @@ function walk(worlds: World[]): Walk {
 }
 
 describe("stateAt", () => {
-  const first = world([instance("Member#1", "Member", { name: { kind: "str", value: "Ada" } })]);
-  const second = world([instance("Member#1", "Member", { name: { kind: "str", value: "Bea" } })]);
+  const first = world([
+    instance("Member#1", "Member", { name: { kind: "str", value: "Ada" } }),
+  ]);
+  const second = world([
+    instance("Member#1", "Member", { name: { kind: "str", value: "Bea" } }),
+  ]);
 
   it("reads the world the chosen step left behind", () => {
     // The whole reason worlds are kept per step: a single final state answers
@@ -103,7 +112,11 @@ describe("fieldsOf", () => {
       member: { kind: "unknown" },
       status: { kind: "enum", value: "open" },
     });
-    expect(fieldsOf(held).map(([name]) => name)).toEqual(["copy", "member", "status"]);
+    expect(fieldsOf(held).map(([name]) => name)).toEqual([
+      "copy",
+      "member",
+      "status",
+    ]);
   });
 
   it("has no fields for nothing", () => {
@@ -134,7 +147,9 @@ describe("configOf", () => {
   });
 
   it("splits on the first dot, so a dotted parameter name survives", () => {
-    const shown = configOf(world([], { "lending.window.grace": { kind: "int", value: 1 } }));
+    const shown = configOf(
+      world([], { "lending.window.grace": { kind: "int", value: 1 } }),
+    );
     expect(shown[0]).toEqual({
       module: "lending",
       name: "window.grace",
@@ -143,7 +158,9 @@ describe("configOf", () => {
   });
 
   it("keeps a parameter with no module rather than dropping it", () => {
-    expect(configOf(world([], { bare: { kind: "int", value: 1 } }))[0]?.name).toBe("bare");
+    expect(
+      configOf(world([], { bare: { kind: "int", value: 1 } }))[0]?.name,
+    ).toBe("bare");
   });
 
   it("has nothing to show for no world", () => {
@@ -176,5 +193,33 @@ describe("ORIGIN", () => {
 
   it("gives the three different words, because they are read differently", () => {
     expect(new Set(Object.values(ORIGIN)).size).toBe(3);
+  });
+});
+
+describe("setByJourney", () => {
+  const told = (said: string) => ({
+    ...walk([]),
+    stipulated: [{ said, through: null }],
+  });
+  const lfs = {
+    module: "switches",
+    name: "lfs_enabled",
+    value: { kind: "bool", value: true },
+  } as const;
+
+  it("marks a parameter the journey set, however it spelled the module", () => {
+    expect(setByJourney(told("config.lfs_enabled = true"), lfs)).toBe(true);
+    expect(setByJourney(told("switches/config.lfs_enabled = true"), lfs)).toBe(
+      true,
+    );
+  });
+
+  it("leaves a default, and a parameter of another name or module, unmarked", () => {
+    expect(setByJourney(walk([]), lfs)).toBe(false);
+    expect(setByJourney(told("config.lfs = true"), lfs)).toBe(false);
+    expect(setByJourney(told("other/config.lfs_enabled = true"), lfs)).toBe(
+      false,
+    );
+    expect(setByJourney(told("r.lfs_enabled = true"), lfs)).toBe(false);
   });
 });

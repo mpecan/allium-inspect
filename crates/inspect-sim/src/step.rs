@@ -30,6 +30,7 @@ use ts_rs::TS;
 use crate::{
     apply::Against,
     apply::{Application, Effect},
+    binding, creation,
     eval::{Env, Unresolved, eval},
     truth::Truth,
     value::Value,
@@ -88,9 +89,17 @@ pub struct RuleOutcome {
     pub requires: Vec<ClauseVerdict>,
     pub effects: Vec<Effect>,
     pub unresolved: Vec<Unresolved>,
+    /// What a fired rule promised and the world does not show, and why.
+    ///
+    /// A subset of `unresolved`, kept apart because a note is not this: a
+    /// postcondition can be decided and applied in full and still carry one.
+    /// What counts is listed on `Applied::unapplied`.
+    #[serde(default)]
+    pub unapplied: Vec<Unresolved>,
 }
 
-/// A state-condition rule that holds now.
+/// A state-condition rule that holds now, or a rule reacting to something the
+/// step created — told apart by a trigger ending `.created` (see `creation`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../ui/src/lib/api/")]
 pub struct Enabled {
@@ -175,7 +184,8 @@ pub fn step(
 
     for node in spec.nodes_of(NodeKind::Rule) {
         let Some(detail) = node.detail.as_rule() else { continue };
-        if detail.trigger != event.trigger {
+        let when = program.rule(node.id.as_str()).and_then(|ast| ast.when.as_ref());
+        if !creation::wakes(spec, &node.module, (&detail.trigger, when), event) {
             continue;
         }
         let source = sources.get(&node.module).map(String::as_str).unwrap_or_default();
@@ -212,10 +222,14 @@ pub fn step(
         })
         .collect();
 
-    let newly_enabled = enabled(spec, program, sources, &next)
+    let mut newly_enabled: Vec<Enabled> = enabled(spec, program, sources, &next)
         .into_iter()
         .filter(|candidate| !enabled_before.iter().any(|earlier| earlier.rule == candidate.rule))
         .collect();
+    // What this step created, offered to the rules that react to a creation —
+    // run by nobody here, for the same reason an emission is not: one step is
+    // one step. `reactions` turns these into the events to fire.
+    newly_enabled.extend(creation::reacting(spec, program, &rules, &next));
 
     StepOutcome { world: next, event: event.clone(), rules, invariants, newly_enabled, emitted }
 }
@@ -240,20 +254,15 @@ fn run_rule(
     let empty = inspect_model::RuleAst::default();
     let ast = program.rule(id).unwrap_or(&empty);
 
-    let mut bindings: BTreeMap<String, Value> = event.arguments.clone();
-    // An optional parameter nobody passed is `null`, which is what `?` means
-    // and what a rule guarding `attachment_size = null` is written against.
-    // Left unbound it is undecided instead — for every caller who did not pass
-    // one, which is all of them, since not passing it is the point.
-    //
     // Read off the rule's own `when` clause rather than looked up in the graph:
     // that clause *is* the declaration, and one answer is better than two that
-    // can disagree.
-    for (name, _) in
-        ast.parameters().into_iter().filter(|(name, optional)| *optional && !name.is_empty())
-    {
-        bindings.entry(name).or_insert(Value::Null);
-    }
+    // can disagree — two listeners may call one argument by different names.
+    let parameters = ast.parameters();
+    let mut bindings = binding::bind(event, &parameters);
+    // Every parameter by name, passed or not: one nobody passed is unbound,
+    // and must still not be taken for a word a stipulation spells.
+    let declared: Vec<String> =
+        parameters.iter().map(|(name, _)| name.clone()).filter(|name| !name.is_empty()).collect();
 
     // The rule's own names, before its preconditions read them.
     //
@@ -269,8 +278,7 @@ fn run_rule(
     // the `let` rather than at what defeated it.
     for (name, value) in &ast.lets {
         let evaluated = {
-            let mut scope = Env::new(world, module, source).deriving(program.derivations());
-            scope.bindings.clone_from(&bindings);
+            let scope = rule_scope(Env::new(world, module, source), program, &declared, &bindings);
             eval(value, &scope)
         };
         bindings.insert(name.clone(), evaluated.value);
@@ -284,13 +292,52 @@ fn run_rule(
     // nothing and came back undecided on every firing of the first.
     if let Some((binding, _)) = state_condition(detail, ast)
         && !bindings.contains_key(binding)
-        && let Some(id) = carried(&event.arguments, world, &detail.trigger)
+        && let Some(id) = carried(event, world, &detail.trigger)
     {
         bindings.insert(binding.to_owned(), Value::Ref(id));
     }
 
     let mut requires = Vec::new();
     let mut unresolved = Vec::new();
+
+    // A parameter the firing did not bind is the rule run about nothing, so
+    // its `when` is undecided and says which name went unbound and why. A
+    // precondition that is definitely false still refuses: that is decided
+    // whatever the missing name would have been.
+    let when = detail.clauses_of("when").next();
+    let when_text = when.map(|clause| clause.text.clone()).unwrap_or_default();
+    let gaps = binding::unbound(event, &parameters, &bindings, when);
+    if !gaps.is_empty() {
+        unresolved.extend(gaps.clone());
+        requires.push(ClauseVerdict {
+            text: when_text.clone(),
+            truth: Truth::Unknown,
+            unresolved: gaps,
+        });
+    }
+
+    // A creation rule's `when` is the creation, not a condition to read: the
+    // instance it is about is the one the event carries, under the rule's own
+    // name or, when another rule's name was used, the one of its entity.
+    if let Some((binding, entity)) = creation::creation_of(ast.when.as_ref())
+        && let Some(when) = ast.when.as_ref()
+    {
+        if !bindings.contains_key(binding)
+            && let Some(id) = carried(event, world, entity)
+        {
+            bindings.insert(binding.to_owned(), Value::Ref(id));
+        }
+        let home = creation::reacts_in(spec, module, Some(when));
+        let (truth, why) = creation::when_verdict(
+            (binding, entity, home.as_deref()),
+            when,
+            &bindings,
+            world,
+            source,
+        );
+        unresolved.extend(why.clone());
+        requires.push(ClauseVerdict { text: when_text.clone(), truth, unresolved: why });
+    }
 
     // A state rule's own condition, first, as a precondition. Nobody names a
     // state rule's trigger: it is the entity, so whatever made *one* rule on
@@ -324,26 +371,33 @@ fn run_rule(
         };
         unresolved.extend(evaluated.unresolved.clone());
         requires.push(ClauseVerdict {
-            text: detail
-                .clauses_of("when")
-                .next()
-                .map(|clause| clause.text.clone())
-                .unwrap_or_default(),
+            text: when_text.clone(),
             truth: evaluated.truth(),
             unresolved: evaluated.unresolved,
         });
     }
 
+    // The graph lists only the rule's own `requires`, not those written inside
+    // a rule-level `for`, so its texts are counted against the top-level ones
+    // alone; a per-member clause is sliced from the source by its own span.
+    let mut top_level = detail.clauses_of("requires");
     for (index, clause) in ast.requires.iter().enumerate() {
-        let text = detail
-            .clauses_of("requires")
-            .nth(index)
-            .map(|clause| clause.text.clone())
-            .unwrap_or_default();
-        let evaluated = {
-            let mut scope = Env::new(world, module, source).deriving(program.derivations());
-            scope.bindings.clone_from(&bindings);
-            eval(clause, &scope)
+        let (text, evaluated) = match ast.per_member.get(&index) {
+            Some(within) => (
+                crate::eval::span_of(clause)
+                    .and_then(|span| span.slice(source))
+                    .map(str::to_owned)
+                    .unwrap_or_default(),
+                per_member(within, clause, source),
+            ),
+            None => {
+                let scope =
+                    rule_scope(Env::new(world, module, source), program, &declared, &bindings);
+                (
+                    top_level.next().map(|clause| clause.text.clone()).unwrap_or_default(),
+                    eval(clause, &scope),
+                )
+            }
         };
         unresolved.extend(evaluated.unresolved.clone());
         requires.push(ClauseVerdict {
@@ -365,6 +419,7 @@ fn run_rule(
     };
 
     let mut effects = Vec::new();
+    let mut unapplied = Vec::new();
     if disposition == Disposition::Fired {
         let mut application = Application::new(
             Against { spec, module, source, derived: program.derivations() },
@@ -375,6 +430,7 @@ fn run_rule(
             let applied = application.apply(clause);
             effects.extend(applied.effects);
             unresolved.extend(applied.unresolved);
+            unapplied.extend(applied.unapplied);
         }
     }
 
@@ -386,6 +442,28 @@ fn run_rule(
         requires,
         effects,
         unresolved,
+        unapplied,
+    }
+}
+
+/// A `requires` written inside a rule-level `for`: undecided, whatever it says.
+///
+/// Read as the rule's own, it named the loop's name unbound — unless a trigger
+/// argument or a `let` shared it, and then it was decided about that instead.
+fn per_member(within: &str, clause: &Expr, source: &str) -> crate::eval::Evaluation {
+    crate::eval::Evaluation {
+        value: Value::Unknown,
+        unresolved: vec![Unresolved {
+            reason: format!(
+                "this precondition is inside `for {within} in …`, and whether one member \
+                 failing it refuses the rule or only skips that member is not something the \
+                 simulator decides"
+            ),
+            expression: crate::eval::span_of(clause)
+                .and_then(|span| span.slice(source))
+                .map(str::to_owned),
+            span: crate::eval::span_of(clause),
+        }],
     }
 }
 
@@ -479,6 +557,22 @@ pub fn enabled(
     found
 }
 
+/// The scope a rule's `let`s and preconditions are read in.
+///
+/// One function for both, so they cannot disagree about what is in scope —
+/// and in particular about which names are parameters, which a call's
+/// spelling match must never take for words.
+fn rule_scope<'a>(
+    base: Env<'a>,
+    program: &'a Program,
+    declared: &[String],
+    bindings: &BTreeMap<String, Value>,
+) -> Env<'a> {
+    let mut scope = base.deriving(program.derivations()).declaring(declared.iter().cloned());
+    scope.bindings.clone_from(bindings);
+    scope
+}
+
 /// A state rule's binding and condition: `when: copy: Copy.status = lost`.
 ///
 /// A binding, not a call. A rule written any other way — or one somebody
@@ -488,6 +582,10 @@ fn state_condition<'a>(
     ast: &'a inspect_model::RuleAst,
 ) -> Option<(&'a str, &'a Expr)> {
     if detail.source == TriggerSource::External {
+        return None;
+    }
+    // Written like a condition and not one: see `creation`.
+    if creation::creation_of(ast.when.as_ref()).is_some() {
         return None;
     }
     match &ast.when {
@@ -501,17 +599,16 @@ fn state_condition<'a>(
 ///
 /// Two distinct ones is not a question this can answer, so it answers none,
 /// and the rule's condition says what it could not read.
-fn carried(
-    arguments: &BTreeMap<String, Value>,
-    world: &World,
-    entity: &str,
-) -> Option<crate::value::EntityId> {
-    let mut found = arguments.values().filter_map(|value| match value {
-        Value::Ref(id) if world.instance(id).is_some_and(|instance| instance.entity == entity) => {
-            Some(id)
-        }
-        _ => None,
-    });
+fn carried(event: &Event, world: &World, entity: &str) -> Option<crate::value::EntityId> {
+    let mut found =
+        event.arguments.values().chain(&event.positional).filter_map(|value| match value {
+            Value::Ref(id)
+                if world.instance(id).is_some_and(|instance| instance.entity == entity) =>
+            {
+                Some(id)
+            }
+            _ => None,
+        });
     let first = found.next()?;
     found.all(|other| other == first).then(|| first.clone())
 }

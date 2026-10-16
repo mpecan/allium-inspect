@@ -1,0 +1,1 @@
+{"diagnostics":[],"obligations":[{"category":"entity_fields","description":"Verify all declared fields on Note are present with correct types","detail":{"fields":["text","seen"]},"id":"entity-fields.Note","source_construct":"Note","source_span":{"end":237,"start":187}}],"version":3}

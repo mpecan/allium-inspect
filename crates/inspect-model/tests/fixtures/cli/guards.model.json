@@ -1,0 +1,1 @@
+{"diagnostics":[],"entities":[{"fields":[{"name":"name","type_expr":"String"}],"kind":"internal","name":"Shelf","relationships":[{"name":"docs","target":"Doc"}]},{"fields":[{"name":"shelf","type_expr":"Shelf"},{"name":"owner","type_expr":"String"},{"name":"secret","type_expr":"String"},{"name":"is_private","type_expr":"Boolean"}],"kind":"internal","name":"Doc"}],"version":3}

@@ -1,0 +1,1 @@
+{"command":"analyse","diagnostics":[{"code":"allium.field.unused","location":{"col":5,"file":"packing.allium","line":30},"message":"Field 'Parcel.crate' is declared but not referenced elsewhere.","severity":"info"}],"findings":[],"spec_file":"packing.allium"}

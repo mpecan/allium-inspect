@@ -39,13 +39,34 @@ pub struct Event {
     pub module: String,
     /// Argument bindings, by parameter name.
     pub arguments: BTreeMap<String, Value>,
+    /// Arguments passed by position, in order.
+    ///
+    /// Bound by each rule that wakes to the names *its own* `when` clause
+    /// gives them, in order. A trigger is declared by nothing but the rules
+    /// that listen for it, and two of them may call one argument `thing` and
+    /// `doc`: named once, here, for whichever listener was found first, the
+    /// argument reached that one and every other ran against nothing.
+    #[serde(default)]
+    pub positional: Vec<Value>,
 }
 
 impl Event {
     /// A trigger with no arguments.
     #[must_use]
     pub fn new(trigger: impl Into<String>, module: impl Into<String>) -> Self {
-        Self { trigger: trigger.into(), module: module.into(), arguments: BTreeMap::new() }
+        Self {
+            trigger: trigger.into(),
+            module: module.into(),
+            arguments: BTreeMap::new(),
+            positional: Vec::new(),
+        }
+    }
+
+    /// The same event with `value` passed as its next positional argument.
+    #[must_use]
+    pub fn passing(mut self, value: Value) -> Self {
+        self.positional.push(value);
+        self
     }
 
     /// The same event with `name` bound to `value`.
@@ -196,6 +217,16 @@ impl World {
             .or_else(|| self.config.get(name))
             .cloned()
             .unwrap_or(Value::Unknown)
+    }
+
+    /// Whether anything put a value for `name` in this world — a default the
+    /// seed could read, or a write — looked up the way [`World::config`] is.
+    ///
+    /// The difference between a parameter nobody set and one somebody set to
+    /// something undecided, which read the same and are not the same reason.
+    #[must_use]
+    pub fn has_config(&self, module: &str, name: &str) -> bool {
+        self.config.contains_key(&format!("{module}.{name}")) || self.config.contains_key(name)
     }
 
     /// Set a configuration parameter for `module`.
@@ -373,6 +404,17 @@ mod tests {
     }
 
     #[test]
+    fn a_parameter_set_to_unknown_is_set_and_one_never_written_is_not() {
+        let mut world = World::new();
+        world.set_config("lending", "loan_limit", Value::Unknown);
+        world.config.insert("bare".to_owned(), Value::Unknown);
+        assert!(world.has_config("lending", "loan_limit"));
+        assert!(world.has_config("lending", "bare"));
+        assert!(!world.has_config("catalogue", "loan_limit"));
+        assert!(!world.has_config("lending", "absent"));
+    }
+
+    #[test]
     fn a_modules_own_parameter_wins_over_a_bare_one_of_the_same_name() {
         let mut world = World::new();
         world.config.insert("loan_limit".to_owned(), Value::Int(1));
@@ -402,6 +444,32 @@ mod tests {
         assert_eq!(event.argument("copy"), Some(&Value::Ref(EntityId::new("Copy", 3))));
         assert_eq!(event.argument("absent"), None);
         assert_eq!(event.arguments.len(), 2);
+    }
+
+    /// An event written before `positional` existed — a shared link, a saved
+    /// run — still reads, as one passing nothing by position.
+    #[test]
+    fn an_event_without_positional_arguments_still_reads() {
+        let event: Event =
+            serde_json::from_str(r#"{"trigger":"T","module":"m","arguments":{}}"#).expect("reads");
+        assert_eq!(event, Event::new("T", "m"));
+    }
+
+    /// The same for an emission recorded in an outcome.
+    #[test]
+    fn an_emission_without_positional_arguments_still_reads() {
+        let effect: crate::apply::Effect =
+            serde_json::from_str(r#"{"kind":"emitted","trigger":"T","module":"m","arguments":{}}"#)
+                .expect("reads");
+        assert_eq!(
+            effect,
+            crate::apply::Effect::Emitted {
+                trigger: "T".to_owned(),
+                module: "m".to_owned(),
+                arguments: BTreeMap::new(),
+                positional: Vec::new(),
+            }
+        );
     }
 
     #[test]

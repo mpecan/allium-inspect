@@ -21,9 +21,9 @@ use inspect_sim::{
 
 use crate::{
     Outcome,
-    check::Verdict,
+    config::{self, Unwritten},
     journey::{Cast, Given, Journey, Path, Term},
-    run::{CastMember, Origin, Walker},
+    run::{CastMember, Origin, Stipulation, Walker},
 };
 
 impl Walker<'_> {
@@ -35,16 +35,25 @@ impl Walker<'_> {
     /// recorded on the way through, with whether the journey went on to change
     /// it, because a step holding on account of a line elsewhere in the file
     /// is passing invisibly until the report says otherwise.
+    ///
+    /// A world an earlier journey in the chain already laid out is not laid
+    /// out again. The journey this one continues from started from it and then
+    /// changed it — a second `r` was cast over the first, and a switch it turned
+    /// on was turned back off underneath a ledger still saying it was on. Its
+    /// lines are still listed, because this journey still stands on them.
     pub(crate) fn lay_out(&mut self, journey: &Journey) {
         if let Some(shared) = &journey.inherits {
-            self.inherited = ledger(shared, journey);
-            self.place(&shared.cast, &shared.given);
+            self.inherited = ledger(shared, journey, self.spec);
+            if !self.worlds.contains(shared) {
+                self.worlds.push(shared.clone());
+                self.place(&shared.cast, &shared.given, Told::FromTheFile);
+            }
         }
-        self.place(&journey.cast, &journey.given);
+        self.place(&journey.cast, &journey.given, Told::Here);
     }
 
     /// Lay out one set of names and one set of facts, in that order.
-    fn place(&mut self, cast: &[Cast], given: &[Given]) {
+    fn place(&mut self, cast: &[Cast], given: &[Given], told: Told) {
         // Cast first, so `given` can assign to any of them. A cast member is an
         // instance of its type: two people of one kind is the ordinary case.
         for member in cast {
@@ -65,19 +74,35 @@ impl Walker<'_> {
                         Cast { name: name.clone(), type_expr: type_expr.clone(), line: *line };
                     self.bind(&who, Some(id), Origin::Given);
                 }
-                Given::Assign { path, value, line } => {
-                    let value = self.value_of(value);
+                Given::Assign { path, value: term, line } => {
+                    let value = self.value_of(term);
                     // A `given` that wrote nothing is the same fault as a
                     // stipulation that wrote nothing, one step earlier: the
                     // journey believes it set the world up and every assertion
                     // after it is answered against a world nobody arranged.
-                    if let Err(reason) = self.assign(path, value) {
-                        self.notes.push(Outcome {
+                    //
+                    // Said as written, the way the file's world says its own
+                    // lines: `7.days` rather than the `1.week` it evaluates to.
+                    let said = format!("{} = {}", path.as_written(), term.as_written());
+                    match self.assign(path, value) {
+                        Err(Unwritten { verdict, reason }) => self.notes.push(Outcome {
                             line: *line,
-                            verdict: Verdict::Undecided,
+                            verdict,
                             about: format!("given {}", path.as_written()),
                             detail: Some(reason),
-                        });
+                        }),
+                        // A field set in `given` is the starting position. A
+                        // parameter set there is a world the *spec* does not
+                        // describe — its defaults say otherwise — so it is a
+                        // stipulation, listed like one. Once: a line from the
+                        // file's world is already listed `from the file`, and
+                        // listing it again `through` an earlier journey would
+                        // credit that journey with a line it never wrote.
+                        Ok(()) if config::is_config(path) && told == Told::Here => {
+                            self.stipulated
+                                .push(Stipulation { said, through: self.standing_on.clone() });
+                        }
+                        Ok(()) => {}
                     }
                 }
             }
@@ -118,12 +143,25 @@ impl Walker<'_> {
     /// pass *invisibly*. A write that quietly did nothing and then listed
     /// itself anyway shows the reader a change to the world that never
     /// happened, which is worse than showing them nothing.
-    pub(crate) fn assign(&mut self, path: &Path, value: Value) -> Result<(), String> {
+    pub(crate) fn assign(&mut self, path: &Path, value: Value) -> Result<(), Unwritten> {
+        // `config` is the one root every spec has, and is never somebody cast.
+        if config::is_config(path) {
+            let parameter = config::resolve(self.spec, path)?;
+            config::admits(&parameter, &value)?;
+            self.world.set_config(&parameter.module, &parameter.name, value);
+            return Ok(());
+        }
         let Some(id) = self.bound.get(&path.root).cloned() else {
-            return Err(format!("`{}` is not a name this journey bound", path.root));
+            return Err(Unwritten::undecided(format!(
+                "`{}` is not a name this journey bound",
+                path.root
+            )));
         };
         let Some((field, through)) = path.segments.split_last() else {
-            return Err(format!("`{}` names no field to set", path.as_written()));
+            return Err(Unwritten::undecided(format!(
+                "`{}` names no field to set",
+                path.as_written()
+            )));
         };
         // Follow everything before the last segment, so `loan.window.due_at`
         // writes `due_at` on the window. Taking the *first* segment instead
@@ -134,10 +172,10 @@ impl Walker<'_> {
             match self.world.instance(&current).map(|instance| instance.field(segment)) {
                 Some(Value::Ref(id)) => current = id,
                 _ => {
-                    return Err(format!(
+                    return Err(Unwritten::undecided(format!(
                         "`{}` cannot be followed: `{segment}` is not set to something with fields",
                         path.as_written()
-                    ));
+                    )));
                 }
             }
         }
@@ -147,12 +185,41 @@ impl Walker<'_> {
         // covers a reference left pointing at something gone without needing a
         // second existence check inside the loop above.
         if self.world.set_field(&current, field, value).is_none() {
-            return Err(format!(
+            return Err(Unwritten::undecided(format!(
                 "`{}` points at something that is no longer in the world",
                 path.as_written()
-            ));
+            )));
         }
         Ok(())
+    }
+
+    /// Why a configuration path an assertion reads names no one parameter,
+    /// if one of them does not.
+    pub(crate) fn unreadable_config(
+        &self,
+        assertion: &crate::journey::Assertion,
+    ) -> Option<Unwritten> {
+        use crate::journey::Assertion;
+        fn term(term: &Term) -> Option<&Path> {
+            match term {
+                Term::Path(path) => Some(path),
+                _ => None,
+            }
+        }
+        let paths: Vec<&Path> = match assertion {
+            Assertion::Compare { left, right, .. } => {
+                std::iter::once(left).chain(term(right)).collect()
+            }
+            Assertion::Within { needle, haystack } => {
+                term(needle).into_iter().chain([haystack]).collect()
+            }
+            Assertion::Exists { path, .. } => vec![path],
+            Assertion::Fires { .. } => Vec::new(),
+        };
+        paths
+            .into_iter()
+            .filter(|path| config::is_config(path))
+            .find_map(|path| config::resolve(self.spec, path).err())
     }
 
     /// A term as a value in this world.
@@ -176,14 +243,14 @@ impl Walker<'_> {
     /// an error, which is the same answer the simulator gives and for the same
     /// reason.
     pub(crate) fn read(&self, path: &Path) -> Value {
-        if path.root == "config" {
-            let key = path.segments.join(".");
-            return self
-                .world
-                .config
-                .iter()
-                .find(|(name, _)| name.ends_with(&key))
-                .map_or(Value::Unknown, |(_, value)| value.clone());
+        // Resolved the way a write is, so `then config.limit = 5` reads the
+        // parameter `config.limit = 5` wrote. Matching on the end of a key
+        // instead read `config.limit` off whichever of `loan_limit` and
+        // `limit` came first.
+        if config::is_config(path) {
+            return config::resolve(self.spec, path).map_or(Value::Unknown, |parameter| {
+                self.world.config(&parameter.module, &parameter.name)
+            });
         }
         let Some(id) = self.bound.get(&path.root) else {
             if !path.segments.is_empty() {
@@ -237,6 +304,16 @@ impl Walker<'_> {
     }
 }
 
+/// Where a set of `given` lines was written, for whether a parameter it sets
+/// still needs listing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Told {
+    /// The file's `world`, which reports its own lines as `from the file`.
+    FromTheFile,
+    /// The journey being laid out.
+    Here,
+}
+
 /// The entity a capitalised name collects, if it is one.
 ///
 /// `Loans` -> `Loan`, `Copies` -> `Copy`, and `Loan` -> `Loan`, because a
@@ -273,7 +350,12 @@ fn declaring_module(spec: &SpecGraph, bare: &str) -> String {
 /// here are the same fact set twice, and that is the case worth marking. A
 /// name is the thing for a cast member or a `given` instance; a path is the
 /// thing for an assignment.
-fn ledger(shared: &crate::journey::Shared, journey: &Journey) -> Vec<crate::run::Inherited> {
+fn ledger(
+    shared: &crate::journey::Shared,
+    journey: &Journey,
+    spec: &SpecGraph,
+) -> Vec<crate::run::Inherited> {
+    let about = |given: &Given| about(given, spec);
     let mine: Vec<String> = journey
         .cast
         .iter()
@@ -295,10 +377,18 @@ fn ledger(shared: &crate::journey::Shared, journey: &Journey) -> Vec<crate::run:
 }
 
 /// What a line is *about*, which is what two lines have to share to collide.
-fn about(given: &Given) -> String {
+///
+/// A parameter by the one it resolves to, so `switches/config.x` written here
+/// overrides `config.x` in the world: two spellings of one switch. Anything
+/// `resolve` does not take as a parameter, a field path included, is about
+/// the path as written.
+fn about(given: &Given, spec: &SpecGraph) -> String {
     match given {
         Given::Instance { name, .. } => name.clone(),
-        Given::Assign { path, .. } => path.as_written(),
+        Given::Assign { path, .. } => config::resolve(spec, path).map_or_else(
+            |_| path.as_written(),
+            |parameter| format!("{}/config.{}", parameter.module, parameter.name),
+        ),
     }
 }
 

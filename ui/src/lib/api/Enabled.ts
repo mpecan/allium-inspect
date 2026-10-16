@@ -4,7 +4,8 @@ import type { Unresolved } from "./Unresolved";
 import type { Value } from "./Value";
 
 /**
- * A state-condition rule that holds now.
+ * A state-condition rule that holds now, or a rule reacting to something the
+ * step created — told apart by a trigger ending `.created` (see `creation`).
  */
 export type Enabled = { rule: string, name: string, module: string, 
 /**

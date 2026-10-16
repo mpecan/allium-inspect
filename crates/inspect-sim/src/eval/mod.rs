@@ -31,6 +31,7 @@
 mod ast;
 mod calls;
 mod collections;
+mod lambdas;
 mod literals;
 mod ops;
 
@@ -44,6 +45,7 @@ use allium_parser::ast::{CondBranch, Expr, Ident, QualifiedName};
 // postcondition changes.
 pub use ast::{bare_name, span_of};
 use ast::{is_ident_named, literal_text, truth_value};
+pub(crate) use collections::element_scope;
 use inspect_model::{Derivations, Function, Span};
 use serde::{Deserialize, Serialize};
 use std::ops::Not;
@@ -134,6 +136,12 @@ pub struct Env<'a> {
     /// back to itself. Without this that is a stack overflow — a crash rather
     /// than an answer, over a specification that is merely wrong.
     resolving: BTreeSet<String>,
+    /// The parameters of the rule being evaluated, whether passed or not.
+    ///
+    /// A parameter nobody passed is not in `bindings`, and reads exactly like a
+    /// word nothing binds. Only a call's spelling match asks the difference —
+    /// see `calls::answered_by_spelling` — and there it is the whole question.
+    parameters: BTreeSet<String>,
 }
 
 /// The empty set of definitions, for an environment given none.
@@ -150,7 +158,15 @@ impl<'a> Env<'a> {
             source,
             derived: &NOTHING_DERIVED,
             resolving: BTreeSet::new(),
+            parameters: BTreeSet::new(),
         }
+    }
+
+    /// The same environment, knowing the rule declares `names` as parameters.
+    #[must_use]
+    pub fn declaring(mut self, names: impl IntoIterator<Item = String>) -> Self {
+        self.parameters.extend(names);
+        self
     }
 
     /// The same environment, able to compute what the spec computes.
@@ -197,6 +213,7 @@ impl<'a> Env<'a> {
             source: self.source,
             derived: self.derived,
             resolving: self.resolving.clone(),
+            parameters: self.parameters.clone(),
         }
     }
 
@@ -205,14 +222,48 @@ impl<'a> Env<'a> {
     /// `this` is the instance and its stored fields are visible bare, which is
     /// what lets `devices where status = active` mean what it reads as. The key
     /// is remembered so a definition that comes back to itself stops.
+    ///
+    /// **Nothing else** is in scope: not the rule's parameters, not a loop
+    /// variable, not whatever the caller happened to bind. A definition belongs
+    /// to its entity and means the same wherever it is read from. Inheriting
+    /// the caller's names let `items: Item with box = this`, read from a rule
+    /// whose parameter is also called `box`, take that parameter for an item's
+    /// unset `box` — so an item nobody placed was counted in the box, and the
+    /// verdict turned on what the rule's parameter was called.
     fn computing(&self, instance: &Instance, key: String) -> Env<'_> {
-        let mut scope = self.scoped("this", Value::Ref(instance.id.clone()));
+        let mut bindings = BTreeMap::new();
+        bindings.insert("this".to_owned(), Value::Ref(instance.id.clone()));
         for (field, value) in &instance.fields {
-            scope.bindings.insert(field.clone(), value.clone());
+            bindings.insert(field.clone(), value.clone());
         }
-        scope.resolving.insert(key);
-        scope
+        let mut resolving = self.resolving.clone();
+        resolving.insert(key);
+        Env {
+            world: self.world,
+            module: self.module,
+            bindings,
+            source: self.source,
+            derived: self.derived,
+            resolving,
+            // A definition belongs to its entity, not to the rule reading it.
+            parameters: BTreeSet::new(),
+        }
     }
+}
+
+/// The name an [`Env`] binds the context an actor is identified within under.
+///
+/// `within` is a keyword, so no spec can declare a name that collides with it.
+pub const WITHIN: &str = "within";
+
+/// The reason given for a bare name nothing binds: "nothing is bound to `x`".
+///
+/// One spelling, shared, because a reader of the reason — the journey walk
+/// turning it into "`bob` has no `is_admin` set" — has to recognise it, and a
+/// copy of the wording there would drift from this one without a sound.
+#[must_use]
+pub fn nothing_bound(name: &str) -> String {
+    format!("nothing is bound to `{name}`")
 }
 
 /// Evaluate `expr` against `env`.
@@ -286,6 +337,7 @@ pub fn eval(expr: &Expr, env: &Env<'_>) -> Evaluation {
         // one by one rather than lumped together, because "a pipe was not
         // evaluated" is something a reader can act on and "unsupported" is not.
         Expr::Pipe { .. } => unsupported("a `|` alternation", expr, env),
+        // `items.all(i => …)` and `.any` are caught as calls; see `lambdas`.
         Expr::Lambda { .. } => unsupported("a lambda", expr, env),
         Expr::Call { function, args, .. } => calls::answered(expr, function, args, env),
         Expr::JoinLookup { entity, fields, .. } => {
@@ -300,7 +352,14 @@ pub fn eval(expr: &Expr, env: &Env<'_>) -> Evaluation {
         Expr::TransitionsTo { .. } => unsupported("a `transitions_to` assertion", expr, env),
         Expr::Becomes { .. } => unsupported("a `becomes` assertion", expr, env),
         Expr::WhenGuard { .. } => unsupported("a `when` guard", expr, env),
-        Expr::Within { .. } => unsupported("a `within` deadline", expr, env),
+        // `identified_by: Seat where workspace = within` — the context an
+        // actor is identified within. Only whoever reads an actor's condition
+        // knows which instance that is, and it binds it; anywhere else it is
+        // a name nothing bound, said the way every other one is.
+        Expr::Within { .. } => match env.bindings.get(WITHIN) {
+            Some(value) => Evaluation::known(value.clone()),
+            None => Evaluation::unknown(nothing_bound(WITHIN), expr, env.source),
+        },
     }
 }
 
@@ -372,7 +431,7 @@ fn ident(ident: &Ident, env: &Env<'_>) -> Evaluation {
     Evaluation {
         value: Value::Unknown,
         unresolved: vec![Unresolved {
-            reason: format!("nothing is bound to `{name}`"),
+            reason: nothing_bound(name),
             expression: Some(name.clone()),
             span: Some(Span::new(ident.span.start, ident.span.end)),
         }],
@@ -431,13 +490,48 @@ fn member(whole: &Expr, object: &Expr, field: &Ident, env: &Env<'_>) -> Evaluati
 
     // `config.loan_limit` is not a field of anything: `config` is a namespace.
     if is_ident_named(object, "config") {
-        return Evaluation::known(env.world.config(env.module, field));
+        // A parameter with no default this simulator can read, and that
+        // nobody set, is undecided — and says which parameter. Bare, it read
+        // as "something could not be evaluated" at the rule it guarded. One
+        // that *was* set, to something itself undecided, says that instead:
+        // it has a default and somebody wrote over it, so the first reason
+        // would be false on both counts.
+        return match env.world.config(env.module, field) {
+            Value::Unknown => Evaluation::unknown(
+                if env.world.has_config(env.module, field) {
+                    format!("`config.{field}` was set to a value that is itself undecided")
+                } else {
+                    format!(
+                        "`config.{field}` has no value: the spec gives it no default this \
+                         simulator can read, and nothing set it"
+                    )
+                },
+                whole,
+                env.source,
+            ),
+            value => Evaluation::known(value),
+        };
     }
 
     let base = eval(object, env);
     let mut unresolved = base.unresolved.clone();
 
     if field == "count" {
+        // A collection that came back with reasons may be short of members it
+        // could not decide on — `parcels: Parcel with crate = this` leaves out
+        // a parcel whose `crate` nobody set — so its count is a lower bound,
+        // not a count. Reported as one, `parcels.count = 0` would hold over a
+        // parcel that may well be in the crate. See
+        // `lambdas::undecided_by_omission`, the same judgement for `all`.
+        if matches!(base.value, Value::Set(_)) && !unresolved.is_empty() {
+            return Evaluation::unknown(
+                "this collection may be missing members it could not decide on, so its \
+                 `count` is not known",
+                object,
+                env.source,
+            )
+            .carrying(unresolved);
+        }
         return match base.value.count() {
             Some(count) => Evaluation {
                 value: Value::Int(i64::try_from(count).unwrap_or(i64::MAX)),
@@ -490,6 +584,15 @@ fn member(whole: &Expr, object: &Expr, field: &Ident, env: &Env<'_>) -> Evaluati
                 .collect();
             Evaluation { value: Value::Set(projected), unresolved }
         }
+        // Undecided already, and usually saying why. When it said nothing —
+        // a name bound to an argument an emission could not settle — the read
+        // says it, or a chained rule reports only "something could not be
+        // evaluated" (issue #6), which is indistinguishable from a bug.
+        Value::Unknown if unresolved.is_empty() => Evaluation::unknown(
+            format!("`{field}` was read from something nothing settled"),
+            object,
+            env.source,
+        ),
         Value::Unknown => Evaluation { value: Value::Unknown, unresolved },
         other => Evaluation::unknown(
             format!("`{field}` was read from {}, which has no fields", other.described()),
@@ -523,7 +626,7 @@ fn conditional(branches: &[CondBranch], otherwise: Option<&Expr>, env: &Env<'_>)
             //
             // A condition that came back undecided has already said why. One
             // that came back as a known non-boolean has not, and that is the
-            // gap: `apply.rs` reports exactly this case through `skipped()`,
+            // gap: `apply` reports exactly this case through `skipped()`,
             // and this arm used to return the unknown bare.
             Truth::Unknown => {
                 if unresolved.is_empty() {

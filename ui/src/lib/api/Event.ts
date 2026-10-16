@@ -20,4 +20,14 @@ module: string,
 /**
  * Argument bindings, by parameter name.
  */
-arguments: { [key in string]: Value }, };
+arguments: { [key in string]: Value }, 
+/**
+ * Arguments passed by position, in order.
+ *
+ * Bound by each rule that wakes to the names *its own* `when` clause
+ * gives them, in order. A trigger is declared by nothing but the rules
+ * that listen for it, and two of them may call one argument `thing` and
+ * `doc`: named once, here, for whichever listener was found first, the
+ * argument reached that one and every other ran against nothing.
+ */
+positional: Array<Value>, };

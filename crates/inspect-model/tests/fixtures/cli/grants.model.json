@@ -1,0 +1,1 @@
+{"diagnostics":[],"entities":[{"fields":[{"name":"flag","type_expr":"Boolean"},{"name":"ended","type_expr":"Boolean"},{"name":"tags","type_expr":"Set<String>"},{"name":"level","type_expr":"Integer"},{"name":"allowed","type_expr":"can(this, level)"}],"kind":"internal","name":"Repo"}],"enums":[{"name":"Ending","values":["cancel","fail"]}],"version":3}

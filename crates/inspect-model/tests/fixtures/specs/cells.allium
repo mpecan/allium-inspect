@@ -1,0 +1,77 @@
+-- allium: 3
+-- cells.allium
+--
+-- A reaction that makes another of what it reacts to. Every round of it is a
+-- new cell, so no memory of what already ran can stop it, and a walk that
+-- followed it has to say it never stopped rather than report wherever it was
+-- cut off (issue #9).
+--
+-- `Burst` is the same, twice over: every spore made makes two more, so the
+-- work doubles each round and a bound on rounds alone is never reached.
+--
+-- `Branch` doubles too, but stops at the tenth generation: a thousand firings
+-- in ten rounds, which is past the bound on firings and well inside the bound
+-- on rounds, so only the count of firings can be what cuts it off.
+
+entity Cell {
+    gen: Integer
+}
+
+rule Seed {
+    when: Seed(c)
+    ensures: Cell.created(gen: 0)
+}
+
+rule Divide {
+    when: c: Cell.created
+    ensures: Cell.created(gen: c.gen + 1)
+}
+
+surface Dish {
+    facing c: Cell
+    provides:
+        Seed(c)
+}
+
+entity Spore {
+    gen: Integer
+}
+
+rule Sow {
+    when: Sow(s)
+    ensures: Spore.created(gen: 0)
+}
+
+rule Burst {
+    when: s: Spore.created
+    ensures: Spore.created(gen: s.gen + 1)
+    ensures: Spore.created(gen: s.gen + 1)
+}
+
+surface Petri {
+    facing s: Spore
+    provides:
+        Sow(s)
+}
+
+entity Bud {
+    gen: Integer
+}
+
+rule Plant {
+    when: Plant(b)
+    ensures: Bud.created(gen: 0)
+}
+
+rule Branch {
+    when: b: Bud.created
+    requires: b.gen < 9
+    ensures: Bud.created(gen: b.gen + 1)
+    ensures: Bud.created(gen: b.gen + 1)
+}
+
+surface Pot {
+    facing b: Bud
+    provides:
+        Plant(b)
+}

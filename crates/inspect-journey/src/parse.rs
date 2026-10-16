@@ -401,9 +401,17 @@ fn axis(text: &str, line: usize) -> Result<Axis, ParseError> {
     Ok(Axis { key: key.to_owned(), values, line })
 }
 
-/// `note: messaging/Message { … }`, or `ada.status = active`.
+/// `note: messaging/Message { … }`, `ada.status = active`, or
+/// `repo.tags = {"a", "b"}`.
+///
+/// Both forms can hold a brace, so the brace does not decide. An `=` before the
+/// first brace does: the instance form's head is `name: Type` and never holds
+/// one, and an `=` *inside* the braces is part of a field's value. Deciding by
+/// the brace alone read every set as an instance and refused it as a cast
+/// entry — `expected <name>: <Type>` about a line that is neither.
 fn given(text: &str, line: usize) -> Result<Given, ParseError> {
-    if let Some((head, rest)) = text.split_once('{') {
+    let assigns = split_once_operator(text, "=").is_some_and(|(left, _)| !left.contains('{'));
+    if !assigns && let Some((head, rest)) = text.split_once('{') {
         let Some(fields) = rest.strip_suffix('}') else {
             return fail(line, "an instance's fields are closed with `}` on the same line");
         };

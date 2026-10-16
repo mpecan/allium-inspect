@@ -1,0 +1,24 @@
+-- allium: 3
+-- clash.allium
+--
+-- An entity named like another module's actor (issue #13). `ClashPanel`
+-- faces `admins/SiteAdmin` — a user whose `is_admin` is true — and an
+-- instance of this module's `SiteAdmin` is somebody else, so being cast as
+-- one is not being the actor the panel faces.
+
+use "./admins.allium" as admins
+
+entity SiteAdmin {
+    flag: Boolean
+}
+
+rule Poll {
+    when: Poll(u)
+    ensures: u.flag = true
+}
+
+surface ClashPanel {
+    facing admin: admins/SiteAdmin
+    provides:
+        Poll(admin)
+}

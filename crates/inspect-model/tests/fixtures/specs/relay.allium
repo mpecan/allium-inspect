@@ -1,0 +1,20 @@
+-- allium: 3
+-- relay.allium
+--
+-- Listening across a module boundary for what `chains` emits (issue #12).
+--
+-- `Relay` takes `Announced`'s argument by position under a name of its own.
+-- `Echo` listens for `Published(doc)`, which `chains` emits once naming `item`
+-- and once naming `doc`.
+
+use "./chains.allium" as chains
+
+rule Relay {
+    when: chains/Announced(story)
+    ensures: story.relayed = true
+}
+
+rule Echo {
+    when: chains/Published(doc)
+    ensures: doc.echoed = true
+}

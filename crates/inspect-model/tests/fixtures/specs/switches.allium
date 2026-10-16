@@ -1,0 +1,51 @@
+-- allium: 3
+-- switches.allium
+--
+-- Behaviour that is off until configuration turns it on (issue #11).
+--
+-- `UseLfs` is guarded by a Boolean that defaults to `false`, so from the
+-- spec's own defaults it is always refused. `Mirror` is guarded by a number
+-- that defaults to zero. `Sync` is guarded by a parameter with no default at
+-- all, so nothing decides it until somebody says what it is.
+--
+-- Named apart from `grants.allium`'s `Repo` and `Settings`, so the fixture
+-- directory read as one spec set is not two modules arguing over one name.
+
+entity Depot {
+    lfs_used: Boolean
+    mirrored: Boolean
+    synced: Boolean
+}
+
+config {
+    lfs_enabled: Boolean = false
+    max_mirrors: Integer = 0
+    sync_mode: String
+}
+
+rule UseLfs {
+    when: UseLfs(repo)
+    requires: config.lfs_enabled
+    ensures: repo.lfs_used = true
+}
+
+rule Mirror {
+    when: Mirror(repo)
+    requires: config.max_mirrors > 0
+    ensures: repo.mirrored = true
+}
+
+rule Sync {
+    when: Sync(repo)
+    requires: config.sync_mode = "push"
+    ensures: repo.synced = true
+}
+
+surface Switchboard {
+    facing repo: Depot
+
+    provides:
+        UseLfs(repo)
+        Mirror(repo)
+        Sync(repo)
+}

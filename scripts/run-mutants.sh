@@ -44,7 +44,7 @@ else
         # A temp file, not one beside the results: the results directory is
         # gitignored and a sibling would not be, so the scope of a past run
         # would show up as an untracked file in every later `git status`.
-        diff_file="$(mktemp -t allium-inspect-mutants)"
+        diff_file="$(mktemp "${TMPDIR:-/tmp}/allium-inspect-mutants.XXXXXX")"
         trap 'rm -f "$diff_file"' EXIT
         git diff "$base"..HEAD -- '*.rs' > "$diff_file" ||
             fail "could not compute the diff against $base"

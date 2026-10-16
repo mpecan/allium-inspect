@@ -1,0 +1,17 @@
+-- Issue #7, as it was filed: a collection the journey stipulated outright,
+-- asked about through `all`. `box.items` is `{x}` and `x.kind = a`, so every
+-- item is of kind a and the box can be sealed. This was undecided, with the
+-- reason "`all` was called on a collection, which defines nothing".
+
+journey EveryItemIsKindA {
+    cast:
+        box: Box
+        x: Item
+    given:
+        x.kind = a
+        box.sealed = false
+    1. seal a box whose only item is of kind a
+        stipulate box.items = {x}
+        box does Seal(box) on Packing
+        then box.sealed = true
+}

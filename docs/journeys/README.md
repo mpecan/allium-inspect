@@ -394,6 +394,13 @@ both. In report mode the tool says so and moves on. In strict mode it is a
 failure, and if it turns out to be legitimate, the fix is a line in the spec that
 says so rather than a rule in the checker that guesses.
 
+The walk keeps out of it for the same reason. A surface facing an entity, or an
+actor that is only a type, demands nothing it can hold somebody of another type
+to. An actor *with* a condition — `identified_by: User where is_admin = true` —
+is asked of whoever acts or looks if they are of its own type, and a surface
+closed to them is reported as closed, naming the actor; of somebody of another
+type it is undecided, naming both (see the reference, under `does`).
+
 ## Still open
 
 - **How much of `sees` can actually be evaluated?** Measured, on `friend-mesh`:

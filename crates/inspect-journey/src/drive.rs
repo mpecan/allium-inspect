@@ -14,13 +14,20 @@
 //! Both are bounded and both remember what they have already run, because a
 //! spec whose rules feed each other is ordinary rather than exceptional.
 
-use inspect_sim::{StepOutcome, Value, enabled, step::step, world::Event};
+use std::collections::BTreeSet;
+
+use inspect_model::NodeKind;
+use inspect_sim::{StepOutcome, Truth, Value, enabled, step::step, world::Event};
 
 use crate::{
     check,
     journey::Journey,
-    run::{Ground, Settled, Walked, Walker, already_ran},
+    run::{Ground, Settled, Undecided, Walked, Walker, already_ran},
 };
+
+/// How many events one step may fire, its own included, before what it set
+/// off is reported as never having settled.
+const FIRINGS: usize = 512;
 
 impl Walker<'_> {
     /// Fire an event, and everything it sets off.
@@ -50,33 +57,101 @@ impl Walker<'_> {
         const ROUNDS: usize = 32;
         let acted = self.once(event);
 
-        let mut seen = vec![key_of(event)];
+        let mut seen = BTreeSet::from([key_of(event)]);
         let mut pending = emissions(&acted);
-        for _ in 0..ROUNDS {
+        for round in 0..=ROUNDS {
             let next: Vec<Event> =
                 pending.into_iter().filter(|event| !seen.contains(&key_of(event))).collect();
-            if next.is_empty() {
+            if next.is_empty() || self.cut_off.is_some() {
+                break;
+            }
+            // Reaching the bound is said, as `settle` says it. The memory stops
+            // a loop that repeats itself; it cannot stop one that makes
+            // something new every round — `Divide` reacting to a cell being
+            // made by making another — and a world cut off there is not one
+            // the act leads to.
+            if round == ROUNDS {
+                self.cut(&next, &format!("after {ROUNDS} rounds"));
                 break;
             }
             pending = Vec::new();
-            for event in next {
-                seen.push(key_of(&event));
-                pending.extend(emissions(&self.once(&event)));
+            for (at, event) in next.iter().enumerate() {
+                if !seen.insert(key_of(event)) {
+                    continue;
+                }
+                // Rounds bound how deep a cascade goes, not how wide. A
+                // reaction that makes two of what it reacts to doubles every
+                // round, and thirty-two rounds of that is a walk that never
+                // comes back to say it was cut off. So the firings are counted
+                // too, across the whole step, and running out is said the
+                // same way.
+                if self.firings >= FIRINGS {
+                    self.cut(&next[at..], &format!("after {FIRINGS} firings"));
+                    break;
+                }
+                pending.extend(emissions(&self.once(event)));
             }
         }
 
         acted
     }
 
+    /// Stop following a cascade, saying which triggers were still waiting and
+    /// when it stopped: what the act leads to never settled, and the world it
+    /// left is not one the specification describes.
+    fn cut(&mut self, waiting: &[Event], when: &str) {
+        let triggers: BTreeSet<&str> = waiting.iter().map(|it| it.trigger.as_str()).collect();
+        let triggers: Vec<&str> = triggers.into_iter().collect();
+        self.cut_off = Some(format!(
+            "`{}` was still being set off {when}, so what this led to never settled",
+            triggers.join("`, `")
+        ));
+    }
+
+    /// Forget what ran, before a step that will say what it ran.
+    pub(crate) fn forget(&mut self) {
+        self.fired.clear();
+        self.undecided.clear();
+        self.unapplied.clear();
+        self.refused.clear();
+        self.created.clear();
+        self.cut_off = None;
+        self.firings = 0;
+    }
+
     /// One turn of the engine, remembering what ran.
     fn once(&mut self, event: &Event) -> StepOutcome {
         use inspect_sim::Disposition;
+        self.firings += 1;
         let outcome = step(self.spec, self.program, self.sources, &self.world, event);
         for rule in &outcome.rules {
             match rule.disposition {
-                Disposition::Fired => self.fired.push(rule.name.clone()),
-                Disposition::Undecided => self.undecided.push(rule.name.clone()),
-                Disposition::Refused | Disposition::Unsimulatable => {}
+                Disposition::Fired => {
+                    self.fired.push(rule.name.clone());
+                    // Fired, and part of what it ensures could not be applied:
+                    // a member of its `for` the filter could not decide about,
+                    // a branch nobody could choose. The world may be missing a
+                    // change — or a chain the missing emission would have set
+                    // off — so the step is undecided, and says what was not
+                    // applied. Kept apart from `undecided`, because it ran.
+                    if let Some(why) = crate::outcome::unapplied(rule) {
+                        self.unapplied.push(Undecided { rule: rule.name.clone(), why });
+                    }
+                }
+                Disposition::Undecided => self.undecided.push(Undecided {
+                    rule: rule.name.clone(),
+                    why: crate::outcome::undecided(rule),
+                }),
+                Disposition::Refused => self.refused.push(Undecided {
+                    rule: rule.name.clone(),
+                    why: crate::outcome::refused(rule),
+                }),
+                Disposition::Unsimulatable => {}
+            }
+            for effect in &rule.effects {
+                if let inspect_sim::Effect::Created { id, .. } = effect {
+                    self.created.push(id.clone());
+                }
             }
         }
         self.world = outcome.world.clone();
@@ -102,6 +177,11 @@ impl Walker<'_> {
         // rule on a hold for the first one running again, and it never ran.
         let mut ran: Vec<(String, Value)> = Vec::new();
         for _ in 0..ROUNDS {
+            // A cascade cut off partway is already said, by `unsettled`, and
+            // nothing run on the world it left would be the spec's either.
+            if self.cut_off.is_some() {
+                return Settled::Yes;
+            }
             // Everything the world makes true, not everything this step made
             // newly true: a rule enabled before the clock moved and never run
             // is still waiting, and a journey that skipped it would report a
@@ -163,6 +243,92 @@ impl Walker<'_> {
             }
         }
         Settled::No { rounds: ROUNDS }
+    }
+}
+
+impl Walker<'_> {
+    /// `then <Rule> fires`, or `does not fire`, against what the last step ran.
+    pub(crate) fn fires(&self, rule: &str, negated: bool) -> (Truth, Option<String>) {
+        let ran = self.fired.iter().any(|name| name == rule);
+        // "did not run" and "could not be told whether it should" are
+        // different answers, and only one of them is about the spec.
+        if !ran && let Some(it) = self.undecided.iter().find(|it| it.rule == rule) {
+            return (Truth::Unknown, Some(format!("`{rule}` could not be decided: {}", it.why)));
+        }
+        // Woken and refused: the spec's own reason, in its own words, rather
+        // than a bare "did not run" a reader has to go and explain.
+        //
+        // Unless the step is unsettled. Refused on the firings that happened
+        // says nothing about one that did not: a `for` member nobody could
+        // decide about, or a cascade cut off, may have woken it again with
+        // something it would have taken.
+        if !ran && let Some(it) = self.refused.iter().find(|it| it.rule == rule) {
+            let refused = format!("`{rule}` refused: {}", it.why);
+            return match self.unsettled() {
+                Some(why) => (
+                    Truth::Unknown,
+                    Some(format!(
+                        "{refused} — but whether it would have run on what was not settled is \
+                         not known: {why}"
+                    )),
+                ),
+                None => (Truth::from_bool(negated), Some(refused)),
+            };
+        }
+        if !ran && self.waits_on_the_world(rule) {
+            // Nobody fires a state-condition rule; it becomes true or it does
+            // not. The simulator lists the ones that became true and says
+            // nothing about the rest, so a rule whose condition is *false* and
+            // one whose condition could not be *decided* look identical from
+            // here — and reporting the second as a flat no is the failure this
+            // whole design refuses.
+            return (
+                Truth::Unknown,
+                Some(format!(
+                    "`{rule}` never became true, and whether its condition is false or could \
+                     not be decided is not visible from here"
+                )),
+            );
+        }
+        // Not run, while something this step ran left part of what it ensures
+        // unapplied or could not be decided at all. Whatever it did not emit
+        // or write is exactly what might have woken this rule, so "did not
+        // run" is a fact about this world and not about the spec — and `does
+        // not fire` holding on it would be the simulator guessing.
+        if !ran && let Some(why) = self.unsettled() {
+            return (
+                Truth::Unknown,
+                Some(format!(
+                    "`{rule}` did not run, but whether it would have is not settled — {why}"
+                )),
+            );
+        }
+        // Said either way. A refused `does not fire` with nothing under it
+        // reads, in a report, like a line that held.
+        (
+            Truth::from_bool(ran != negated),
+            Some(if ran { format!("`{rule}` ran") } else { format!("`{rule}` did not run") }),
+        )
+    }
+
+    /// Whether a rule waits on the world rather than on somebody acting.
+    ///
+    /// Not a creation rule, although the model files one as a state rule: a
+    /// creation is followed whenever a step makes one, so one that did not run
+    /// was either never woken — nothing of its kind was made — or refused, and
+    /// both of those are visible from here.
+    fn waits_on_the_world(&self, rule: &str) -> bool {
+        use inspect_model::graph::TriggerSource;
+        self.spec.nodes_of(NodeKind::Rule).find(|node| node.name == rule).is_some_and(|node| {
+            let creation = self
+                .program
+                .rule(node.id.as_str())
+                .is_some_and(|ast| inspect_sim::creation::creation_of(ast.when.as_ref()).is_some());
+            !creation
+                && node.detail.as_rule().is_some_and(|detail| {
+                    matches!(detail.source, TriggerSource::State | TriggerSource::Temporal)
+                })
+        })
     }
 }
 
@@ -239,20 +405,76 @@ impl Walker<'_> {
     }
 }
 
-/// Every trigger this step emitted, as the events they would be.
+/// What an act set off that could not be decided, as the reason the act was
+/// not decided either — or `None` when everything it set off was.
+///
+/// Each rule once, in the order it first ran, with the first reason it gave: a
+/// rule woken twice is still one rule nobody could decide, and the reason is
+/// what tells a reader whether the fix is in their journey or in the spec.
+pub(crate) fn set_off(undecided: &[Undecided]) -> Option<String> {
+    let said: Vec<String> = first_per_rule(undecided)
+        .map(|it| format!("`{}` could not be decided: {}", it.rule, it.why))
+        .collect();
+    (!said.is_empty()).then(|| format!("what it set off: {}", said.join("; ")))
+}
+
+/// What fired and left part of what it ensures unapplied, one line per rule —
+/// or nothing when everything that fired was applied in full.
+///
+/// Worded as having fired, because it did: "could not be decided" beside a
+/// `then Fan fires` that holds is two answers to one question.
+pub(crate) fn partly(unapplied: &[Undecided]) -> Option<String> {
+    let said: Vec<String> = first_per_rule(unapplied)
+        .map(|it| {
+            format!("`{}` fired, but part of what it ensures was not applied: {}", it.rule, it.why)
+        })
+        .collect();
+    (!said.is_empty()).then(|| said.join("; "))
+}
+
+/// Each rule once, in the order it first appears, with its first reason.
+fn first_per_rule(all: &[Undecided]) -> impl Iterator<Item = &Undecided> {
+    let mut named = BTreeSet::new();
+    all.iter().filter(move |it| named.insert(it.rule.as_str()))
+}
+
+impl Walker<'_> {
+    /// Everything this step ran that leaves the world unsettled — what it set
+    /// off that could not be decided, and what fired and was not applied in
+    /// full — or `None` when there is nothing.
+    pub(crate) fn unsettled(&self) -> Option<String> {
+        let said: Vec<String> = set_off(&self.undecided)
+            .into_iter()
+            .chain(partly(&self.unapplied))
+            .chain(self.cut_off.clone())
+            .collect();
+        (!said.is_empty()).then(|| said.join("; "))
+    }
+}
+
+/// Every trigger this step emitted, and every creation it made that a rule
+/// reacts to, as the events they would be.
+///
+/// A creation is followed for the same reason an emission is: `when: o:
+/// Order.created` is a rule the specification says runs when an order is made,
+/// and a journey that made one has said it was. Left out, the order was there
+/// and the rule that reacts to it never ran.
 fn emissions(outcome: &StepOutcome) -> Vec<Event> {
     let mut found = Vec::new();
     for rule in &outcome.rules {
         for effect in &rule.effects {
-            if let inspect_sim::Effect::Emitted { trigger, module, arguments } = effect {
+            if let inspect_sim::Effect::Emitted { trigger, module, arguments, positional } = effect
+            {
                 found.push(Event {
                     trigger: trigger.clone(),
                     module: module.clone(),
                     arguments: arguments.clone(),
+                    positional: positional.clone(),
                 });
             }
         }
     }
+    found.extend(inspect_sim::reactions(outcome));
     found
 }
 
@@ -262,14 +484,77 @@ fn emissions(outcome: &StepOutcome) -> Vec<Event> {
 /// asking `Value` for `Ord` — the lists here are a handful long, and a spec
 /// that emitted enough for that to matter would hit the round bound first.
 fn key_of(event: &Event) -> String {
-    let carried: Vec<String> =
-        event.arguments.iter().map(|(name, value)| format!("{name}={}", value.render())).collect();
+    let carried: Vec<String> = event
+        .positional
+        .iter()
+        .map(Value::render)
+        .chain(event.arguments.iter().map(|(name, value)| format!("{name}={}", value.render())))
+        .collect();
     format!("{}/{}({})", event.module, event.trigger, carried.join(", "))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod set_off {
+        use super::*;
+
+        fn rule(name: &str, why: &str) -> Undecided {
+            Undecided { rule: name.to_owned(), why: why.to_owned() }
+        }
+
+        #[test]
+        fn nothing_undecided_says_nothing() {
+            assert_eq!(set_off(&[]), None);
+        }
+
+        /// Named, with its reason: the name says where, the reason says what.
+        #[test]
+        fn names_the_rule_and_why() {
+            assert_eq!(
+                set_off(&[rule("Halted", "nothing is bound to `abort`")]).as_deref(),
+                Some("what it set off: `Halted` could not be decided: nothing is bound to `abort`")
+            );
+        }
+
+        /// Fan-out wakes one rule once per recipient; it is still one rule.
+        #[test]
+        fn a_rule_woken_twice_is_named_once_in_the_order_it_first_ran() {
+            let said = set_off(&[rule("B", "first"), rule("A", "a"), rule("B", "second")])
+                .expect("something to say");
+            assert_eq!(said.matches("`B`").count(), 1, "{said}");
+            assert!(said.contains("`B` could not be decided: first"), "{said}");
+            assert!(said.find("`B`") < said.find("`A`"), "{said}");
+        }
+    }
+
+    mod partly {
+        use super::*;
+
+        fn rule(name: &str, why: &str) -> Undecided {
+            Undecided { rule: name.to_owned(), why: why.to_owned() }
+        }
+
+        /// A fan-out that skipped two members left two notes from one rule;
+        /// it is one rule that fired, said once, with its first reason.
+        #[test]
+        fn a_rule_that_left_two_things_unapplied_is_named_once() {
+            let said = partly(&[rule("Fan", "Hook#1"), rule("Ring", "b"), rule("Fan", "Hook#2")])
+                .expect("something to say");
+            assert_eq!(said.matches("`Fan`").count(), 1, "{said}");
+            assert_eq!(said.matches("`Ring`").count(), 1, "{said}");
+            assert!(
+                said.contains("`Fan` fired, but part of what it ensures was not applied: Hook#1")
+            );
+            assert!(!said.contains("Hook#2"), "{said}");
+        }
+
+        #[test]
+        fn everything_applied_says_nothing() {
+            assert_eq!(partly(&[]), None);
+        }
+    }
 
     /// What makes one firing the same as another.
     ///
@@ -299,6 +584,18 @@ mod tests {
         #[test]
         fn the_same_trigger_carrying_different_things_is_not() {
             assert_ne!(key_of(&about("MessageSent", 1)), key_of(&about("MessageSent", 2)));
+        }
+
+        /// Positional arguments count as well as named ones: `Announced(a)`
+        /// and `Announced(b)` are two firings, not a loop.
+        #[test]
+        fn the_same_trigger_carrying_different_things_by_position_is_not() {
+            let carrying = |who: u64| {
+                Event::new("Announced", "chains").passing(Value::Ref(EntityId::new("Doc", who)))
+            };
+            assert_eq!(key_of(&carrying(1)), key_of(&carrying(1)));
+            assert_ne!(key_of(&carrying(1)), key_of(&carrying(2)));
+            assert_ne!(key_of(&carrying(1)), key_of(&Event::new("Announced", "chains")));
         }
 
         #[test]

@@ -1,0 +1,103 @@
+-- allium: 3
+-- grants.allium
+--
+-- A fixture of its own, standing alone: literals a journey has to be able to
+-- say back to a spec (issue #10).
+--
+-- `can(repo, code)` is a black box called with a word nothing binds — the
+-- unit a permission is about. A journey that stipulates `can(r, code)` has
+-- said what it comes back as, and for a while the walk could not tell that
+-- the two were the same call, because the spec's `code` was nothing bound and
+-- the journey's was a state.
+--
+-- The chained rules pass such a word from one rule to the next. `cancel` is a
+-- state the spec declares; `abort` is not, and stays undecided all the way down.
+--
+-- And three names that read like a word nothing binds and are not one: a field
+-- nobody set, read inside the entity's own definition (`allowed`); a parameter
+-- nobody passed (`Ask`, emitted by `Prod` without its `kind`). A stipulation
+-- spelling either must not answer the call they are in.
+
+enum Ending { cancel | fail }
+
+entity Repo {
+    flag: Boolean
+    ended: Boolean
+    tags: Set<String>
+    level: Integer
+    allowed: can(this, level)
+}
+
+rule Grant {
+    when: Grant(repo)
+    requires: can(repo, code)
+    ensures: repo.flag = true
+}
+
+rule Tag {
+    when: Tag(repo)
+    requires: "a" in repo.tags
+    ensures: repo.flag = true
+}
+
+rule Stop {
+    when: Stop(repo)
+    ensures: Finish(repo, cancel)
+}
+
+rule Finish {
+    when: Finish(repo, how)
+    requires: how = cancel
+    ensures: repo.ended = true
+}
+
+rule Close {
+    when: Close(repo)
+    ensures: Closed(repo, cancel)
+}
+
+rule Closed {
+    when: Closed(repo, how)
+    requires: may_close(repo, how)
+    ensures: repo.ended = true
+}
+
+rule Halt {
+    when: Halt(repo)
+    ensures: Halted(repo, abort)
+}
+
+rule Halted {
+    when: Halted(repo, how)
+    requires: how = abort
+    ensures: repo.ended = true
+}
+
+rule Probe {
+    when: Probe(repo)
+    requires: repo.allowed
+    ensures: repo.flag = true
+}
+
+rule Ask {
+    when: Ask(repo, kind)
+    requires: can(repo, kind)
+    ensures: repo.flag = true
+}
+
+rule Prod {
+    when: Prod(repo)
+    ensures: Ask(repo)
+}
+
+surface Settings {
+    facing repo: Repo
+    provides:
+        Grant(repo)
+        Tag(repo)
+        Stop(repo)
+        Close(repo)
+        Halt(repo)
+        Probe(repo)
+        Prod(repo)
+}

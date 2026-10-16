@@ -187,11 +187,26 @@ impl Value {
                 Truth::from_bool(close(*left as f64, *right))
             }
             (Value::Float(left), Value::Float(right)) => Truth::from_bool(close(*left, *right)),
+            // A set is equal to another holding the same members in any order:
+            // `{"a", "b"}` is `{"b", "a"}`. Compared by position, a journey
+            // that wrote a set back in another order than the spec stored it
+            // was told the spec said no. Three-valued: equal if the members
+            // can be paired off by pairs that are definitely equal, unequal if
+            // they cannot be even counting every undecided pair as equal, and
+            // undecided between the two.
             (Value::Set(left), Value::Set(right)) => {
                 if left.len() != right.len() {
                     return Truth::False;
                 }
-                Truth::all(left.iter().zip(right).map(|(a, b)| a.equals(b)))
+                let pairs: Vec<Vec<Truth>> =
+                    left.iter().map(|a| right.iter().map(|b| a.equals(b)).collect()).collect();
+                if paired(&pairs, |truth| truth == Truth::True) {
+                    Truth::True
+                } else if paired(&pairs, |truth| truth != Truth::False) {
+                    Truth::Unknown
+                } else {
+                    Truth::False
+                }
             }
             _ => Truth::from_bool(self == other),
         }
@@ -261,6 +276,40 @@ fn render_duration(millis: i64) -> String {
         }
     }
     format!("{millis}.milliseconds")
+}
+
+/// Whether every row of `pairs` can be given a column of its own whose cell
+/// `admits` — a perfect matching, found by augmenting paths. The collections
+/// a spec compares are a handful long, so the simple search is enough.
+fn paired(pairs: &[Vec<Truth>], admits: impl Fn(Truth) -> bool) -> bool {
+    fn augment(
+        row: usize,
+        pairs: &[Vec<Truth>],
+        admits: &dyn Fn(Truth) -> bool,
+        seen: &mut [bool],
+        owner: &mut [Option<usize>],
+    ) -> bool {
+        for (column, truth) in pairs[row].iter().enumerate() {
+            if !admits(*truth) || seen[column] {
+                continue;
+            }
+            seen[column] = true;
+            let free = match owner[column] {
+                None => true,
+                Some(other) => augment(other, pairs, admits, seen, owner),
+            };
+            if free {
+                owner[column] = Some(row);
+                return true;
+            }
+        }
+        false
+    }
+    let mut owner = vec![None; pairs.len()];
+    (0..pairs.len()).all(|row| {
+        let mut seen = vec![false; pairs.len()];
+        augment(row, pairs, &admits, &mut seen, &mut owner)
+    })
 }
 
 /// Whether two decimals are equal to within a tolerance.
@@ -441,6 +490,27 @@ mod tests {
             Truth::Unknown,
             "one undecided element leaves the whole comparison undecided"
         );
+    }
+
+    /// A set is the same set whatever order its members were written in.
+    #[test]
+    fn collections_compare_as_sets_whatever_the_order() {
+        let text = |items: &[&str]| {
+            Value::Set(items.iter().map(|item| Value::Str((*item).to_owned())).collect())
+        };
+        assert_eq!(text(&["a", "b"]).equals(&text(&["b", "a"])), Truth::True);
+        assert_eq!(text(&["a", "b"]).equals(&text(&["b", "c"])), Truth::False);
+        // Each member once: `{a, a}` is not `{a, b}`.
+        assert_eq!(text(&["a", "a"]).equals(&text(&["a", "b"])), Truth::False);
+        // An undecided member that could make them equal leaves it open, and
+        // one that could not leaves it unequal.
+        let open = Value::Set(vec![Value::Unknown, Value::Str("a".to_owned())]);
+        assert_eq!(open.equals(&text(&["b", "a"])), Truth::Unknown);
+        let closed = Value::Set(vec![Value::Unknown, Value::Str("c".to_owned())]);
+        assert_eq!(closed.equals(&text(&["a", "b"])), Truth::False);
+        // A pairing found only by moving an earlier choice.
+        let left = Value::Set(vec![Value::Unknown, Value::Str("a".to_owned())]);
+        assert_eq!(left.equals(&text(&["a", "b"])), Truth::Unknown);
     }
 
     #[test]

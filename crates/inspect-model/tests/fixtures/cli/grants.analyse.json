@@ -1,0 +1,1 @@
+{"command":"analyse","diagnostics":[{"code":"allium.definition.unused","location":{"col":6,"file":"grants.allium","line":21},"message":"Value 'Ending' is declared but not referenced elsewhere.","severity":"warning"}],"findings":[],"spec_file":"grants.allium"}
