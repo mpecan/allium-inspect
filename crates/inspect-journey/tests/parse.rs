@@ -1106,3 +1106,193 @@ mod stipulating_a_call {
         assert_eq!(subject.as_written(), "may_invite(chat, she)");
     }
 }
+
+/// `where` under `creating`, on its own line or several, answers a call for
+/// what the act makes (issue #18).
+#[test]
+fn an_act_can_say_what_a_call_answers_for_what_it_makes() {
+    let journeys = parse(
+        "journey J {\n    1. she opens one\n        repo does Open(repo) on Tracker\n            \
+         creating issue: Issue\n            where audience(issue) = {}\n            \
+         where muted(issue, repo) = false\n}\n",
+    )
+    .expect("parses");
+    let Clause::Does { creating, answering, surface, .. } = &journeys[0].steps[0].clauses[0] else {
+        panic!("expected an act");
+    };
+    assert_eq!(surface, "Tracker");
+    assert_eq!(creating.as_ref().map(|caught| caught.name.as_str()), Some("issue"));
+    let written: Vec<String> = answering.iter().map(inspect_journey::Where::as_written).collect();
+    assert_eq!(written, ["audience(issue)", "muted(issue, repo)"]);
+    assert_eq!(answering[0].value, Term::Set(Vec::new()));
+    assert_eq!(answering[1].value, Term::Literal(Value::Bool(false)));
+}
+
+/// An act with no `where` answers nothing.
+#[test]
+fn an_act_without_where_answers_nothing() {
+    let Clause::Does { answering, .. } = &first().steps[0].clauses[0] else {
+        panic!("expected an act");
+    };
+    assert!(answering.is_empty());
+}
+
+/// Without `creating` there is nothing for it to wait for, and it would
+/// otherwise read as part of the surface's name.
+#[test]
+fn where_without_creating_is_refused_and_says_where_it_belongs() {
+    let error = parse(
+        "journey J {\n    1. she opens one\n        repo does Open(repo) on Tracker\n            \
+         where audience(repo) = {}\n}\n",
+    )
+    .expect_err("nothing to wait for");
+    assert!(error.message.contains("belongs under `creating"), "{error:?}");
+}
+
+/// A field of what the act makes is what the specification writes, and a
+/// journey overruling it mid-act would be a `then` that cannot fail.
+#[test]
+fn where_about_a_field_is_refused() {
+    let error = parse(
+        "journey J {\n    1. she opens one\n        repo does Open(repo) on Tracker\n            \
+         creating issue: Issue\n            where issue.notified = true\n}\n",
+    )
+    .expect_err("a field");
+    assert!(error.message.contains("names a field"), "{error:?}");
+    assert!(error.message.contains("`stipulate` it after the act"), "{error:?}");
+}
+
+/// A call about anything else could be said before the act, and is.
+#[test]
+fn where_about_something_else_is_refused() {
+    let error = parse(
+        "journey J {\n    1. she opens one\n        repo does Open(repo) on Tracker\n            \
+         creating issue: Issue\n            where audience(repo) = {}\n}\n",
+    )
+    .expect_err("not about the issue");
+    assert!(error.message.contains("is not about `issue`"), "{error:?}");
+    assert!(error.message.contains("before the act"), "{error:?}");
+}
+
+/// A `where` that is not `<call> = <value>` says what it expected.
+#[test]
+fn where_without_an_answer_is_refused() {
+    let error = parse(
+        "journey J {\n    1. she opens one\n        repo does Open(repo) on Tracker\n            \
+         creating issue: Issue\n            where audience(issue)\n}\n",
+    )
+    .expect_err("no answer");
+    assert!(error.message.contains("expected `where <call> = <value>`"), "{error:?}");
+}
+
+/// `where` level with the act rather than under its `creating` is the likeliest
+/// slip, and is told where it goes rather than that there is no clause here.
+#[test]
+fn where_level_with_the_act_says_it_belongs_under_creating() {
+    let error = parse(
+        "journey J {\n    1. she opens one\n        repo does Open(repo) on Tracker\n            \
+         creating issue: Issue\n        where audience(issue) = {}\n}\n",
+    )
+    .expect_err("a where on its own");
+    assert!(error.message.contains("indented under the act's `creating"), "{error:?}");
+    assert!(!error.message.contains("no clause here"), "{error:?}");
+}
+
+/// A `where` inside a quoted answer is part of the answer.
+#[test]
+fn a_where_whose_answer_quotes_where_parses() {
+    let journeys = parse(
+        "journey J {\n    1. she opens one\n        repo does Open(repo) on Tracker\n            \
+         creating issue: Issue\n            where label(issue) = \"x where y\"\n}\n",
+    )
+    .expect("parses");
+    let Clause::Does { answering, .. } = &journeys[0].steps[0].clauses[0] else {
+        panic!("expected an act");
+    };
+    assert_eq!(answering.len(), 1);
+    assert_eq!(answering[0].value, Term::Literal(Value::Str("x where y".to_owned())));
+}
+
+/// A quoted answer does not throw off where the next `where` begins.
+#[test]
+fn a_where_after_a_quoted_answer_is_split_where_it_begins() {
+    let journeys = parse(
+        "journey J {\n    1. she opens one\n        repo does Open(repo) on Tracker\n            \
+         creating issue: Issue\n            where label(issue) = \"a \u{e9}\"\n            \
+         where tag(issue) = \"b\"\n}\n",
+    )
+    .expect("parses");
+    let Clause::Does { answering, .. } = &journeys[0].steps[0].clauses[0] else {
+        panic!("expected an act");
+    };
+    let read: Vec<(String, &Term)> =
+        answering.iter().map(|answer| (answer.as_written(), &answer.value)).collect();
+    assert_eq!(
+        read,
+        [
+            ("label(issue)".to_owned(), &Term::Literal(Value::Str("a \u{e9}".to_owned()))),
+            ("tag(issue)".to_owned(), &Term::Literal(Value::Str("b".to_owned()))),
+        ]
+    );
+}
+
+/// Issue #19: a call in `given` is an answer, not a path to a name nobody
+/// bound. With or without a leading `stipulate`, which means the same there.
+#[test]
+fn a_call_in_given_is_an_answer() {
+    for written in ["allowed(b, code) = true", "stipulate allowed(b, code) = true"] {
+        let source = format!(
+            "journey J {{\n    cast:\n        b: Box\n    given:\n        {written}\n    1. one\n        \
+             then b.done = false\n}}\n"
+        );
+        let journeys = parse(&source).unwrap_or_else(|error| panic!("`{written}`: {error}"));
+        let Some(Given::Answer { answer, line: 5 }) = journeys[0].given.first() else {
+            panic!("`{written}` is an answer: {:#?}", journeys[0].given)
+        };
+        assert_eq!(answer.as_written(), "allowed(b, code)");
+        assert_eq!(answer.value, Term::Literal(Value::Bool(true)));
+    }
+}
+
+/// The file's world takes the same lines, which is the point of it: said once
+/// for every journey that reaches a rule guarded by the call.
+#[test]
+fn a_call_in_the_worlds_given_is_an_answer() {
+    let journeys = parse(
+        "world {\n    cast:\n        b: Box\n    given:\n        allowed(b) = true\n}\n\
+         journey J {\n    1. one\n        then b.done = false\n}\n",
+    )
+    .expect("parses");
+    let world = journeys[0].inherits.as_ref().expect("takes the world");
+    assert!(
+        matches!(world.given.first(), Some(Given::Answer { answer, .. }) if answer.call == "allowed"),
+        "{:#?}",
+        world.given
+    );
+}
+
+/// `stipulate` leading a path in `given` is the path, unchanged.
+#[test]
+fn stipulate_before_a_path_in_given_is_the_assignment() {
+    let journeys = parse(
+        "journey J {\n    cast:\n        b: Box\n    given:\n        stipulate b.done = true\n    \
+         1. one\n        then b.done = true\n}\n",
+    )
+    .expect("parses");
+    assert!(
+        matches!(journeys[0].given.first(), Some(Given::Assign { path, .. }) if path.as_written() == "b.done"),
+        "{:#?}",
+        journeys[0].given
+    );
+}
+
+#[test]
+fn an_unclosed_call_in_given_is_refused_with_the_line() {
+    let error = parse(
+        "journey J {\n    cast:\n        b: Box\n    given:\n        allowed(b = true\n    1. one\n        \
+         then b.done = true\n}\n",
+    )
+    .expect_err("an unclosed call");
+    assert_eq!(error.line, 5);
+    assert!(error.message.contains("opens a call and does not close it"), "{error}");
+}

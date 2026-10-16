@@ -97,6 +97,10 @@ fn duration(text: &str) -> Expr {
     Expr::DurationLiteral { span: NOWHERE, value: text.to_owned() }
 }
 
+fn boolean(value: bool) -> Expr {
+    Expr::BoolLiteral { span: NOWHERE, value }
+}
+
 fn null() -> Expr {
     Expr::Null { span: NOWHERE }
 }
@@ -130,6 +134,10 @@ fn call(function: Expr, args: Vec<Expr>) -> Expr {
 
 fn set_of(elements: Vec<Expr>) -> Expr {
     Expr::SetLiteral { span: NOWHERE, elements }
+}
+
+fn list_of(elements: Vec<Expr>) -> Expr {
+    Expr::ListLiteral { span: NOWHERE, elements }
 }
 
 fn filtered(source: Expr, condition: Expr) -> Expr {
@@ -786,7 +794,9 @@ fn every_undecided_result_carries_at_least_one_reason() {
     // correctly, which is the shape to look for when adding a case here —
     // reach for the arm nobody would think to write a test *about*.
     let world = library();
-    let env = env(&world, "lending");
+    // `silent`: a name bound to something undecided, which says nothing of
+    // its own — the shape an operator has to speak for.
+    let env = env(&world, "lending").bind("silent", Value::Unknown);
     let cases: Vec<(&str, Expr)> = vec![
         ("an unbound name", ident("nobody")),
         ("a field of an unbound name", field(ident("nobody"), "x")),
@@ -851,6 +861,13 @@ fn every_undecided_result_carries_at_least_one_reason() {
         ("a field of a scalar", field(number("1"), "status")),
         ("not, over an unbound name", not(ident("nobody"))),
         ("a filter over a scalar", filtered(number("1"), null())),
+        ("a coalesce over an unbound name", coalesce(ident("nobody"), text("s"))),
+        ("a coalesce over a silent name", coalesce(ident("silent"), text("s"))),
+        ("a coalesce falling through to an unbound name", coalesce(null(), ident("nobody"))),
+        ("a coalesce falling through to a silent name", coalesce(null(), ident("silent"))),
+        ("a string plus an unbound name", arithmetic(text("a"), "Add", ident("nobody"))),
+        ("a string plus a silent name", arithmetic(text("a"), "Add", ident("silent"))),
+        ("a string plus a number", arithmetic(text("a"), "Add", number("1"))),
     ];
     for (described, node) in cases {
         let evaluated = eval(&node, &env);
@@ -969,6 +986,34 @@ fn a_collection_in_another_module_is_named_in_the_plural_too() {
         Truth::False,
         "if it ranged over nothing this would be vacuously true"
     );
+}
+
+/// A plural made with `es` — `Watches`, `Boxes`, `Branches`. Only the `s` was
+/// taken off, so `Watches` named an entity `Watche` that nothing declares, and
+/// the qualified spelling ranged over an empty set: every claim about it held
+/// vacuously, the checker-that-always-passes the plural reading exists to
+/// prevent.
+#[test]
+fn a_collection_pluralised_with_es_is_named_too() {
+    let mut world = World::new().at(1_000);
+    let watch = world.create("Watch", "repos");
+    world.set_field(&watch, "on", Value::Bool(false));
+    let env = env(&world, "repos");
+    for watches in [
+        ident("Watches"),
+        Expr::QualifiedName(QualifiedName {
+            span: NOWHERE,
+            qualifier: Some("repos".to_owned()),
+            name: "Watches".to_owned(),
+        }),
+    ] {
+        let all_on = quantify("w", watches, compare(ident("on"), "Eq", boolean(true)), None);
+        assert_eq!(
+            truth_of(&all_on, &env),
+            Truth::False,
+            "if it ranged over nothing this would be vacuously true"
+        );
+    }
 }
 
 #[test]
@@ -1219,7 +1264,10 @@ fn a_relationship_that_is_null_does_not_exist() {
 fn a_field_deliberately_set_to_unknown_is_not_reported_as_unset() {
     // "`Copy#1` has no `status` set" would be wrong: it has one, and nobody
     // could work out what it is. The distinction is the difference between
-    // "fill this in" and "this simulator cannot compute it".
+    // "fill this in" and "this simulator cannot compute it". Still said,
+    // though: an unknown with no reason is indistinguishable from a bug, and
+    // two rules woken by one trigger that disagreed about a field leave it
+    // exactly so (issue #24).
     let mut world = World::new().at(1_000);
     let copy = world.create("Copy", "catalogue");
     world.set_field(&copy, "status", Value::Unknown);
@@ -1227,10 +1275,43 @@ fn a_field_deliberately_set_to_unknown_is_not_reported_as_unset() {
 
     let status = field(ident("copy"), "status");
     assert_eq!(value_of(&status, &env), Value::Unknown);
-    assert!(reasons(&status, &env).is_empty(), "{:?}", reasons(&status, &env));
+    assert_eq!(reasons(&status, &env), vec!["`Copy#1.status` was set to a value nothing settled"]);
 
     let missing = field(ident("copy"), "shelfmark");
     assert_eq!(reasons(&missing, &env), vec!["`Copy#1` has no `shelfmark` set"]);
+}
+
+/// `b.tags = {a, pick(b)}` with `pick` unanswered: a set holding a member
+/// nobody settled. Its write's reason is kept, and reading it back says so —
+/// its count is not two, since the member may be `a`, and whether something
+/// else is in it is not a decided no.
+#[test]
+fn a_stored_set_holding_an_undecided_member_says_why_when_read() {
+    let mut world = World::new();
+    let board = world.create("Board", "m");
+    let why = inspect_sim::Unresolved {
+        reason: "nothing defines `pick`, and no stipulation answers this call".to_owned(),
+        expression: Some("pick(b)".to_owned()),
+        span: None,
+    };
+    let tags = Value::Set(vec![Value::Enum("a".to_owned()), Value::Unknown]);
+    world.set_field_explained(&board, "tags", tags, vec![why]);
+    assert_eq!(
+        world.instance(&board).map(|it| it.why("tags").len()),
+        Some(1),
+        "the reason is kept"
+    );
+    let env = env(&world, "m").bind("b", Value::Ref(board)).bind("c", Value::Enum("c".to_owned()));
+
+    let count = field(field(ident("b"), "tags"), "count");
+    assert_eq!(value_of(&count, &env), Value::Unknown);
+    let said = reasons(&count, &env);
+    assert!(said.iter().any(|it| it.contains("`count` is not known")), "{said:?}");
+    assert!(said.iter().any(|it| it.contains("nothing defines `pick`")), "{said:?}");
+
+    let among = within(ident("c"), field(ident("b"), "tags"));
+    assert_eq!(truth_of(&among, &env), Truth::Unknown);
+    assert!(!reasons(&among, &env).is_empty(), "an unknown says why");
 }
 
 // --- collections named in the plural ---------------------------------------
@@ -1592,13 +1673,50 @@ fn a_set_plus_an_element_has_it_once_and_minus_it_has_it_not() {
     assert_eq!(value_of(&union, &env), Value::Set(vec![ada, bea]));
 }
 
+/// A member nothing settled is compared as the spec compares it: two
+/// undecided members may be two things, so `+` keeps both; and `-` keeps a
+/// member it cannot show is the one taken away, and says so.
+#[test]
+fn a_set_with_undecided_members_gains_and_loses_only_what_is_decided() {
+    let world = library();
+    let ada = Value::Ref(EntityId::new("Member", 1));
+    let env = env(&world, "lending")
+        .bind("unsure", Value::Set(vec![Value::Unknown]))
+        .bind("some", Value::Set(vec![ada.clone()]))
+        .bind("held", Value::Set(vec![Value::Unknown]));
+
+    let more = arithmetic(ident("unsure"), "Add", ident("held"));
+    assert_eq!(value_of(&more, &env), Value::Set(vec![Value::Unknown, Value::Unknown]));
+
+    let fewer = arithmetic(ident("some"), "Sub", ident("held"));
+    assert_eq!(value_of(&fewer, &env), Value::Set(vec![ada]));
+    let said = reasons(&fewer, &env);
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(said[0].contains("`-` takes away could not be decided"), "{said:?}");
+
+    // `1` and `1.0` are one number.
+    let env = self::env(&world, "lending").bind("ones", Value::Set(vec![Value::Int(1)]));
+    let sum = arithmetic(ident("ones"), "Add", number("1.0"));
+    assert_eq!(value_of(&sum, &env), Value::Set(vec![Value::Int(1)]));
+}
+
 // --- states written out as a set ----------------------------------------------
+
+/// A spec set declaring `states` and nothing else: the words a set written
+/// out may read as states.
+fn declared(states: &[&str]) -> &'static inspect_model::Derivations {
+    let mut derived = inspect_model::Derivations::default();
+    derived.states.extend(states.iter().map(|state| (*state).to_owned()));
+    Box::leak(Box::new(derived))
+}
 
 /// `status in {pending, granted}` — beside a state, the names are states.
 #[test]
 fn a_set_of_bare_names_beside_a_state_is_a_set_of_states() {
     let world = library();
-    let env = env(&world, "lending").bind("status", Value::Enum("granted".to_owned()));
+    let env = env(&world, "lending")
+        .deriving(declared(&["pending", "granted", "lapsed"]))
+        .bind("status", Value::Enum("granted".to_owned()));
     let admitted = within(ident("status"), set_of(vec![ident("pending"), ident("granted")]));
     assert_eq!(truth_of(&admitted, &env), Truth::True);
     assert!(reasons(&admitted, &env).is_empty());
@@ -1627,6 +1745,156 @@ fn a_bound_name_in_a_set_of_states_is_what_it_is_bound_to() {
         .bind("pending", Value::Enum("granted".to_owned()));
     let node = within(ident("status"), set_of(vec![ident("pending")]));
     assert_eq!(truth_of(&node, &env), Truth::True, "`pending` is bound, to `granted`");
+}
+
+/// `config.apps = {a, b, a}` beside a default of `{a, b}` — the issue #25
+/// case. The names are states, as they are for `in`, and the repeat is a
+/// repeat: the set written is the set held. Before, the names were bindings
+/// nobody made, and three of them counted against two made it a refusal.
+#[test]
+fn a_set_written_out_beside_a_set_of_states_is_a_set_of_states() {
+    let mut world = library();
+    let held = Value::Set(vec![Value::Enum("a".to_owned()), Value::Enum("b".to_owned())]);
+    world.set_config("lending", "apps", held);
+    let env = env(&world, "lending").deriving(declared(&["a", "b", "c"]));
+    let apps = || field(ident("config"), "apps");
+
+    for written in [vec!["a", "b"], vec!["b", "a"], vec!["a", "b", "a"]] {
+        let node = compare(apps(), "Eq", set_of(written.iter().map(|name| ident(name)).collect()));
+        assert_eq!(truth_of(&node, &env), Truth::True, "{written:?}");
+        assert!(reasons(&node, &env).is_empty(), "{written:?}");
+        let mirrored =
+            compare(set_of(written.iter().map(|name| ident(name)).collect()), "Eq", apps());
+        assert_eq!(truth_of(&mirrored, &env), Truth::True, "{written:?}");
+    }
+    let other = compare(apps(), "Eq", set_of(vec![ident("a"), ident("c")]));
+    assert_eq!(truth_of(&other, &env), Truth::False);
+    let unequal = compare(apps(), "NotEq", set_of(vec![ident("a")]));
+    assert_eq!(truth_of(&unequal, &env), Truth::True);
+}
+
+/// `config.order = [b, a, b]` beside a list default of the same — a list
+/// written out reads its names as states the way a set does, and keeps its
+/// repeat, so the list written is the list held.
+#[test]
+fn a_list_written_out_beside_a_list_of_states_is_a_list_of_states() {
+    let mut world = library();
+    let held =
+        Value::Set(["b", "a", "b"].iter().map(|state| Value::Enum((*state).to_owned())).collect());
+    world.set_config("lending", "order", held);
+    let env = env(&world, "lending").deriving(declared(&["a", "b"]));
+    let node = compare(
+        field(ident("config"), "order"),
+        "Eq",
+        list_of(vec![ident("b"), ident("a"), ident("b")]),
+    );
+    assert_eq!(truth_of(&node, &env), Truth::True);
+    assert!(reasons(&node, &env).is_empty(), "{:?}", reasons(&node, &env));
+}
+
+/// A name that is something else stays what it is, the same test a lone name
+/// beside a state gets: bound to a value, it is that value.
+#[test]
+fn a_bound_name_in_a_set_written_beside_states_is_what_it_is_bound_to() {
+    let mut world = library();
+    world.set_config("lending", "apps", Value::Set(vec![Value::Enum("a".to_owned())]));
+    let env = env(&world, "lending").bind("a", Value::Enum("b".to_owned()));
+    let node = compare(field(ident("config"), "apps"), "Eq", set_of(vec![ident("a")]));
+    assert_eq!(truth_of(&node, &env), Truth::False, "`a` is bound, to `b`");
+    // Bound to something undecided, it is a value nobody knows — not the
+    // state its name happens to spell (issue #21's rule, member by member).
+    let env = self::env(&world, "lending").bind("a", Value::Unknown);
+    assert_eq!(truth_of(&node, &env), Truth::Unknown, "`a` is bound, to nothing known");
+}
+
+/// A word no enumeration declares is not read as a state beside a set of
+/// them either: it may be something this simulator does not model, and the
+/// comparison says which word, as a `for` over the same set does.
+#[test]
+fn an_undeclared_word_in_a_set_written_beside_states_stays_undecided() {
+    let mut world = library();
+    world.set_config("lending", "apps", Value::Set(vec![Value::Enum("a".to_owned())]));
+    let env = env(&world, "lending").deriving(declared(&["a", "b"]));
+    let node =
+        compare(field(ident("config"), "apps"), "Eq", set_of(vec![ident("a"), ident("zzz")]));
+    assert_eq!(truth_of(&node, &env), Truth::Unknown);
+    assert_eq!(reasons(&node, &env), vec!["nothing is bound to `zzz`"]);
+}
+
+/// `status in {paused, running}`, with `paused` a declared state that is also
+/// something else here: a stored field nobody set, a name bound to a value
+/// nobody knows, a parameter nobody passed. None of those is the state its
+/// name spells (issue #21's rule, under `in` and `not in` as under `=`), and
+/// each says why rather than coming back a decided no.
+#[test]
+fn a_word_that_is_something_else_is_not_a_state_in_a_membership_test() {
+    let mut derived = inspect_model::Derivations::default();
+    for stored in ["status", "paused"] {
+        derived.stored.insert(inspect_model::derived_key("ci", "Run", stored));
+    }
+    derived.states.extend(["waiting", "running", "paused"].map(str::to_owned));
+    let set = || set_of(vec![ident("paused"), ident("running")]);
+    for negated in [false, true] {
+        let test = |needle: Expr| {
+            if negated {
+                Expr::NotIn {
+                    span: NOWHERE,
+                    element: Box::new(needle),
+                    collection: Box::new(set()),
+                }
+            } else {
+                within(needle, set())
+            }
+        };
+        // A stored field nobody set, inside a definition.
+        let (world, run) = waiting_run();
+        let mut with_probe = derived.clone();
+        with_probe
+            .fields
+            .insert(inspect_model::derived_key("ci", "Run", "probe"), test(ident("status")));
+        let env = env(&world, "ci").deriving(&with_probe).bind("r", Value::Ref(run.clone()));
+        let node = field(ident("r"), "probe");
+        assert_eq!(truth_of(&node, &env), Truth::Unknown, "unset, negated: {negated}");
+        let said = reasons(&node, &env);
+        assert!(said.iter().any(|it| it == &format!("`{run}` has no `paused` set")), "{said:?}");
+
+        // A name bound to a value nobody knows.
+        let env = self::env(&world, "ci")
+            .deriving(&derived)
+            .bind("r", Value::Ref(run.clone()))
+            .bind("paused", Value::Unknown);
+        let node = test(field(ident("r"), "status"));
+        assert_eq!(truth_of(&node, &env), Truth::Unknown, "bound, negated: {negated}");
+        assert!(!reasons(&node, &env).is_empty(), "an unknown says why");
+
+        // A parameter nobody passed.
+        let env = self::env(&world, "ci")
+            .deriving(&derived)
+            .declaring(["paused".to_owned()])
+            .bind("r", Value::Ref(run.clone()));
+        assert_eq!(truth_of(&node, &env), Truth::Unknown, "parameter, negated: {negated}");
+        assert!(!reasons(&node, &env).is_empty(), "an unknown says why");
+
+        // And the control: a declared word nothing else claims is the state.
+        let env = self::env(&world, "ci").deriving(&derived).bind("r", Value::Ref(run.clone()));
+        assert_eq!(truth_of(&node, &env), Truth::from_bool(negated), "control: {negated}");
+    }
+}
+
+/// Beside a set holding no state — here an empty one — the names are not
+/// read as states, and the answer stays honest: an empty set is not a set of
+/// one, whatever that one turns out to be.
+#[test]
+fn a_bare_name_in_a_set_beside_no_states_is_still_unbound() {
+    let mut world = library();
+    world.set_config("lending", "none", Value::Set(Vec::new()));
+    world.set_config("lending", "sizes", Value::Set(vec![Value::Int(1)]));
+    let env = env(&world, "lending");
+    let empty = compare(field(ident("config"), "none"), "Eq", set_of(vec![ident("a")]));
+    assert_eq!(truth_of(&empty, &env), Truth::False);
+    let numbers = compare(field(ident("config"), "sizes"), "Eq", set_of(vec![ident("a")]));
+    assert_eq!(truth_of(&numbers, &env), Truth::Unknown);
+    assert_eq!(reasons(&numbers, &env), vec!["nothing is bound to `a`"]);
 }
 
 // --- a derived value that takes an argument --------------------------------------
@@ -2296,6 +2564,46 @@ fn a_stipulation_naming_the_same_word_answers_a_call_with_an_unbound_argument() 
     }
 }
 
+/// A stipulated answer that is itself unknown settles nothing, and the call
+/// says so: an unknown with no reason is indistinguishable from a bug.
+#[test]
+fn a_stipulated_answer_with_no_value_says_why_the_call_is_undecided() {
+    let mut world = library();
+    world.answers.push(inspect_sim::world::Answer {
+        call: "can".to_owned(),
+        arguments: vec![Value::Ref(EntityId::new("Copy", 1)), Value::Enum("code".to_owned())],
+        value: Value::Unknown,
+    });
+    // `code` read as its spelling, and `how` bound to the state itself: the
+    // two ways a stipulation is matched.
+    let env = env(&world, "lending")
+        .bind("repo", Value::Ref(EntityId::new("Copy", 1)))
+        .bind("how", Value::Enum("code".to_owned()));
+    for word in ["code", "how"] {
+        let evaluated = eval(&can(word), &env);
+        assert_eq!(evaluated.truth(), Truth::Unknown, "{word}");
+        let said: Vec<String> = evaluated.unresolved.into_iter().map(|note| note.reason).collect();
+        assert!(
+            said.iter().any(|why| why == "the answer stipulated for `can` has no value"),
+            "{word}: {said:?}"
+        );
+    }
+}
+
+/// An argument that holds something nobody knows, inside a set, is as
+/// unsettled as one that is unknown outright: `can({x.f}, code)` with `x.f`
+/// unset is not a question about the set of one unknown thing.
+#[test]
+fn an_argument_holding_an_unknown_matches_no_stipulation() {
+    let mut world = library();
+    world.answers.push(inspect_sim::world::Answer {
+        call: "can".to_owned(),
+        arguments: vec![Value::Set(vec![Value::Unknown])],
+        value: Value::Bool(true),
+    });
+    assert_eq!(world.answer("can", &[Value::Set(vec![Value::Unknown])]), None);
+}
+
 /// Another word is another call. Answering it would be the simulator inventing
 /// a policy nobody stated.
 #[test]
@@ -2407,4 +2715,714 @@ fn an_unanswered_black_box_says_a_stipulation_would_answer_it() {
         Some("nothing defines `can`, and no stipulation answers this call"),
         "{said:?}"
     );
+}
+
+// --- words in a definition (issue #21) ---------------------------------------
+
+/// `if condition: then else: otherwise`.
+fn if_else(condition: Expr, then: Expr, otherwise: Expr) -> Expr {
+    Expr::Conditional {
+        span: NOWHERE,
+        branches: vec![allium_parser::ast::CondBranch { span: NOWHERE, condition, body: then }],
+        else_body: Some(Box::new(otherwise)),
+    }
+}
+
+/// A run, `status: waiting | running` and `other: waiting | running`, with
+/// whatever `definitions` it computes, and `waiting`, `running` declared.
+fn run_spec(definitions: Vec<(&str, Expr)>) -> inspect_model::Derivations {
+    let mut derived = inspect_model::Derivations::default();
+    for stored in ["status", "other"] {
+        derived.stored.insert(inspect_model::derived_key("ci", "Run", stored));
+    }
+    derived.states.extend(["waiting".to_owned(), "running".to_owned()]);
+    for (name, definition) in definitions {
+        derived.fields.insert(inspect_model::derived_key("ci", "Run", name), definition);
+    }
+    derived
+}
+
+/// One run, waiting, with `other` unset.
+fn waiting_run() -> (World, EntityId) {
+    let mut world = World::new();
+    let run = world.create("Run", "ci");
+    world.set_field(&run, "status", Value::Enum("waiting".to_owned()));
+    (world, run)
+}
+
+fn waiting_or_running() -> Expr {
+    if_else(compare(ident("status"), "Eq", ident("waiting")), ident("waiting"), ident("running"))
+}
+
+#[test]
+fn a_word_a_definition_returns_is_the_state_the_spec_declares() {
+    // `agg: if status = waiting: waiting else: running`. The condition always
+    // read `waiting` as a state, because `status` on the other side said so;
+    // the branch it chose had nothing beside it and came back undecided.
+    let (world, run) = waiting_run();
+    let derived = run_spec(vec![("agg", waiting_or_running())]);
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(run));
+    let node = field(ident("r"), "agg");
+    assert_eq!(value_of(&node, &env), Value::Enum("waiting".to_owned()));
+    assert!(reasons(&node, &env).is_empty(), "and nothing about it was undecided");
+}
+
+#[test]
+fn a_word_no_enumeration_declares_stays_undecided_in_a_definition() {
+    // Only a declared state. `paused` is in no enumeration, so it may be
+    // something this simulator does not model, and it says which word.
+    let (world, run) = waiting_run();
+    let derived = run_spec(vec![("agg", ident("paused"))]);
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(run));
+    let node = field(ident("r"), "agg");
+    assert_eq!(value_of(&node, &env), Value::Unknown);
+    assert!(
+        reasons(&node, &env).iter().any(|reason| reason == "nothing is bound to `paused`"),
+        "{:?}",
+        reasons(&node, &env)
+    );
+}
+
+#[test]
+fn a_word_outside_a_definition_is_still_read_only_beside_a_state() {
+    // The new reading is for a definition, where `this` is in scope. A rule's
+    // bare word with nothing beside it is still a name nothing binds.
+    let (world, _) = waiting_run();
+    let derived = run_spec(Vec::new());
+    let env = env(&world, "ci").deriving(&derived);
+    assert_eq!(value_of(&ident("waiting"), &env), Value::Unknown);
+}
+
+#[test]
+fn a_stored_field_nobody_set_is_not_taken_for_a_state() {
+    // `ne: other != status`. `other` is unset, so it is not bound inside the
+    // definition — and `status` beside it made the comparison read it as the
+    // state `other`, which is not `waiting`, so `true`. A field nobody set is
+    // undecided, and says which.
+    let (world, run) = waiting_run();
+    let ne = compare(ident("other"), "NotEq", ident("status"));
+    let derived = run_spec(vec![("ne", ne)]);
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(run.clone()));
+    let node = field(ident("r"), "ne");
+    assert_eq!(truth_of(&node, &env), Truth::Unknown);
+    let said = reasons(&node, &env);
+    assert!(said.iter().any(|reason| reason == &format!("`{run}` has no `other` set")), "{said:?}");
+}
+
+#[test]
+fn a_stored_field_nobody_set_is_undecided_even_when_it_is_spelled_like_a_state() {
+    // A field called the same as a state is still the field. Reading the word
+    // would answer a question about the field with its own name.
+    let (world, run) = waiting_run();
+    let mut derived = run_spec(vec![("same", compare(ident("running"), "Eq", ident("status")))]);
+    derived.stored.insert(inspect_model::derived_key("ci", "Run", "running"));
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(run));
+    assert_eq!(truth_of(&field(ident("r"), "same"), &env), Truth::Unknown);
+}
+
+#[test]
+fn an_undecided_derived_value_is_not_taken_for_a_state() {
+    // `stale: agg != status` with `agg` undecided — here because it reads
+    // `other`, which nobody set. Kleene logic makes the comparison undecided;
+    // the name `agg` is not a state called `agg`.
+    let (world, run) = waiting_run();
+    let agg = if_else(
+        compare(ident("other"), "Eq", ident("waiting")),
+        ident("waiting"),
+        ident("running"),
+    );
+    let stale = compare(ident("agg"), "NotEq", ident("status"));
+    let derived = run_spec(vec![("agg", agg), ("stale", stale)]);
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(run.clone()));
+    let node = field(ident("r"), "stale");
+    assert_eq!(truth_of(&node, &env), Truth::Unknown);
+    let said = reasons(&node, &env);
+    assert!(said.iter().any(|reason| reason == &format!("`{run}` has no `other` set")), "{said:?}");
+}
+
+#[test]
+fn a_decided_derived_value_compares_as_the_state_it_is() {
+    // And the issue's own case, end to end: `stale: agg != status` is false
+    // once `agg` is `waiting`.
+    let (world, run) = waiting_run();
+    let stale = compare(ident("agg"), "NotEq", ident("status"));
+    let derived = run_spec(vec![("agg", waiting_or_running()), ("stale", stale)]);
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(run));
+    let node = field(ident("r"), "stale");
+    assert_eq!(truth_of(&node, &env), Truth::False);
+    assert!(reasons(&node, &env).is_empty());
+}
+
+#[test]
+fn a_rule_parameter_nobody_passed_is_not_taken_for_a_state() {
+    // `copy.status = how` with `how` a parameter of the rule that nobody
+    // passed. Read as the state `how`, the comparison answered `false` about
+    // an argument it never saw.
+    let world = library();
+    let env = env(&world, "catalogue")
+        .declaring(["how".to_owned()])
+        .bind("copy", Value::Ref(EntityId::new("Copy", 1)));
+    let node = compare(field(ident("copy"), "status"), "Eq", ident("how"));
+    assert_eq!(truth_of(&node, &env), Truth::Unknown);
+    assert_eq!(reasons(&node, &env), ["nothing is bound to `how`"]);
+}
+
+#[test]
+fn a_name_bound_to_an_undecided_value_is_not_taken_for_a_state() {
+    // `copy.status != x` with `x` a `let` the rule could not decide. Read as
+    // the state `x`, it is not `available`, so `true` — an answer about a
+    // value nobody knows.
+    let world = library();
+    let env = env(&world, "catalogue")
+        .bind("x", Value::Unknown)
+        .bind("copy", Value::Ref(EntityId::new("Copy", 1)));
+    let node = compare(field(ident("copy"), "status"), "NotEq", ident("x"));
+    assert_eq!(truth_of(&node, &env), Truth::Unknown);
+}
+
+#[test]
+fn a_function_read_bare_is_not_taken_for_a_state() {
+    // `odd: f != status` with `f(x)` a function of the run. Read without its
+    // argument it is undecided; read as the state `f` it was `true`.
+    let (world, run) = waiting_run();
+    let mut derived = run_spec(vec![("odd", compare(ident("f"), "NotEq", ident("status")))]);
+    derived.functions.insert(
+        inspect_model::derived_key("ci", "Run", "f"),
+        inspect_model::Function { params: vec!["x".to_owned()], body: ident("x") },
+    );
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(run));
+    let node = field(ident("r"), "odd");
+    assert_eq!(truth_of(&node, &env), Truth::Unknown);
+    let said = reasons(&node, &env);
+    assert!(
+        said.iter().any(|reason| reason == "`f` takes an argument, and was read without one"),
+        "{said:?}"
+    );
+}
+
+#[test]
+fn a_stored_field_nobody_set_is_undecided_on_either_side() {
+    // `status != other` as well as `other != status`: the state reading is
+    // tried from both sides, so both are refused it.
+    let (world, run) = waiting_run();
+    let derived = run_spec(vec![("ne_r", compare(ident("status"), "NotEq", ident("other")))]);
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(run.clone()));
+    let node = field(ident("r"), "ne_r");
+    assert_eq!(truth_of(&node, &env), Truth::Unknown);
+    let said = reasons(&node, &env);
+    assert!(said.iter().any(|reason| reason == &format!("`{run}` has no `other` set")), "{said:?}");
+}
+
+#[test]
+fn a_filter_in_a_rule_leaves_out_an_element_whose_field_nobody_set_and_says_so() {
+    // `Runs where other != status` in a rule: each run is `this` inside the
+    // filter, so an unset `other` is that run's field, not the state `other`.
+    // The run is neither kept nor counted out, and the note says why.
+    let (world, run) = waiting_run();
+    let derived = run_spec(Vec::new());
+    let env = env(&world, "ci").deriving(&derived);
+    let node = filtered(ident("Runs"), compare(ident("other"), "NotEq", ident("status")));
+    let evaluation = eval(&node, &env);
+    assert_eq!(evaluation.value, Value::Set(Vec::new()));
+    let said: Vec<_> = evaluation.unresolved.iter().map(|note| note.reason.clone()).collect();
+    assert_eq!(said, [format!("`{run}` has no `other` set")]);
+    let counted = field(node, "count");
+    assert_eq!(value_of(&counted, &env), Value::Unknown, "and so its count is not known");
+}
+
+#[test]
+fn a_rule_parameter_spelled_like_a_state_is_not_read_as_one_in_a_filter() {
+    // `Runs where status = waiting` in a rule that declares, and was not
+    // passed, a parameter called `waiting`. The filter makes each run `this`,
+    // which is where a declared word becomes a state — but not one the rule
+    // has given another meaning.
+    let (world, _) = waiting_run();
+    let derived = run_spec(Vec::new());
+    let env = env(&world, "ci").deriving(&derived).declaring(["waiting".to_owned()]);
+    let node = filtered(ident("Runs"), compare(ident("status"), "Eq", ident("waiting")));
+    let evaluation = eval(&node, &env);
+    assert_eq!(evaluation.value, Value::Set(Vec::new()));
+    let said: Vec<_> = evaluation.unresolved.iter().map(|note| note.reason.clone()).collect();
+    assert_eq!(said, ["nothing is bound to `waiting`"]);
+}
+
+#[test]
+fn a_definition_s_filter_asks_the_element_for_its_field_not_this() {
+    // On a shelf, `live: docs where status = active`, over a doc that never set
+    // `status`. `this` is the shelf, which has no `status`; the doc does, and
+    // it is unset. Read off the shelf alone, `status` passed for a word, the
+    // state `status` is not `active`, and `has_live` was a definite false.
+    let mut world = World::new();
+    let shelf = world.create("Shelf", "ci");
+    let doc = world.create("Doc", "ci");
+    world.set_field(&doc, "shelf", Value::Ref(shelf.clone()));
+    let mut derived = inspect_model::Derivations::default();
+    for stored in ["shelf", "status"] {
+        derived.stored.insert(inspect_model::derived_key("ci", "Doc", stored));
+    }
+    derived.states.extend(["active".to_owned(), "archived".to_owned()]);
+    let docs = Expr::With {
+        span: NOWHERE,
+        source: Box::new(ident("Docs")),
+        predicate: Box::new(compare(ident("shelf"), "Eq", ident("this"))),
+    };
+    let live = filtered(ident("docs"), compare(ident("status"), "Eq", ident("active")));
+    let has_live = compare(field(ident("live"), "count"), "Gt", number("0"));
+    for (name, definition) in [("docs", docs), ("live", live), ("has_live", has_live)] {
+        derived.fields.insert(inspect_model::derived_key("ci", "Shelf", name), definition);
+    }
+    let env = env(&world, "ci").deriving(&derived).bind("s", Value::Ref(shelf));
+    let node = field(ident("s"), "has_live");
+    assert_eq!(truth_of(&node, &env), Truth::Unknown);
+    let said = reasons(&node, &env);
+    assert!(
+        said.iter().any(|reason| reason == &format!("`{doc}` has no `status` set")),
+        "{said:?}"
+    );
+}
+
+/// Issue #23's shape: a repo whose `active_watches` are its `watches where
+/// is_watching = true`, and a watch whose `is_watching` is computed — `a or b`
+/// — rather than stored. `extra` adds definitions to either entity.
+fn watched_repo(
+    a: Option<bool>,
+    b: Option<bool>,
+    extra: &[(&str, &str, Expr)],
+) -> (World, EntityId, EntityId, inspect_model::Derivations) {
+    let mut world = World::new();
+    let repo = world.create("Repo", "ci");
+    let watch = world.create("Watch", "ci");
+    world.set_field(&watch, "repo", Value::Ref(repo.clone()));
+    for (name, value) in [("a", a), ("b", b)] {
+        if let Some(value) = value {
+            world.set_field(&watch, name, Value::Bool(value));
+        }
+    }
+    let mut derived = inspect_model::Derivations::default();
+    for stored in ["repo", "a", "b"] {
+        derived.stored.insert(inspect_model::derived_key("ci", "Watch", stored));
+    }
+    let watches = Expr::With {
+        span: NOWHERE,
+        source: Box::new(ident("Watch")),
+        predicate: Box::new(compare(ident("repo"), "Eq", ident("this"))),
+    };
+    let active = filtered(ident("watches"), compare(ident("is_watching"), "Eq", boolean(true)));
+    let definitions = [
+        ("Repo", "watches", watches),
+        ("Repo", "active_watches", active),
+        ("Watch", "is_watching", logical(ident("a"), "Or", ident("b"))),
+    ];
+    for (entity, name, definition) in definitions {
+        derived.fields.insert(inspect_model::derived_key("ci", entity, name), definition);
+    }
+    for (entity, name, definition) in extra {
+        derived.fields.insert(inspect_model::derived_key("ci", entity, name), definition.clone());
+    }
+    (world, repo, watch, derived)
+}
+
+#[test]
+fn a_filter_on_a_computed_field_computes_it_for_each_element() {
+    // `active_watches: watches where is_watching = true`, with `is_watching:
+    // a or b` and both set. `true or false` is `true`, so the projection is
+    // the one watch — decided, with nothing left to say. Before, the element's
+    // computed field was never asked for, and the projection came back empty
+    // and "may be missing members".
+    let (world, repo, watch, derived) = watched_repo(Some(true), Some(false), &[]);
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(repo));
+    let node = field(ident("r"), "active_watches");
+    let evaluation = eval(&node, &env);
+    assert_eq!(evaluation.value, Value::Set(vec![Value::Ref(watch)]));
+    assert!(evaluation.unresolved.is_empty(), "{:?}", evaluation.unresolved);
+}
+
+#[test]
+fn a_filter_on_a_computed_field_leaves_out_an_element_it_computes_false() {
+    // Both set false: decided, and decided *out* — the other half of
+    // computing it rather than guessing it.
+    let (world, repo, _, derived) = watched_repo(Some(false), Some(false), &[]);
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(repo));
+    let evaluation = eval(&field(ident("r"), "active_watches"), &env);
+    assert_eq!(evaluation.value, Value::Set(Vec::new()));
+    assert!(evaluation.unresolved.is_empty(), "{:?}", evaluation.unresolved);
+}
+
+#[test]
+fn an_element_s_undecided_computed_field_names_the_element_and_what_it_lacks() {
+    // `a` false and `b` never set: `false or ?` is undecided, and the reason
+    // is the watch's own — which watch, and which field it is missing.
+    let (world, repo, watch, derived) = watched_repo(Some(false), None, &[]);
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(repo));
+    let node = field(ident("r"), "active_watches");
+    let evaluation = eval(&node, &env);
+    assert_eq!(evaluation.value, Value::Set(Vec::new()));
+    let said: Vec<_> = evaluation.unresolved.iter().map(|note| note.reason.clone()).collect();
+    assert_eq!(said, [format!("`{watch}` has no `b` set")]);
+    assert_eq!(truth_of(&field(node, "count"), &env), Truth::Unknown);
+}
+
+#[test]
+fn an_element_s_computed_field_is_its_own_not_this_one_s() {
+    // The repo computes an `is_watching` of its own, `false`. Inside the
+    // filter the name is the element's: the watch is asked, in the watch's
+    // scope, and the repo's same-spelled field does not answer for it.
+    let extra = [("Repo", "is_watching", boolean(false))];
+    let (world, repo, watch, derived) = watched_repo(Some(true), Some(false), &extra);
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(repo));
+    let evaluation = eval(&field(ident("r"), "active_watches"), &env);
+    assert_eq!(evaluation.value, Value::Set(vec![Value::Ref(watch)]));
+}
+
+#[test]
+fn a_member_decided_in_by_half_its_definition_leaves_the_projection_complete() {
+    // `a` true and `b` never set: `true or ?` is `true`, so the watch is in,
+    // decided. The `or` still carries a note about `b`, and that note is about
+    // a member that was decided — it is not a member the projection may be
+    // missing, and carried on the collection it made a loop over it read as
+    // undecided and told the author to set a field that does not matter.
+    let (world, repo, watch, derived) = watched_repo(Some(true), None, &[]);
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(repo));
+    let evaluation = eval(&field(ident("r"), "active_watches"), &env);
+    assert_eq!(evaluation.value, Value::Set(vec![Value::Ref(watch)]));
+    assert!(evaluation.unresolved.is_empty(), "{:?}", evaluation.unresolved);
+}
+
+#[test]
+fn a_member_decided_out_by_half_its_definition_leaves_the_projection_complete() {
+    // The other way round: `a and b` with `a` false is `false` whatever `b`
+    // is. Decided out, and nothing is missing.
+    let extra = [("Watch", "is_watching", logical(ident("a"), "And", ident("b")))];
+    let (world, repo, _, derived) = watched_repo(Some(false), None, &extra);
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(repo));
+    let evaluation = eval(&field(ident("r"), "active_watches"), &env);
+    assert_eq!(evaluation.value, Value::Set(Vec::new()));
+    assert!(evaluation.unresolved.is_empty(), "{:?}", evaluation.unresolved);
+}
+
+#[test]
+fn an_element_s_computed_field_shadows_a_field_this_stores_under_the_same_name() {
+    // The repo *stores* an `is_watching`, `false`. Inside the filter the bare
+    // name is still the watch's, computed `true`: the repo's stored field,
+    // bound bare in the repo's definitions, must not answer for every watch.
+    let (mut world, repo, watch, mut derived) = watched_repo(Some(true), Some(false), &[]);
+    derived.stored.insert(inspect_model::derived_key("ci", "Repo", "is_watching"));
+    world.set_field(&repo, "is_watching", Value::Bool(false));
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(repo));
+    let evaluation = eval(&field(ident("r"), "active_watches"), &env);
+    assert_eq!(evaluation.value, Value::Set(vec![Value::Ref(watch)]));
+    assert!(evaluation.unresolved.is_empty(), "{:?}", evaluation.unresolved);
+}
+
+#[test]
+fn an_element_s_unset_stored_field_is_not_answered_by_one_this_stores() {
+    // The watch declares `a` and never set it; the repo stores an `a` of its
+    // own. Inside the filter `a` is the watch's, and unset — not the repo's.
+    let extra = [("Watch", "is_watching", ident("a"))];
+    let (mut world, repo, watch, mut derived) = watched_repo(None, None, &extra);
+    derived.stored.insert(inspect_model::derived_key("ci", "Repo", "a"));
+    world.set_field(&repo, "a", Value::Bool(true));
+    let active = filtered(ident("watches"), compare(ident("a"), "Eq", boolean(true)));
+    derived.fields.insert(inspect_model::derived_key("ci", "Repo", "active_watches"), active);
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(repo));
+    let evaluation = eval(&field(ident("r"), "active_watches"), &env);
+    assert_eq!(evaluation.value, Value::Set(Vec::new()));
+    let said: Vec<_> = evaluation.unresolved.iter().map(|note| note.reason.clone()).collect();
+    assert_eq!(said, [format!("`{watch}` has no `a` set")]);
+}
+
+#[test]
+fn a_filter_still_reads_an_enclosing_name_the_element_does_not_declare() {
+    // `r.watches where a = wanted`, with `wanted` bound by the rule. Only the
+    // names the watch declares are taken from it; `wanted` is the rule's, and
+    // unbinding it as well would leave every watch undecided.
+    let (world, repo, watch, derived) = watched_repo(Some(true), None, &[]);
+    let env = env(&world, "ci")
+        .deriving(&derived)
+        .bind("r", Value::Ref(repo))
+        .bind("wanted", Value::Bool(true));
+    let wanted = filtered(field(ident("r"), "watches"), compare(ident("a"), "Eq", ident("wanted")));
+    let evaluation = eval(&wanted, &env);
+    assert_eq!(evaluation.value, Value::Set(vec![Value::Ref(watch)]));
+    assert!(evaluation.unresolved.is_empty(), "{:?}", evaluation.unresolved);
+}
+
+/// `ws where (tags where name = mode).count = 1`, read inside a repo's
+/// definition, with `mode` a field the outer watch stores and never set. In
+/// the inner filter the element is the tag, but the watch is still in scope:
+/// its unset `mode` is a value nobody knows, not the state `mode` — read off
+/// the innermost element alone, the watch was decided in, with no reason.
+#[test]
+fn a_field_an_enclosing_filter_s_element_never_set_is_not_taken_for_a_state() {
+    let mut world = World::new();
+    let repo = world.create("Repo", "ci");
+    let watch = world.create("Watch", "ci");
+    let tag = world.create("Tag", "ci");
+    world.set_field(&tag, "name", Value::Enum("mode".to_owned()));
+    let mut derived = inspect_model::Derivations::default();
+    derived.stored.insert(inspect_model::derived_key("ci", "Watch", "mode"));
+    derived.stored.insert(inspect_model::derived_key("ci", "Tag", "name"));
+    let env = env(&world, "ci")
+        .deriving(&derived)
+        .bind("this", Value::Ref(repo))
+        .bind("ws", Value::Set(vec![Value::Ref(watch.clone())]))
+        .bind("tags", Value::Set(vec![Value::Ref(tag)]));
+    let inner = filtered(ident("tags"), compare(ident("name"), "Eq", ident("mode")));
+    let node = filtered(ident("ws"), compare(field(inner, "count"), "Eq", number("1")));
+    let evaluation = eval(&node, &env);
+    assert_ne!(evaluation.value, Value::Set(vec![Value::Ref(watch)]), "{evaluation:?}");
+    assert!(!evaluation.unresolved.is_empty(), "an unknown says why");
+}
+
+#[test]
+fn an_element_s_computed_field_reads_this_as_the_element() {
+    // `is_watching: this.a` — `this` inside the watch's definition is the
+    // watch, not the repo whose filter asked for it.
+    let extra = [("Watch", "is_watching", field(ident("this"), "a"))];
+    let (world, repo, watch, derived) = watched_repo(Some(true), None, &extra);
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(repo));
+    let evaluation = eval(&field(ident("r"), "active_watches"), &env);
+    assert_eq!(evaluation.value, Value::Set(vec![Value::Ref(watch)]));
+    assert!(evaluation.unresolved.is_empty(), "{:?}", evaluation.unresolved);
+}
+
+#[test]
+fn a_cyclic_computed_field_inside_a_filter_is_unknown_with_a_reason_not_a_stack_overflow() {
+    // `is_watching: not is_watching` — the guard that stops a definition
+    // computing itself holds inside a filter's element too.
+    let extra = [("Watch", "is_watching", not(ident("is_watching")))];
+    let (world, repo, _, derived) = watched_repo(Some(true), None, &extra);
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(repo));
+    let evaluation = eval(&field(ident("r"), "active_watches"), &env);
+    assert_eq!(evaluation.value, Value::Set(Vec::new()));
+    assert!(!evaluation.unresolved.is_empty(), "undecided, with a reason");
+}
+
+#[test]
+fn an_element_s_function_named_bare_in_a_filter_is_the_element_s() {
+    // `is_watching` is a function on the watch, and read bare. It takes an
+    // argument, and says so — about the watch's function, not "nothing is
+    // bound".
+    let (world, repo, _, mut derived) = watched_repo(Some(true), None, &[]);
+    let key = inspect_model::derived_key("ci", "Watch", "is_watching");
+    derived.fields.remove(&key);
+    derived
+        .functions
+        .insert(key, inspect_model::Function { params: vec!["x".to_owned()], body: ident("x") });
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(repo));
+    let evaluation = eval(&field(ident("r"), "active_watches"), &env);
+    let said: Vec<_> = evaluation.unresolved.iter().map(|note| note.reason.clone()).collect();
+    assert_eq!(said, ["`is_watching` takes an argument, and was read without one"]);
+}
+
+#[test]
+fn an_element_s_function_called_in_a_filter_is_the_element_s() {
+    // `watches where is_watching(true)`, with `is_watching(x): x and a` on
+    // the watch: called for each watch, in the watch's scope.
+    let (world, repo, watch, mut derived) = watched_repo(Some(true), None, &[]);
+    derived.functions.insert(
+        inspect_model::derived_key("ci", "Watch", "is_watching"),
+        inspect_model::Function {
+            params: vec!["x".to_owned()],
+            body: logical(ident("x"), "And", ident("a")),
+        },
+    );
+    let active = filtered(ident("watches"), call(ident("is_watching"), vec![boolean(true)]));
+    derived.fields.insert(inspect_model::derived_key("ci", "Repo", "active_watches"), active);
+    derived.fields.remove(&inspect_model::derived_key("ci", "Watch", "is_watching"));
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(repo));
+    let evaluation = eval(&field(ident("r"), "active_watches"), &env);
+    assert_eq!(evaluation.value, Value::Set(vec![Value::Ref(watch)]));
+    assert!(evaluation.unresolved.is_empty(), "{:?}", evaluation.unresolved);
+}
+
+#[test]
+fn of_two_undecided_members_the_first_by_id_is_the_one_named() {
+    // Both watches `false or ?`: the projection's first reason is the first
+    // watch's, in id order, every time.
+    let (mut world, repo, watch, derived) = watched_repo(Some(false), None, &[]);
+    let second = world.create("Watch", "ci");
+    world.set_field(&second, "repo", Value::Ref(repo.clone()));
+    world.set_field(&second, "a", Value::Bool(false));
+    let env = env(&world, "ci").deriving(&derived).bind("r", Value::Ref(repo));
+    let evaluation = eval(&field(ident("r"), "active_watches"), &env);
+    let said: Vec<_> = evaluation.unresolved.iter().map(|note| note.reason.clone()).collect();
+    assert_eq!(said, [format!("`{watch}` has no `b` set"), format!("`{second}` has no `b` set")]);
+}
+
+// --- `??` and string `+` (issue #27) --------------------------------------
+
+fn coalesce(left: Expr, right: Expr) -> Expr {
+    Expr::NullCoalesce { span: NOWHERE, left: Box::new(left), right: Box::new(right) }
+}
+
+#[test]
+fn a_coalesce_is_its_left_side_when_that_is_set() {
+    // The right side is never reached, so a name it leaves unbound is no
+    // reason for anything: the same as the branch of an `if` not taken.
+    let world = library();
+    let env = env(&world, "lending").bind("title", Value::Str("t".to_owned()));
+    let node = coalesce(ident("title"), ident("nobody"));
+    let read = eval(&node, &env);
+    assert_eq!(read.value, Value::Str("t".to_owned()));
+    assert!(read.unresolved.is_empty(), "{:?}", read.unresolved);
+}
+
+#[test]
+fn a_coalesce_is_its_right_side_when_the_left_is_null() {
+    let world = library();
+    let env = env(&world, "lending").bind("title", Value::Null);
+    let read = eval(&coalesce(ident("title"), text("s")), &env);
+    assert_eq!(read.value, Value::Str("s".to_owned()));
+    assert!(read.unresolved.is_empty(), "{:?}", read.unresolved);
+}
+
+#[test]
+fn a_coalesce_over_a_null_literal_reaches_the_right_side() {
+    let world = library();
+    let env = env(&world, "lending");
+    assert_eq!(value_of(&coalesce(null(), number("3")), &env), Value::Int(3));
+}
+
+#[test]
+fn a_coalesce_whose_left_is_undecided_is_undecided_and_says_why() {
+    // Not the right side: whether the left is null is exactly what is not
+    // known, so taking the right would be guessing that it is.
+    let world = library();
+    let env = env(&world, "lending");
+    let node = coalesce(ident("title"), text("s"));
+    assert_eq!(value_of(&node, &env), Value::Unknown);
+    let said = reasons(&node, &env);
+    assert!(said.iter().any(|reason| reason.contains("`title`")), "{said:?}");
+}
+
+#[test]
+fn a_coalesce_whose_left_is_undecided_in_silence_still_says_why() {
+    // A name bound to something undecided arrives with no reason of its own.
+    let world = library();
+    let env = env(&world, "lending").bind("title", Value::Unknown);
+    let node = coalesce(ident("title"), text("s"));
+    assert_eq!(value_of(&node, &env), Value::Unknown);
+    let said = reasons(&node, &env);
+    assert!(said.iter().any(|reason| reason.contains("`??`")), "{said:?}");
+}
+
+#[test]
+fn a_coalesce_falling_through_to_an_undecided_right_side_says_why() {
+    let world = library();
+    let env = env(&world, "lending").bind("title", Value::Null);
+    let node = coalesce(ident("title"), ident("summary"));
+    assert_eq!(value_of(&node, &env), Value::Unknown);
+    let said = reasons(&node, &env);
+    assert!(said.iter().any(|reason| reason.contains("`summary`")), "{said:?}");
+}
+
+#[test]
+fn a_coalesce_falling_through_to_a_right_side_undecided_in_silence_says_why() {
+    // The answer is the right side, so when that arrives saying nothing the
+    // operator speaks for it, as it does for the left.
+    let world = library();
+    let env = env(&world, "lending").bind("title", Value::Null).bind("s", Value::Unknown);
+    let node = coalesce(ident("title"), ident("s"));
+    assert_eq!(value_of(&node, &env), Value::Unknown);
+    assert_eq!(reasons(&node, &env), ["the right side of `??` was never settled"]);
+}
+
+#[test]
+fn a_coalesce_keeps_what_its_null_left_side_said() {
+    // A left side that settled to null still says what it read on the way:
+    // `true or nobody` is true, and keeps its note about `nobody`.
+    let world = library();
+    let env = env(&world, "lending");
+    let left = Expr::Conditional {
+        span: NOWHERE,
+        branches: vec![allium_parser::ast::CondBranch {
+            span: NOWHERE,
+            condition: logical(
+                Expr::BoolLiteral { span: NOWHERE, value: true },
+                "Or",
+                ident("nobody"),
+            ),
+            body: null(),
+        }],
+        else_body: None,
+    };
+    assert_eq!(eval(&left, &env).value, Value::Null);
+    let read = eval(&coalesce(left, text("s")), &env);
+    assert_eq!(read.value, Value::Str("s".to_owned()), "{read:?}");
+    assert!(!read.unresolved.is_empty(), "{read:?}");
+}
+
+#[test]
+fn a_coalesce_quotes_the_spec_by_byte_offset() {
+    // An em-dash before it: three bytes, one character.
+    let source = "-- — \nensures: x ?? y";
+    let world = library();
+    let env = Env::new(&world, "lending", source).bind("x", Value::Unknown);
+    let at = source.find("x ??").expect("present");
+    let end = source.len();
+    let left = Expr::Ident(Ident { span: AstSpan { start: at, end: at + 1 }, name: "x".into() });
+    let right = Expr::Ident(Ident { span: AstSpan { start: end - 1, end }, name: "y".to_owned() });
+    let node = Expr::NullCoalesce {
+        span: AstSpan { start: at, end },
+        left: Box::new(left),
+        right: Box::new(right),
+    };
+    let note = &eval(&node, &env).unresolved[0];
+    assert_eq!(note.expression.as_deref(), Some("x"), "{note:?}");
+}
+
+#[test]
+fn strings_added_together_are_concatenated() {
+    let world = library();
+    let env = env(&world, "lending")
+        .bind("title", Value::Str("a".to_owned()))
+        .bind("extra", Value::Str("c".to_owned()));
+    let node = arithmetic(arithmetic(ident("title"), "Add", text(" ")), "Add", ident("extra"));
+    let read = eval(&node, &env);
+    assert_eq!(read.value, Value::Str("a c".to_owned()));
+    assert!(read.unresolved.is_empty(), "{:?}", read.unresolved);
+}
+
+#[test]
+fn only_addition_is_defined_between_strings() {
+    let world = library();
+    let env = env(&world, "lending");
+    for op in ["Sub", "Mul", "Div"] {
+        let node = arithmetic(text("a"), op, text("b"));
+        assert_eq!(value_of(&node, &env), Value::Unknown, "{op}");
+        assert!(reasons(&node, &env)[0].contains("not defined between"), "{op}");
+    }
+}
+
+#[test]
+fn a_string_plus_a_number_is_not_guessed_at() {
+    // No implicit conversion: the language reference defines `+` between
+    // strings, and a spelling of `1` is a choice this tool would be making.
+    let world = library();
+    let env = env(&world, "lending");
+    let node = arithmetic(text("a"), "Add", number("1"));
+    assert_eq!(value_of(&node, &env), Value::Unknown);
+    assert!(reasons(&node, &env)[0].contains("not defined between"));
+}
+
+#[test]
+fn a_string_plus_something_undecided_says_why() {
+    let world = library();
+    let env = env(&world, "lending");
+    let node = arithmetic(text("a"), "Add", ident("extra"));
+    assert_eq!(value_of(&node, &env), Value::Unknown);
+    let said = reasons(&node, &env);
+    assert!(said.iter().any(|reason| reason.contains("`extra`")), "{said:?}");
+}
+
+#[test]
+fn arithmetic_over_an_operand_undecided_in_silence_still_says_why() {
+    // The operand "has already said why" — except a name bound to something
+    // undecided says nothing, and the result was an unknown with no reason.
+    let world = library();
+    let env = env(&world, "lending").bind("extra", Value::Unknown);
+    let node = arithmetic(text("a"), "Add", ident("extra"));
+    assert_eq!(value_of(&node, &env), Value::Unknown);
+    assert!(!reasons(&node, &env).is_empty());
 }

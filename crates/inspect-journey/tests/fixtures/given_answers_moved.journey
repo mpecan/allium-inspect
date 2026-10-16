@@ -1,0 +1,38 @@
+-- Issue #19: what a world's answer is about is the values its arguments
+-- resolved to, not the words it spells them in.
+
+world {
+    cast:
+        r: Repo
+    given:
+        r.level = 1
+        stipulate can(r, r.level) = true
+        can(r.tags, code) = true
+}
+
+-- The world answered `can(r, 1)`. The journey moves `level` and answers
+-- `can(r, 2)`: the same words, another call, and the world's answer is not
+-- overridden by it.
+journey TheFieldMoves {
+    given:
+        r.level = 2
+        can(r, r.level) = false
+    1. the journey's answer is the one the rule asks
+        r cannot do Probe(r) on Settings
+}
+
+-- The world's `stipulate` is in force, and its refused line is not listed.
+journey TheWorldStands {
+    1. the world's answer is asked
+        r does Probe(r) on Settings
+        then r.flag = true
+}
+
+-- Continuing from a journey under the same world: the world is not laid out
+-- again, and its refused line is still not listed.
+journey AfterTheWorldStands {
+    after: TheWorldStands
+    1. still the world's answer
+        r does Probe(r) on Settings
+        then r.flag = true
+}

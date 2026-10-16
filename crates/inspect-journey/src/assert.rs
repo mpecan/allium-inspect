@@ -10,7 +10,7 @@ use allium_parser::ast::{CallArg, Expr, ForBinding};
 use inspect_sim::{
     Truth, Value,
     eval::{Env, eval},
-    value::EntityId,
+    value::{EntityId, Instance},
 };
 
 use crate::{
@@ -34,21 +34,30 @@ impl Walker<'_> {
         }
         let (truth, detail) = match assertion {
             Assertion::Compare { left, operator, right } => {
-                let found = self.read(left);
+                let (found, why) = self.read_explained(left);
                 let wanted = self.value_of(right);
+                let read = format!("{} is {}", left.as_written(), found.render());
                 (
                     compare(&found, *operator, &wanted),
-                    Some(format!("{} is {}", left.as_written(), found.render())),
+                    Some(match why {
+                        Some(why) => format!("{read} — {why}"),
+                        None => read,
+                    }),
                 )
             }
             Assertion::Within { needle, haystack } => {
                 let wanted = self.value_of(needle);
-                let inside = self.read(haystack);
+                let (inside, why) = self.read_explained(haystack);
                 let truth = match &inside {
                     Value::Set(items) => Truth::any(items.iter().map(|item| item.equals(&wanted))),
                     _ => Truth::Unknown,
                 };
-                (truth, Some(format!("{} is {}", haystack.as_written(), inside.render())))
+                let read = format!("{} is {}", haystack.as_written(), inside.render());
+                let detail = match why {
+                    Some(why) => format!("{read} — {why}"),
+                    None => read,
+                };
+                (truth, Some(detail))
             }
             Assertion::Fires { rule, negated } => self.fires(rule, *negated),
             Assertion::Exists { path, negated } => {
@@ -466,13 +475,9 @@ impl Walker<'_> {
         module: &str,
     ) -> Result<bool, String> {
         scope.entry("this".to_owned()).or_insert_with(|| Value::Ref(element.clone()));
-        if let Some(instance) = self.world.instance(element) {
-            for (field, value) in &instance.fields {
-                scope.insert(field.clone(), value.clone());
-            }
-        }
-
-        match self.evaluate(filter, &scope, module) {
+        // The element's fields bare, each undecided one saying why.
+        let stored = self.world.instance(element);
+        match self.evaluate_with(filter, &scope, module, stored) {
             // A decided answer is trusted, notes and all. Whether a member a
             // collection dropped could overturn it is the evaluator's call —
             // `count`, `in`, `exists`, `all` and `any` over one come back
@@ -498,10 +503,24 @@ impl Walker<'_> {
         bindings: &BTreeMap<String, Value>,
         module: &str,
     ) -> Result<(Value, Option<String>), String> {
+        self.evaluate_with(expr, bindings, module, None)
+    }
+
+    /// [`Self::evaluate`], with `stored`'s fields in scope bare as well.
+    fn evaluate_with(
+        &self,
+        expr: &Expr,
+        bindings: &BTreeMap<String, Value>,
+        module: &str,
+        stored: Option<&Instance>,
+    ) -> Result<(Value, Option<String>), String> {
         let source = self.sources.get(module).map_or("", String::as_str);
         let mut env = Env::new(&self.world, module, source).deriving(self.program.derivations());
         for (name, value) in bindings {
             env = env.bind(name.clone(), value.clone());
+        }
+        if let Some(instance) = stored {
+            env.bind_stored(instance);
         }
 
         let evaluated = eval(expr, &env);

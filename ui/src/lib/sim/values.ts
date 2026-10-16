@@ -9,6 +9,7 @@
 // Durations are shown in the units the spec wrote them in wherever that is
 // recoverable, because `1814400000` is not a number anyone reads as three weeks.
 
+import type { Instance } from "../api/Instance";
 import type { Value } from "../api/Value";
 
 /** How a value should be shown. */
@@ -124,4 +125,17 @@ export function parse(text: string, states: string[] = []): Value {
   }
 
   return { kind: "str", value: trimmed.replace(/^"|"$/g, "") };
+}
+
+/**
+ * `instance` with `field` set to `value` by hand, forgetting why it was
+ * undecided before.
+ *
+ * The reason a rule left with an undecided field is about that rule's write.
+ * Kept past an edit, it would explain whatever the person typed — or, cleared
+ * to `unknown`, claim the rule's reason for what is now the person's.
+ */
+export function edited(instance: Instance, field: string, value: Value): Instance {
+  const { [field]: _answered, ...why } = instance.why ?? {};
+  return { ...instance, fields: { ...instance.fields, [field]: value }, why };
 }

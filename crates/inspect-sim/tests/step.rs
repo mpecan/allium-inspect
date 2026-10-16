@@ -1134,8 +1134,8 @@ fn a_precondition_inside_a_loop_undecided_for_a_member_of_an_incomplete_collecti
     assert!(reasons[0].contains("could not decide this precondition for Hook#1"), "{reasons:?}");
     assert!(
         reasons.contains(
-            &"`for h in r.hooks` may be missing members it could not decide on, so this \
-              precondition could not be checked for them"
+            &"`for h in r.hooks` may be missing members it could not decide on (`Hook#2` has \
+              no `rack` set), so this precondition could not be checked for them"
         ),
         "{reasons:?}"
     );
@@ -1152,8 +1152,8 @@ fn a_precondition_inside_a_loop_every_held_member_passing_an_incomplete_collecti
     assert_eq!(outcome.disposition, Disposition::Undecided);
     assert_eq!(
         clause.unresolved[0].reason,
-        "`for h in r.hooks` may be missing members it could not decide on, so this precondition \
-         could not be checked for them"
+        "`for h in r.hooks` may be missing members it could not decide on (`Hook#2` has no \
+         `rack` set), so this precondition could not be checked for them"
     );
 }
 

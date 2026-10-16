@@ -443,7 +443,17 @@ impl SpecGraph {
         if !field.enum_values.is_empty() {
             return &field.enum_values;
         }
-        let named = field.type_expr.trim().trim_end_matches('?');
+        self.enum_values_of(module, &field.type_expr)
+    }
+
+    /// The values of the enumeration `type_expr` names, read from `module`
+    /// the way [`Self::states_of`] reads a field's type — the same rule,
+    /// for a type written somewhere that is not a field, such as a `config`
+    /// parameter. Empty when the name leads to no enumeration, or to several
+    /// that disagree.
+    #[must_use]
+    pub fn enum_values_of<'a>(&'a self, module: &str, type_expr: &'a str) -> &'a [String] {
+        let named = type_expr.trim().trim_end_matches('?');
         let (qualifier, bare) =
             named.rsplit_once('/').map_or((None, named), |(alias, bare)| (Some(alias), bare));
         let home = self.home_of(module, qualifier);
@@ -625,6 +635,20 @@ mod tests {
         // One `Status` in the whole set is that one, from wherever it is named.
         graph.nodes.remove(0);
         assert_eq!(graph.states_of("elsewhere", &own), ["open", "closed"]);
+    }
+
+    /// A type written somewhere that is not a field — a `config` parameter's
+    /// (issue #25) — is read by the same rule.
+    #[test]
+    fn an_enumeration_named_by_a_bare_type_is_read_by_the_same_rule() {
+        let mut graph = SpecGraph::new("test");
+        graph.nodes.push(Node::new("tickets", NodeKind::Enum, "Status").with(NodeDetail::Enum(
+            EnumDetail { values: vec!["open".to_owned(), "closed".to_owned()] },
+        )));
+        assert_eq!(graph.enum_values_of("tickets", "Status"), ["open", "closed"]);
+        assert_eq!(graph.enum_values_of("tickets", " Status? "), ["open", "closed"]);
+        assert!(graph.enum_values_of("tickets", "Priority").is_empty());
+        assert!(graph.enum_values_of("tickets", "String").is_empty());
     }
 
     #[test]

@@ -1,0 +1,18 @@
+-- Issue #17: `admin/FailureReported(…)` emits `failures`' trigger from
+-- `migrations`, through the alias it imported it under. It was read as neither
+-- a creation nor a trigger, so `Record` never ran and `creating n:
+-- failures/Notice` caught nothing.
+
+journey EmitIntoAnotherModule {
+    cast:
+        m: migrations/Migration
+    given:
+        m.failed = false
+    1. fail
+        m does Fail(m) on MigrationPage
+            creating n: failures/Notice
+        then m.failed = true
+        then Record fires
+        then n.kind = "migration"
+        then n.text = "boom"
+}

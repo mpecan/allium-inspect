@@ -24,8 +24,8 @@
 
 use crate::{
     clauses::{clause, split_once_operator},
-    journey::{Axis, Cast, Given, Journey, Shared, Step, Term},
-    terms::{path, term},
+    journey::{Axis, Cast, Given, Journey, Shared, Step, Subject, Term, Where},
+    terms::term,
 };
 
 /// A journey file that could not be read.
@@ -409,7 +409,14 @@ fn axis(text: &str, line: usize) -> Result<Axis, ParseError> {
 /// one, and an `=` *inside* the braces is part of a field's value. Deciding by
 /// the brace alone read every set as an instance and refused it as a cast
 /// entry — `expected <name>: <Type>` about a line that is neither.
+///
+/// A call on the left — `allowed(b) = true` — is an answer rather than an
+/// assignment: there is no field to write, only a question the specification
+/// will ask. `stipulate` may lead the line, the way it does in a step, and
+/// changes nothing: everything in `given` is said rather than shown, and the
+/// ledger lists it either way.
 fn given(text: &str, line: usize) -> Result<Given, ParseError> {
+    let text = text.strip_prefix("stipulate ").map_or(text, str::trim_start);
     let assigns = split_once_operator(text, "=").is_some_and(|(left, _)| !left.contains('{'));
     if !assigns && let Some((head, rest)) = text.split_once('{') {
         let Some(fields) = rest.strip_suffix('}') else {
@@ -425,7 +432,13 @@ fn given(text: &str, line: usize) -> Result<Given, ParseError> {
             format!("expected `<path> = <value>` or `<name>: <Type> {{…}}`, found `{text}`"),
         );
     };
-    Ok(Given::Assign { path: path(left, line)?, value: term(right, line)?, line })
+    match crate::clauses::subject(left.trim(), line)? {
+        Subject::Path(path) => Ok(Given::Assign { path, value: term(right, line)?, line }),
+        Subject::Call { name, arguments } => {
+            let answer = Where { call: name, arguments, value: term(right, line)? };
+            Ok(Given::Answer { answer, line })
+        }
+    }
 }
 
 /// `author: ada, body: "…"`

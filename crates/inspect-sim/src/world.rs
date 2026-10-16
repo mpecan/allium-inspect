@@ -32,7 +32,9 @@ pub struct Event {
     /// The trigger's name, as the spec spells it.
     pub trigger: String,
     /// Where the trigger is declared, or, for an emission, the module whose
-    /// rule emitted it.
+    /// trigger it is: the emitting rule's for a bare `Published(…)`, and the
+    /// module imported `as admin` for `admin/FailureReported(…)`
+    /// ([`inspect_model::listening::emitted_from`]).
     ///
     /// A label for a firing nobody emitted: an act wakes every rule waiting on
     /// its name, because which module's trigger a person meant is not
@@ -199,6 +201,21 @@ impl World {
         Some(previous)
     }
 
+    /// [`Self::set_field`], remembering `why` when `value` is undecided, so
+    /// reading the field back can say what the write could not settle.
+    pub fn set_field_explained(
+        &mut self,
+        id: &EntityId,
+        field: &str,
+        value: Value,
+        why: Vec<crate::eval::Unresolved>,
+    ) -> Option<Value> {
+        let instance = self.entities.get_mut(id)?;
+        let previous = instance.field(field);
+        instance.set_explained(field, value, why);
+        Some(previous)
+    }
+
     /// The configuration parameter `name`, looked up for `module`.
     ///
     /// Tried qualified first, then bare. A rule in `messaging` writing
@@ -211,12 +228,12 @@ impl World {
     /// question nobody actually asked.
     #[must_use]
     pub fn answer(&self, call: &str, arguments: &[Value]) -> Option<&Value> {
-        if arguments.iter().any(Value::is_unknown) {
+        if arguments.iter().any(Value::holds_unknown) {
             return None;
         }
         self.answers
             .iter()
-            .find(|answer| answer.call == call && answer.arguments == arguments)
+            .find(|answer| answer.call == call && same_arguments(&answer.arguments, arguments))
             .map(|answer| &answer.value)
     }
 
@@ -245,6 +262,43 @@ impl World {
         self.config.contains_key(&format!("{module}.{name}")) || self.config.contains_key(name)
     }
 
+    /// Why the parameter `name`, written `written`, reads as undecided — for
+    /// when [`World::config`] has come back [`Value::Unknown`].
+    ///
+    /// One sentence for the evaluator reading it in a rule and a journey
+    /// reading it in a `then`, so the two give one reason. A parameter nobody
+    /// set and one somebody set to something undecided read the same and are
+    /// not the same reason: the first has no default this simulator can read,
+    /// and saying so of the second would be false on both counts.
+    #[must_use]
+    pub fn why_config_is_undecided(&self, module: &str, name: &str, written: &str) -> String {
+        if self.has_config(module, name) {
+            format!("`{written}` was set to a value that is itself undecided")
+        } else {
+            format!(
+                "`{written}` has no value: the spec gives it no default this simulator can \
+                 read, and nothing set it"
+            )
+        }
+    }
+
+    /// Say what a call comes back as, replacing anything said before about
+    /// the same call with the same arguments.
+    ///
+    /// Replacing, because the later of two answers is the one meant: a journey
+    /// that writes `allowed(b) = false` over a file's world saying `true`, or
+    /// stipulates again in a later step, has changed its mind. Kept beside the
+    /// first instead, the lookup found the first and the ledger listed the
+    /// second — a receipt for an answer no call was given.
+    pub fn tell(&mut self, answer: Answer) {
+        match self.answers.iter_mut().find(|said| {
+            said.call == answer.call && same_arguments(&said.arguments, &answer.arguments)
+        }) {
+            Some(said) => said.value = answer.value,
+            None => self.answers.push(answer),
+        }
+    }
+
     /// Set a configuration parameter for `module`.
     pub fn set_config(&mut self, module: &str, name: &str, value: Value) {
         self.config.insert(format!("{module}.{name}"), value);
@@ -256,6 +310,15 @@ impl World {
         self.now = now;
         self
     }
+}
+
+/// Whether two calls' arguments are the same, as the spec compares values:
+/// `f({a, b})` is `f({b, a})`, and `f(1)` is `f(1.0)`. One test for asking and
+/// telling, so an answer that replaces another is one a lookup would find.
+#[must_use]
+pub fn same_arguments(left: &[Value], right: &[Value]) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right).all(|(a, b)| a.equals(b) == crate::truth::Truth::True)
 }
 
 #[cfg(test)]
@@ -300,6 +363,73 @@ mod answer_tests {
     fn an_argument_nothing_settled_matches_nothing() {
         assert_eq!(world().answer("may_invite", &[Value::Int(1), Value::Unknown]), None);
         assert_eq!(world().answer("may_invite", &[Value::Unknown, Value::Unknown]), None);
+    }
+
+    /// The later of two answers about one call is the one in force, and the
+    /// first is gone rather than kept beside it.
+    #[test]
+    fn telling_again_about_the_same_call_replaces_the_answer() {
+        let mut world = world();
+        world.tell(Answer {
+            call: "may_invite".to_owned(),
+            arguments: vec![Value::Int(1), Value::Int(2)],
+            value: Value::Bool(false),
+        });
+        assert_eq!(
+            world.answer("may_invite", &[Value::Int(1), Value::Int(2)]),
+            Some(&Value::Bool(false))
+        );
+        assert_eq!(world.answers.len(), 1);
+    }
+
+    /// About other arguments is another answer, and both stand.
+    #[test]
+    fn telling_about_other_arguments_keeps_both() {
+        let mut world = world();
+        world.tell(Answer {
+            call: "may_invite".to_owned(),
+            arguments: vec![Value::Int(1), Value::Int(9)],
+            value: Value::Bool(false),
+        });
+        assert_eq!(world.answers.len(), 2);
+        assert_eq!(
+            world.answer("may_invite", &[Value::Int(1), Value::Int(2)]),
+            Some(&Value::Bool(true))
+        );
+        assert_eq!(
+            world.answer("may_invite", &[Value::Int(1), Value::Int(9)]),
+            Some(&Value::Bool(false))
+        );
+    }
+
+    /// Arguments are compared as the spec compares values: a set in another
+    /// order, or a whole number with a point, is the same argument — asked
+    /// and told alike, so a replacement is one the lookup would find.
+    #[test]
+    fn arguments_equal_as_the_spec_compares_them_are_the_same_call() {
+        let set = |names: &[&str]| {
+            Value::Set(names.iter().map(|it| Value::Enum((*it).to_owned())).collect())
+        };
+        let mut world = World::new();
+        world.tell(Answer {
+            call: "reach".to_owned(),
+            arguments: vec![set(&["a", "b"]), Value::Int(1)],
+            value: Value::Bool(true),
+        });
+        assert_eq!(
+            world.answer("reach", &[set(&["b", "a"]), Value::Float(1.0)]),
+            Some(&Value::Bool(true))
+        );
+        world.tell(Answer {
+            call: "reach".to_owned(),
+            arguments: vec![set(&["b", "a"]), Value::Int(1)],
+            value: Value::Bool(false),
+        });
+        assert_eq!(world.answers.len(), 1, "replaced, not kept beside");
+        assert_eq!(
+            world.answer("reach", &[set(&["a", "b"]), Value::Int(1)]),
+            Some(&Value::Bool(false))
+        );
     }
 
     #[test]

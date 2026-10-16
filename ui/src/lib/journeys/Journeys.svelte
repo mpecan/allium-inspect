@@ -410,7 +410,9 @@
               <span class="title-text">{step.title}</span>
             </button>
             <ul class="lines">
-              {#each step.outcomes as outcome (outcome.line + outcome.about)}
+              <!-- Keyed by the reason too: one act can fail two checks (a
+                   surface and a cast type the spec lacks) on one line. -->
+              {#each step.outcomes as outcome (outcome.line + outcome.about + (outcome.detail ?? ""))}
                 <li class:quiet={!needsAttention(outcome.verdict)}>
                   <Verdict
                     kind={MARK[outcome.verdict]}

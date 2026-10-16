@@ -1,0 +1,100 @@
+-- Issue #22, as it was filed, and one round wider: an instance removed while
+-- the clock moves has no state conditions left to check, so a rule watching
+-- it that was not due on it does not apply to it any more. That is decided,
+-- not undecided. A rule that *was* due on it beside the removal is a race the
+-- spec does not settle, and stays undecided, saying so.
+
+journey ADeliveryCleanedUpHasNoTimeoutToCheck {
+    cast:
+        d: Delivery
+    given:
+        d.status = done
+        d.finished_at = now
+        d.stopped_at = null
+    1. wait
+        after 8.days
+        then Cleanup fires
+        then d does not exist
+        then TimesOut does not fire
+}
+
+-- Both due at once on the same delivery, and the spec does not say which runs
+-- first: whether `TimesOut` runs is not something it answers.
+journey AnOverdueDeliveryRacesItsCleanup {
+    cast:
+        d: Delivery
+    given:
+        d.status = sending
+        d.finished_at = now
+        d.stopped_at = null
+    1. wait
+        after 8.days
+        then Cleanup fires
+        then TimesOut does not fire
+        then Alert does not fire
+}
+
+-- A deadline that is not there is never passed, removed or not: `Zombie` is
+-- refused beside the cleanup, decided, rather than raced.
+journey AnUnstoppedDeliveryCleanedUpNeverWasDue {
+    cast:
+        d: Delivery
+    given:
+        d.status = done
+        d.finished_at = now
+        d.stopped_at = null
+    1. wait
+        after 8.days
+        then Cleanup fires
+        then Zombie does not fire
+}
+
+-- The same race one round wider: both rules come due in the same round, from
+-- events of their own, and the spec does not say which runs first.
+journey AParcelOnAClosedRouteRacesGivingUp {
+    cast:
+        p: Parcel
+        r: Route
+    given:
+        p.sent_at = now
+        p.late = false
+        r.closed_at = now
+        r.parcel = p
+    1. the route closes and takes its parcel with it
+        after 2.hours
+        then Close fires
+        then GiveUp does not fire
+}
+
+-- The same race with the names the other way round: the crate's own event
+-- comes first in the round, and that must not decide it.
+journey ACrateOnAShutDockRacesBeingAbandoned {
+    cast:
+        c: Crate
+        k: Dock
+    given:
+        c.opened_at = now
+        c.late = false
+        k.closed_at = now
+        k.crate = c
+    1. the dock shuts and takes its crate with it
+        after 2.hours
+        then Shut fires
+        then Abandon does not fire
+}
+
+-- Under different names: the event that wakes `Expire` carries `e`, and
+-- `Lapse` calls the same lease `l`. A renewed lease was never lapsing.
+journey ARenewedLeaseThatExpiresIsNotLapsed {
+    cast:
+        l: Lease
+    given:
+        l.ends_at = now
+        l.renewed = true
+        l.lapsed = false
+    1. wait
+        after 1.day
+        then Expire fires
+        then l does not exist
+        then Lapse does not fire
+}

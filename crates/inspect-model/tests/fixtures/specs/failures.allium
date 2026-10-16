@@ -1,0 +1,17 @@
+-- allium: 3
+-- failures.allium
+--
+-- The module another one hands its failures to (issue #17). It listens for
+-- `FailureReported` under its own bare name, and nothing in it emits one:
+-- every `FailureReported` it hears comes from `migrations`, written there as
+-- `admin/FailureReported(…)`.
+
+entity Notice {
+    kind: String
+    text: String
+}
+
+rule Record {
+    when: FailureReported(kind, description)
+    ensures: Notice.created(kind: kind, text: description)
+}

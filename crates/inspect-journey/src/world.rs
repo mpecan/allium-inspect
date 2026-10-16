@@ -15,7 +15,7 @@
 use inspect_model::{NodeKind, SpecGraph};
 use inspect_sim::{
     Value,
-    eval::{Env, field_of},
+    eval::{Env, Evaluation, Unresolved, field_of, unset_field},
     value::{EntityId, Instance},
 };
 
@@ -51,6 +51,10 @@ impl Walker<'_> {
             }
         }
         self.place(&journey.cast, &journey.given, Told::Here);
+        // A world line refused as it was laid out put nothing in force, and
+        // a ledger line for it would be a receipt for nothing.
+        let refused = &self.refused_in_the_world;
+        self.inherited.retain(|line| !refused.contains(&line.line));
     }
 
     /// Lay out one set of names and one set of facts, in that order.
@@ -136,6 +140,16 @@ impl Walker<'_> {
                         Ok(()) => {}
                     }
                 }
+                // Answered once every field is written, below.
+                Given::Answer { .. } => {}
+            }
+        }
+        // Last, so an argument may read a field any line above or below set:
+        // `allowed(note.author)` names whoever `note: Note { author: ada }`
+        // made the author, wherever in `given` that line was written.
+        for given in given {
+            if let Given::Answer { answer, line } = given {
+                self.answer_from_the_start(answer, *line, told == Told::Here);
             }
         }
     }
@@ -294,7 +308,9 @@ impl Walker<'_> {
     pub(crate) fn value_of(&self, term: &Term) -> Value {
         match term {
             Term::Literal(value) => value.clone(),
-            Term::Set(items) => Value::Set(items.iter().map(|item| self.value_of(item)).collect()),
+            // Built as the spec's own sets are, so `{a, b, a}` in a `then`
+            // is the `{a, b}` the same words make in a rule or a default.
+            Term::Set(items) => Value::set_of(items.iter().map(|item| self.value_of(item))),
             Term::Path(path) => self.read(path),
             // Resolved against the world's clock at the moment it is read, so
             // `now + 1.day` in a `given` means a day after the world started
@@ -311,49 +327,86 @@ impl Walker<'_> {
     /// an error, which is the same answer the simulator gives and for the same
     /// reason.
     pub(crate) fn read(&self, path: &Path) -> Value {
+        self.read_explained(path).0
+    }
+
+    /// [`Self::read`], and when a field it computed came back undecided, the
+    /// simulator's first reason why.
+    ///
+    /// "`r.ne` is unknown" alone is the shape stipulation 1 calls
+    /// indistinguishable from a bug; "`r` has no `other` set" is something a
+    /// reader can act on (issue #21). Said about the journey's own names, by
+    /// [`Self::said_of_the_cast`].
+    pub(crate) fn read_explained(&self, path: &Path) -> (Value, Option<String>) {
         // Resolved the way a write is, so `then config.limit = 5` reads the
         // parameter `config.limit = 5` wrote. Matching on the end of a key
         // instead read `config.limit` off whichever of `loan_limit` and
         // `limit` came first.
         if config::is_config(path) {
-            return config::resolve(self.spec, path).map_or(Value::Unknown, |parameter| {
-                self.world.config(&parameter.module, &parameter.name)
+            let Ok(parameter) = config::resolve(self.spec, path) else {
+                return (Value::Unknown, None);
+            };
+            let value = self.world.config(&parameter.module, &parameter.name);
+            // The evaluator's own words for the same read, so a `then` about a
+            // parameter and a rule guarded by it give one reason (issue #25).
+            let why = value.is_unknown().then(|| {
+                self.world.why_config_is_undecided(
+                    &parameter.module,
+                    &parameter.name,
+                    &path.as_written(),
+                )
             });
+            return (value, why);
         }
         let Some(id) = self.bound.get(&path.root) else {
             if !path.segments.is_empty() {
-                return Value::Unknown;
+                return (Value::Unknown, None);
             }
             // Capitalised and unbound is a collection, which is the rule the
             // evaluator already follows: `Loans` is every loan in the world.
             // It is how a journey says "and it is one of them" without having
             // cast every instance by hand.
             if let Some(entity) = collection(&path.root) {
-                return Value::Set(
-                    self.world
-                        .instances_of(&entity)
-                        .map(|instance| Value::Ref(instance.id.clone()))
-                        .collect(),
-                );
+                let every = self
+                    .world
+                    .instances_of(&entity)
+                    .map(|instance| Value::Ref(instance.id.clone()))
+                    .collect();
+                return (Value::Set(every), None);
             }
             // Otherwise a state the spec declares: `available`, `open`,
             // `active`. A name that is neither reaches a comparison and comes
             // back false, which is the same answer as comparing against the
             // wrong state and is what the detail line is for.
-            return Value::Enum(path.root.clone());
+            return (Value::Enum(path.root.clone()), None);
         };
         let mut current = Value::Ref(id.clone());
         for segment in &path.segments {
             if segment == "count" {
-                return current.count().map_or(Value::Unknown, |n| {
+                let count = current.count().map_or(Value::Unknown, |n| {
                     i64::try_from(n).map_or(Value::Unknown, Value::Int)
                 });
+                return (count, None);
             }
-            let Value::Ref(id) = &current else { return Value::Unknown };
-            let Some(instance) = self.world.instance(id) else { return Value::Unknown };
-            current = self.field(instance, segment);
+            let Value::Ref(id) = &current else { return (Value::Unknown, None) };
+            let Some(instance) = self.world.instance(id) else { return (Value::Unknown, None) };
+            let read = self.field(instance, segment);
+            if read.value.is_unknown() {
+                // A field nobody set and nothing computes is the one read that
+                // comes back with no note of its own: a stored unknown always
+                // says what its write could not settle, and a computed one
+                // says why (stipulation 1, asserted over the evaluator). A
+                // rule reading it says which field, and so does this.
+                let note = read.unresolved.first().cloned().unwrap_or_else(|| Unresolved {
+                    reason: unset_field(id, segment),
+                    expression: None,
+                    span: None,
+                });
+                return (Value::Unknown, Some(self.said_of_the_cast(&note)));
+            }
+            current = read.value;
         }
-        current
+        (current, None)
     }
 
     /// One field of one instance, computed if the spec computes it.
@@ -364,11 +417,11 @@ impl Walker<'_> {
     /// world left the two disagreeing about one field of one instance in one
     /// step — the rule deciding and the assertion above it saying unknown,
     /// which reads as a bug in whichever the reader trusts less.
-    fn field(&self, instance: &Instance, name: &str) -> Value {
+    fn field(&self, instance: &Instance, name: &str) -> Evaluation {
         let source = self.sources.get(&instance.module).map_or("", String::as_str);
         let env =
             Env::new(&self.world, &instance.module, source).deriving(self.program.derivations());
-        field_of(instance, name, &env).value
+        field_of(instance, name, &env)
     }
 }
 
@@ -428,7 +481,7 @@ fn ledger(
         .cast
         .iter()
         .map(|member| member.name.clone())
-        .chain(journey.given.iter().map(about))
+        .chain(journey.given.iter().filter_map(about))
         .collect();
 
     let entry = |said: String, line: usize, subject: &str| crate::run::Inherited {
@@ -439,8 +492,16 @@ fn ledger(
 
     let cast =
         shared.cast.iter().map(|member| entry(written_cast(member), member.line, &member.name));
-    let given =
-        shared.given.iter().map(|given| entry(written_given(given), given.line(), &about(given)));
+    // An answer is marked as the walk replaces it, in `answer_from_the_start`:
+    // its arguments are values, which the words alone do not settle.
+    let given = shared.given.iter().map(|given| match about(given) {
+        Some(subject) => entry(written_given(given), given.line(), &subject),
+        None => crate::run::Inherited {
+            said: written_given(given),
+            line: given.line(),
+            overridden: false,
+        },
+    });
     cast.chain(given).collect()
 }
 
@@ -450,13 +511,18 @@ fn ledger(
 /// overrides `config.x` in the world: two spellings of one switch. Anything
 /// `resolve` does not take as a parameter, a field path included, is about
 /// the path as written.
-fn about(given: &Given, spec: &SpecGraph) -> String {
+///
+/// Nothing, for an answer: `allowed(n.who)` is about whoever `n.who` is when
+/// the world is laid out, and a journey that moves `n.who` writes the same
+/// words about someone else. The walk marks the answer it actually replaced.
+fn about(given: &Given, spec: &SpecGraph) -> Option<String> {
     match given {
-        Given::Instance { name, .. } => name.clone(),
-        Given::Assign { path, .. } => config::resolve(spec, path).map_or_else(
+        Given::Instance { name, .. } => Some(name.clone()),
+        Given::Assign { path, .. } => Some(config::resolve(spec, path).map_or_else(
             |_| path.as_written(),
             |parameter| format!("{}/config.{}", parameter.module, parameter.name),
-        ),
+        )),
+        Given::Answer { .. } => None,
     }
 }
 
@@ -477,6 +543,9 @@ fn written_given(given: &Given) -> String {
         }
         Given::Assign { path, value, .. } => {
             format!("{} = {}", path.as_written(), value.as_written())
+        }
+        Given::Answer { answer, .. } => {
+            format!("{} = {}", answer.as_written(), answer.value.as_written())
         }
     }
 }

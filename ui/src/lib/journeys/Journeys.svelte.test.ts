@@ -118,6 +118,26 @@ describe("Journeys", () => {
     expect(screen.getByText(/1 of 1 hold end to end/)).toBeTruthy();
   });
 
+  it("shows every reason one line failed, not just the first", () => {
+    // An act can fail two checks at once: a surface the spec lacks and a cast
+    // type it lacks. Keyed by line and text alone, the two collide, and a
+    // duplicate key throws away the whole panel rather than one line.
+    const act = "ines does Point(ines) on SetOfFiles";
+    render(Journeys, {
+      report: report([
+        walk("A", [
+          line("unspecified", act, "no surface called `SetOfFiles`"),
+          line("unspecified", act, "no entity or actor called `SpecSet`"),
+        ]),
+      ]),
+      failure: null,
+    });
+    expect(screen.getByText("no surface called `SetOfFiles`")).toBeTruthy();
+    expect(
+      screen.getByText("no entity or actor called `SpecSet`"),
+    ).toBeTruthy();
+  });
+
   it("shows the journey's own goal and ending, not just its verdicts", () => {
     // A list of verdicts with the intent stripped off cannot be read against
     // anything — the reader's question is whether the spec delivers *this*.

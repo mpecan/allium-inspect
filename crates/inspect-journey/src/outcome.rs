@@ -41,14 +41,24 @@ pub(crate) fn verdict_of(outcome: &StepOutcome) -> Verdict {
 }
 
 /// Why a step did not go through, in the spec's own words.
-pub(crate) fn refusal(outcome: &StepOutcome) -> Option<String> {
+///
+/// `say` words a simulator note: the walk says it of the cast, so "`Watch#1`
+/// has no `b` set" reads as the `w` the journey wrote.
+pub(crate) fn refusal(
+    outcome: &StepOutcome,
+    say: impl Fn(&inspect_sim::Unresolved) -> String,
+) -> Option<String> {
     for rule in &outcome.rules {
         match rule.disposition {
             Disposition::Refused => {
-                return Some(format!("`{}` refused: {}", rule.name, refused(rule)));
+                return Some(format!("`{}` refused: {}", rule.name, refused(rule, &say)));
             }
             Disposition::Undecided => {
-                return Some(format!("`{}` could not be decided: {}", rule.name, undecided(rule)));
+                return Some(format!(
+                    "`{}` could not be decided: {}",
+                    rule.name,
+                    undecided(rule, &say)
+                ));
             }
             Disposition::Unsimulatable => {
                 return Some(format!("`{}`'s clauses did not parse", rule.name));
@@ -67,8 +77,13 @@ pub(crate) fn refusal(outcome: &StepOutcome) -> Option<String> {
 /// With what the simulator said about a false clause as a whole, when it said
 /// anything: a precondition inside a loop names the member that failed it and
 /// the loop, and without that `h.active = true` is a clause about nobody in
-/// particular.
-pub(crate) fn refused(rule: &RuleOutcome) -> String {
+/// particular. That reason is worded by `say`, as an undecided one is, so it
+/// names the cast as the journey did; only its reason, since the clause it is
+/// about is already quoted beside it.
+pub(crate) fn refused(
+    rule: &RuleOutcome,
+    say: impl Fn(&inspect_sim::Unresolved) -> String,
+) -> String {
     let blocking: Vec<String> = rule
         .requires
         .iter()
@@ -79,7 +94,14 @@ pub(crate) fn refused(rule: &RuleOutcome) -> String {
                 .iter()
                 .find(|note| note.expression.as_deref() == Some(clause.text.as_str()));
             match whole {
-                Some(note) => format!("{} — {}", clause.text, note.reason),
+                Some(note) => {
+                    let reason = inspect_sim::Unresolved {
+                        reason: note.reason.clone(),
+                        expression: None,
+                        span: None,
+                    };
+                    format!("{} — {}", clause.text, say(&reason))
+                }
                 None => clause.text.clone(),
             }
         })
@@ -87,36 +109,28 @@ pub(crate) fn refused(rule: &RuleOutcome) -> String {
     blocking.join("; ")
 }
 
-/// Why a rule could not be decided: its first reason, and where.
-pub(crate) fn undecided(rule: &RuleOutcome) -> String {
-    rule.unresolved.first().map_or_else(
-        || "something could not be evaluated".to_owned(),
-        // The sub-expression as well as the reason, when the note located one.
-        // "`Member#1` has no `is_at_limit` set" says what is missing; it does
-        // not say which clause asked, and a rule with four preconditions has
-        // four candidates. The quote comes from the spec text, which is why the
-        // walker is handed it.
-        located,
-    )
+/// Why a rule could not be decided: its first reason, worded by `say` — which
+/// gives the sub-expression as well as the reason, when the note located one.
+/// "`Member#1` has no `is_at_limit` set" says what is missing; it does not say
+/// which clause asked, and a rule with four preconditions has four candidates.
+pub(crate) fn undecided(
+    rule: &RuleOutcome,
+    say: impl Fn(&inspect_sim::Unresolved) -> String,
+) -> String {
+    rule.unresolved.first().map_or_else(|| "something could not be evaluated".to_owned(), say)
 }
 
-/// A note's reason, and the sub-expression it is about when it located one.
-fn located(note: &inspect_sim::Unresolved) -> String {
-    match &note.expression {
-        Some(expression) => format!("{} — in `{expression}`", note.reason),
-        None => note.reason.clone(),
-    }
-}
-
-/// What a fired rule's postconditions could not apply, as its first reason —
-/// or `None` when everything it ensures was applied.
+/// What a fired rule's postconditions could not apply: its first reason — or
+/// `None` when everything it ensures was applied. Left as the simulator said
+/// it, for the walk to say of the cast: "`Watch#1` has no `b` set" is about
+/// the `w` the journey wrote.
 ///
 /// Read off the simulator's own mark rather than off the notes: a clause can be
 /// decided, applied in full and still carry notes — an `if` whose `or` was
 /// settled by its left side, an `any` settled by one member — and those say
 /// nothing about whether the world is missing a change.
-pub(crate) fn unapplied(rule: &RuleOutcome) -> Option<String> {
-    rule.unapplied.first().map(located)
+pub(crate) fn unapplied(rule: &RuleOutcome) -> Option<&inspect_sim::Unresolved> {
+    rule.unapplied.first()
 }
 
 #[cfg(test)]
@@ -233,19 +247,16 @@ mod tests {
             assert_eq!(super::super::unapplied(&fired), None);
         }
 
-        /// What the simulator marked as not applied is, and it is quoted with
-        /// where.
+        /// What the simulator marked as not applied is, and not the note
+        /// beside it.
         #[test]
-        fn what_was_marked_unapplied_is_and_says_where() {
+        fn what_was_marked_unapplied_is() {
             let mut fired = rule("Fan", Disposition::Fired);
             fired.unresolved.push(note("`Item#2` has no `packed` set", None));
             let undone = note("`for w in Hooks` could not tell", Some("active = true"));
             fired.unresolved.push(undone.clone());
-            fired.unapplied.push(undone);
-            assert_eq!(
-                super::super::unapplied(&fired).as_deref(),
-                Some("`for w in Hooks` could not tell — in `active = true`")
-            );
+            fired.unapplied.push(undone.clone());
+            assert_eq!(super::super::unapplied(&fired), Some(&undone));
         }
     }
 }

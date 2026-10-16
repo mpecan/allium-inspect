@@ -14,7 +14,8 @@
   import { choiceKey, choiceLabel, choiceOf, type EntityChoice } from "./setup";
   import type { Instance } from "../api/Instance";
   import type { World } from "../api/World";
-  import { duration, parse, render } from "./values";
+  import { whyUndecided } from "./unsettled";
+  import { duration, edited, parse, render } from "./values";
 
   interface Props {
     world: World;
@@ -68,7 +69,7 @@
       ...world,
       entities: {
         ...world.entities,
-        [id]: { ...instance, fields: { ...instance.fields, [field]: parse(text, states) } },
+        [id]: edited(instance, field, parse(text, states)),
       },
     });
   }
@@ -168,6 +169,12 @@
                       )}
                   />
                 {/if}
+                <!-- Why a rule left it undecided, when one said: a bare
+                     `unknown` with nothing beside it reads as a field nobody
+                     set, or as a bug. -->
+                {#each whyUndecided(instance, field.name) as note, at (at)}
+                  <span class="why">{note.reason}</span>
+                {/each}
               </dd>
             {/each}
           </dl>
@@ -254,6 +261,13 @@
   .advance button:disabled {
     opacity: 0.4;
     cursor: not-allowed;
+  }
+
+  .why {
+    display: block;
+    margin-top: 2px;
+    font-size: var(--t-micro);
+    color: var(--verdict-unknown);
   }
 
   .hint {

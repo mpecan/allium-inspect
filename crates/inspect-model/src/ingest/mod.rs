@@ -219,6 +219,10 @@ pub fn ingest<R: AlliumRunner, S: SourceReader>(
     }
 
     link::link(&mut into.graph);
+    // After every module, because a state is declared once and read anywhere:
+    // a definition in one module may return a word another module's
+    // enumeration declares.
+    into.program.declare_states(into.graph.declared_states());
 
     // After linking, because an emission in one module wakes a listener in
     // another, and only the whole set has both.

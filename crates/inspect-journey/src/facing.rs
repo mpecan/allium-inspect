@@ -35,7 +35,13 @@
 use std::collections::BTreeMap;
 
 use inspect_model::{NodeKind, Party, graph::EdgeKind};
-use inspect_sim::{Value, eval::WITHIN, eval::span_of, value::EntityId, world::World};
+use inspect_sim::{
+    Value,
+    eval::WITHIN,
+    eval::span_of,
+    value::{EntityId, Instance},
+    world::World,
+};
 
 use crate::{
     check::Verdict,
@@ -167,33 +173,33 @@ impl Walker<'_> {
                 None => format!(
                     "whether `{who}` is the `{actor}` `{surface}` faces could not be settled — \
                      `{written}`: {}",
-                    self.unset(&why, who, &instance.entity, &instance.fields)
+                    self.unset(&why, who, instance)
                 ),
             }),
         }
     }
 
-    /// The evaluator's "nothing is bound to `is_admin`", said about the
-    /// journey when it is a field of whoever is at the surface that nothing
-    /// set: what to write in `given` is then the remedy, and "bound" does not
-    /// say so.
-    fn unset(
-        &self,
-        why: &str,
-        who: &str,
-        entity: &str,
-        fields: &BTreeMap<String, Value>,
-    ) -> String {
+    /// The evaluator's "nothing is bound to `is_admin`", or its "`User#1` has
+    /// no `is_admin` set", said about the journey when it is a field of
+    /// whoever is at the surface that nothing set: what to write in `given` is
+    /// then the remedy, and neither "bound" nor the world's id says so.
+    fn unset(&self, why: &str, who: &str, instance: &Instance) -> String {
         self.spec
             .nodes_of(NodeKind::Entity)
-            .filter(|node| node.name == entity)
+            .filter(|node| node.name == instance.entity)
             .filter_map(|node| node.detail.as_entity())
             .flat_map(|detail| detail.fields.iter())
             .find(|field| {
-                !fields.contains_key(&field.name)
-                    && why == inspect_sim::eval::nothing_bound(&field.name)
+                !instance.fields.contains_key(&field.name)
+                    && (why == inspect_sim::eval::nothing_bound(&field.name)
+                        || why == inspect_sim::eval::unset_field(&instance.id, &field.name))
             })
-            .map_or_else(|| why.to_owned(), |field| format!("`{who}` has no `{}` set", field.name))
+            .map_or_else(
+                // A field it holds undecided is named the way the journey
+                // names its owner: "`b.out` was set to …", not `Box#1.out`.
+                || why.replace(&format!("`{}.", instance.id), &format!("`{who}.")),
+                |field| format!("`{who}` has no `{}` set", field.name),
+            )
     }
 
     /// The actor `surface` faces, when it faces one this walk can read.
@@ -276,6 +282,7 @@ struct Before {
     bound: BTreeMap<String, EntityId>,
     cast: Vec<CastMember>,
     notes: usize,
+    stipulated: usize,
 }
 
 impl Walker<'_> {
@@ -300,8 +307,11 @@ impl Walker<'_> {
             Facing::Closed(why) => {
                 let (_, woken, before) = self.trial(act, line, &about);
                 self.put_back(before);
-                self.refused
-                    .extend(woken.into_iter().map(|rule| Undecided { rule, why: why.clone() }));
+                self.refused.extend(woken.into_iter().map(|rule| Undecided {
+                    rule,
+                    why: why.clone(),
+                    ..Undecided::default()
+                }));
                 let verdict = if act.negated { Verdict::Specified } else { Verdict::Refused };
                 self.unmade(act);
                 Outcome { line, verdict, about, detail: Some(why) }
@@ -326,8 +336,11 @@ impl Walker<'_> {
                     return outcome;
                 }
                 self.put_back(before);
-                self.undecided
-                    .extend(woken.into_iter().map(|rule| Undecided { rule, why: why.clone() }));
+                self.undecided.extend(woken.into_iter().map(|rule| Undecided {
+                    rule,
+                    why: why.clone(),
+                    ..Undecided::default()
+                }));
                 self.unmade(act);
                 Outcome { line, verdict: Verdict::Undecided, about, detail: Some(why) }
             }
@@ -342,6 +355,7 @@ impl Walker<'_> {
             bound: self.bound.clone(),
             cast: self.cast.clone(),
             notes: self.notes.len(),
+            stipulated: self.stipulated.len(),
         };
         let outcome = self.fire_act(act, line, about.to_owned());
         let mut woken: Vec<String> = Vec::new();
@@ -361,6 +375,8 @@ impl Walker<'_> {
         self.bound = before.bound;
         self.cast = before.cast;
         self.notes.truncate(before.notes);
+        // A `where` that landed in an act now undone answered nothing.
+        self.stipulated.truncate(before.stipulated);
         self.forget();
     }
 

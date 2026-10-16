@@ -1,0 +1,89 @@
+-- Issue #21: a derived `if` returning words, and a comparison with an
+-- undecided side.
+
+journey AsFiled {
+    cast:
+        r: Run
+    given:
+        r.status = waiting
+    1. look
+        then r.agg_d = waiting
+        then r.agg_e = waiting
+        then r.stale = false
+}
+
+journey IssueT {
+    cast:
+        r: Run
+    given:
+        r.status = waiting
+    1. look
+        then r.agg_d = waiting
+        then r.agg_e = waiting
+        then r.ne = true
+        then r.stale = false
+}
+
+journey AnUnsetFieldIsNotAState {
+    cast:
+        r: Run
+    given:
+        r.status = waiting
+    1. look
+        then r.ne = true
+        then r.ne_r = true
+        then r.stale_u = true
+}
+
+journey FollowsWhenStale {
+    cast:
+        r: Run
+    given:
+        r.status = waiting
+        r.other = running
+    1. r follows the other
+        then r.agg_u = running
+        then r.stale_u = true
+        r does FollowOther(r) on Runner
+        then r.status = running
+        then r.stale_u = false
+}
+
+journey StaysWhenNotStale {
+    cast:
+        r: Run
+    given:
+        r.status = waiting
+    1. r follows
+        r does Follow(r) on Runner
+}
+
+journey CannotTellWhetherStale {
+    cast:
+        r: Run
+    given:
+        r.status = waiting
+    1. r follows the other
+        r does FollowOther(r) on Runner
+}
+
+journey APipelineWithARunNobodyStarted {
+    cast:
+        p: Pipeline
+        r: Run
+    given:
+        r.pipeline = p
+    1. look
+        then p.has_running = false
+}
+
+journey APipelineWithARunningRun {
+    cast:
+        p: Pipeline
+        r: Run
+    given:
+        r.pipeline = p
+        r.status = running
+    1. look
+        then p.has_running = true
+}

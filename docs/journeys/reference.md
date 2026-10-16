@@ -101,7 +101,7 @@ See [`evidence.md`](evidence.md) for the whole chain.
 
 ## `given` — what is already true
 
-Two forms.
+Three forms.
 
 **An assignment** sets a field on something already cast:
 
@@ -119,8 +119,39 @@ given:
     res: Reservation { member: ada, status: waiting }
 ```
 
-Both are *told*, not shown — nothing ran to make them true. That is the point of
+**An answer** says what a call the specification never defines comes back as,
+from the start — the same answer a [`stipulate`](#stipulate--say-it-rather-than-show-it)
+gives mid-journey, matched the same way:
+
+```
+given:
+    may_reserve(ada, book) = true
+```
+
+All three are *told*, not shown — nothing ran to make them true. That is the point of
 `given`: it is the starting position, and the journey is what happens next.
+
+An answer is listed with the journey's stipulations, because a field set in
+`given` is a position the spec describes and a black box answered is a policy
+it does not: `stipulated  may_reserve(ada, book) = true`. `stipulate` may
+lead a `given` line, as it leads one in a step, and changes nothing about what
+the line says. Answers are put in force after every field in the block is
+written, so `allowed(note.author)` reads the author whichever line set it. An
+argument that still has no value — `allowed(ada.team)` with no `team` set — or
+an answer that has none — `allowed(ada) = ada.team` — is **undecided**, says
+which term, and is not listed, in `given` or in a file's `world`, in a step's
+`stipulate` or in a `where` under `creating`: no call could ever be answered by
+it, and a ledger line for it would be a receipt for nothing.
+A later answer about the same call with the same arguments replaces an earlier
+one, so a `stipulate` in a step changes what `given` said rather than standing
+beside it, and of two such lines in one `given` only the later is listed.
+
+The line is listed as written — `may_reserve(ada, book) = true`, not the ids
+those names resolved to — the way a `world` lists its lines, and so is an answer
+to a call wherever it is said: in a step's `stipulate` or a `where`, `audience(issue)
+= {repo}` and not `{Repo#1}`. A `stipulate` in a step that sets a *field* lists
+the value it resolved to, because there the clock and the world have moved since
+the journey began.
 
 Values may be a number (`5`, `2_000_000`), a duration (`21.days`), a string
 (`"Ada"`), `true`, `false`, `null`, a set (`{a, b}`), a name the journey cast, or
@@ -137,7 +168,7 @@ given:
     repo.labels = {}
 ```
 
-What tells the two forms apart is an `=` before the first brace, not the brace:
+What tells an assignment from an instance is an `=` before the first brace, not the brace:
 `note: Message { body: "a = b" }` is still an instance.
 
 ### A word the spec does not declare
@@ -227,6 +258,62 @@ between, and the module goes in front the way it does on a type:
 `lending/config.loan_limit`. A parameter with no default can be set the same
 way, and until it is, a rule that reads it is undecided and names it.
 
+**Which defaults are in force.** A default is read from the text the spec wrote,
+and these are read:
+
+- a literal — `5`, `1.5`, `21.days`, `"draft"`, `true`, `null`;
+- a value of the enumeration the parameter's type names — `favourite: App = c`;
+- a set or list of either — `apps: Set<App> = {a, b}`, `labels: Set<String> =
+  {"alpha", "beta"}`, `sizes: List<Integer> = [3, 1]`, and `{}`.
+
+A collection's members are separated as `allium parse` separates them: by a
+comma, a line break or a space, with a `--` note running to the end of its line
+and a comma allowed after the last member. So the shape a long default takes
+is read:
+
+```allium
+config {
+    units: Set<Unit> = {
+        code, -- the repository's files
+        issues
+        pulls, -- and a comma after the last
+    }
+}
+```
+
+A set holds each member once, as the language says: `{a, b, a}` is `{a, b}`,
+in a default, in a rule and in a journey alike, so a `requires: config.apps =
+{a, b, a}` written the way the default was holds against it.
+
+So a journey does not restate a collection default to get past it; `then
+config.apps = {a, b}` holds from the start, and a rule iterating `config.apps`
+makes one of whatever it makes per member. The undecided reason a `then`
+gives about a parameter is the same one the rule reading it gives, whether the
+line compares it or asks what is `in` it.
+
+A default that is an expression — `other + 1`, `core/config.base`, or a bare word
+that names another parameter, as `{a, favourite}` does — is not evaluated, and
+neither is a set with even one member like that: the set without it would be a
+smaller set read back as known. The parameter is left unset, so it is
+undecided, and the walk says which one:
+
+```text
+A Default Built From Another  —  0 of 2 steps hold
+   1. choose                                           undecided
+        bx does Choose(bx) on Panel
+          nothing of kind `Thing` was created for `t` — `Choose` fired, but part of what it ensures was not applied: `for x in config.chosen`: `config.chosen` was never settled, so the clauses inside it were not applied
+        then t.app = a
+          t.app is unknown
+   2. read it back                                     undecided
+        then config.chosen = {a, c}
+          config.chosen is unknown — `config.chosen` has no value: the spec gives it no default this simulator can read, and nothing set it
+```
+
+A bare word is a value only when the parameter's type is an enumeration that
+declares it and no parameter of the same block has that name; otherwise it is
+left unset rather than picked. Setting the parameter in `given` works for every
+one of these, as it always has.
+
 **It is reported as a stipulation**, unlike a field set in `given`. A field is
 the starting position; a parameter is a world the spec's own defaults say is not
 the one it describes, and a step holding on the strength of that is a step
@@ -280,7 +367,10 @@ world {
 }
 ```
 
-Every journey below it starts there. `cast:` and `given:` and nothing else — a
+Every journey below it starts there — answers to black boxes included, which is
+usually the reason to write one: a permission predicate asked by every rule it
+guards is said once, here, rather than stipulated in the first step of every
+journey that reaches one. `cast:` and `given:` and nothing else — a
 world says who is there and how things stand; a step is something somebody
 *does*, and a world that could act would be a journey nobody named.
 
@@ -322,7 +412,13 @@ This is the one feature that can break the rule everything else here rests on:
 A step holding because of a line in another part of the file **is** passing
 invisibly. So a journey that inherits a world reports every line it inherited,
 where each was written, and which of them it went on to change — above its own
-stipulations, because the world was there first:
+stipulations, because the world was there first. An answer the world gives is
+listed here, `from the file  can(r, code) = true`, and a journey writing an
+answer about the same call with the same arguments overrides it. *The same
+arguments* means the same values once the world is laid out, not the same
+words: a world answering `can(r, r.level)` with `level` at 1 and a journey that
+sets `level` to 2 and answers `can(r, r.level)` again have answered two
+different calls, and the world's line is not marked:
 
 ```text
 TheCopyIsAlreadyGone  —  1 of 1 steps hold
@@ -448,11 +544,28 @@ ada does MemberBorrows(ada, copy) on MemberShelf
 `loan` is then a name like any cast member, usable by every clause after it —
 including as the actor of a later step.
 
+What a call the spec never defines answers for the instance being made is said
+under the same act, with [`where`](#stipulate--say-it-rather-than-show-it):
+`creating issue: Issue` then `where audience(issue) = {}`.
+
 **An act runs everything it sets off.** A rule that emits a trigger wakes the
 rules waiting on that trigger, and those wake the next — so `creating` can name
 what a rule two hops away made, and `then <Rule> fires` can ask about it. The
 Simulate view in the browser stops at the first rule and offers you the emission
 to follow, because there a person is picking. A journey has already picked.
+
+That includes a trigger handed to another module. `ensures:
+admin/FailureReported(kind: "migration", description: "boom")` is the trigger
+of the module this one imported `as admin` — here `failures`, from `use
+"./failures.allium" as admin` — and wakes the rules that would hear that module
+emit it: its own `when: FailureReported(kind, description)`, and any module
+that `use`s it. A journey names what that rule made by the module, not by the
+alias: `creating n: failures/Notice`. An alias leading to no module in the set
+wakes nobody, and the step is **undecided** saying which mistake it is —
+`` `migrations` imports `admin` from "./failures.allium", which is not in this
+spec set `` when that file was not walked, or `` `migrations` imports nothing as
+`ghost` `` when the alias was never imported — rather than waking every rule of
+that name on a guess.
 
 **The surface has to face whoever acts.** A surface's `facing` names who is on
 the other side of it, and an actor's `identified_by` says who that is:
@@ -557,6 +670,28 @@ c does Poke(c) on Console
 The same goes for a collection nobody settled, `for h in b.hooks` with `b.hooks`
 never stated.
 
+**A filter reads what each member computes, too.** A projection may filter on a
+field the member derives rather than stores — `active_watches: watches where
+is_watching = true` on a repository, with `is_watching: a or b` on the watch.
+Each watch is asked for its own `is_watching`, computed in the watch's scope:
+the watch is `this` there and only its fields are bare, so a field of the
+repository spelled the same way, computed or stored, does not answer for it. A
+watch with `a` true is kept — whether or not anyone stated `b`, because `true
+or` anything is true — and a watch with both false is left out, and a `for w
+in r.active_watches` over them is decided. A watch whose `a` is false and whose
+`b` nobody stated cannot be decided, and the loop says so with that watch's
+reason inside — by the name the journey cast it as:
+
+```text
+r does Poke(r) on S
+  `Poke` fired, but part of what it ensures was not applied: `for w in r.active_watches` may be missing members it could not decide on (`w` has no `b` set), so the clauses inside it were not applied to them — in `r.active_watches`
+```
+
+Only the first reason is shown in the parenthesis, and it is always a member
+that could not be decided — a watch decided by half of its `or` leaves nothing
+to say. It is usually the one to fix, a field the journey did not set on a
+member it cast.
+
 **A `requires` inside the loop is the rule's, for every member the filter
 keeps.** The reading this tool takes: a `requires` is a precondition of the
 rule wherever it is written, and inside a `for` it is quantified over the loop.
@@ -596,8 +731,10 @@ loop's `ensures` are applied to:
 - a collection that may be missing members — `for h in r.hooks` over
   `hooks: Hook with rack = this`, with a hook whose `rack` nobody set — is
   undecided when every hook it holds passes, because the one it may be missing
-  was never asked, and it says so: `` `for h in r.hooks` may be missing members
-  it could not decide on ``. A hook it does hold failing still refuses.
+  was never asked, and it says so, with the first reason it could not decide:
+  `` `for h in r.hooks` may be missing members it could not decide on
+  (`h2` has no `rack` set) ``, naming the hook as the journey cast it. A hook it
+  does hold failing still refuses.
 
 A `let` written inside the loop above the clause is bound per member, so
 `let live = h.active` then `requires: live = true` reads each hook's own.
@@ -690,6 +827,15 @@ binds what it carries on its own terms, whether the firing was an act or an
   argument the rule has no parameter for: `Noted(doc: d, reason: d)` against
   `when: Noted(doc, cause?)` may have meant `reason` for `cause`, so `cause`
   is left unbound and the reason names `reason`.
+- **`_` takes its place and binds nothing.** A discard is never read, so it is
+  never waited on. `when: Moved(_, to)` drops the first argument passed by
+  position and binds the second as `to`. `ensures: Published(doc: doc, by:
+  doc)` against `when: Published(doc, _)` binds `doc`, and `by` goes to no
+  one, which is what the `_` is there to say. `_?` is a discard the same way;
+  `_by` is an ordinary name. A `_` does not make an optional
+  parameter beside it `null`, though: against `when: Noted(doc, _, cause?)`
+  the unmatched `reason` may be meant for the `_` or for `cause`, misnamed. That
+  is a guess, so `cause` stays unbound, as above.
 
 A parameter nothing bound is the rule run about nothing, so the rule is
 **undecided** — not run, and not refused — and says which name it waited for
@@ -737,16 +883,22 @@ binds by (one function answers all three, so they cannot disagree):
 
 The reading this takes of the language, where the reference is silent:
 
-- **What an emission is.** A call to a bare name in an `ensures:` — at the top
+- **What an emission is.** A call to a name, bare or qualified, in an
+  `ensures:` — at the top
   of the clause, in a block, in either branch of an `if`, in the body of a
   `for` that names its member once, or as the value of a `let` — a `for (a,
   b) in …` is never applied, so nothing inside one is reached.
   `Entity.created(…)` is a creation, and a
-  call inside a value (`x.n = f(y)`) is evaluated rather than emitted. A
-  qualified emission, `other/Published(…)`, is not applied by the walk at all
-  (it reports it as a form it does not model), so it is not checked here.
+  call inside a value (`x.n = f(y)`) is evaluated rather than emitted.
+- **Whose trigger it is.** A bare `Published(…)` is the emitting module's. A
+  qualified one, `admin/FailureReported(…)`, hands work to another module: it
+  is the trigger of the module this one imported `as admin`, and is heard
+  exactly as though that module had emitted it. An alias this module does not
+  import, or whose `use` leads to no module in the set, names nobody's
+  trigger: nothing is emitted, the walk reports the emitting rule's step
+  **undecided** naming the alias, and nothing is checked here.
 - **Which rules it wakes.** A rule whose `when:` calls that trigger name and
-  *hears* the module the emission is written in: an unqualified `when:
+  *hears* the module the emission is from: an unqualified `when:
   Published(doc)` hears its own module, every module it `use`s and every
   module that `use`s it — whose bare `Published(…)` may be this module's
   trigger — and a qualified `when: chains/Published(doc)` hears only the
@@ -763,6 +915,72 @@ The reading this takes of the language, where the reference is silent:
   an act through emissions only; which module's `Order.created` a reaction
   answers is a question about the instance. The spec-level warning still
   reports such an emission, and the walk still reports the listener.
+
+### Rules woken by one firing are not a sequence
+
+Every rule one firing wakes reads its `let`s, its `when` and its `requires` in
+the world **as the trigger found it** — not as another rule woken by the same
+firing left it. Rules listening for one trigger are alternatives to each other,
+each guarded by its own `requires`, or independent reactions to it; nothing in
+the language says one sees what the other did.
+
+```allium
+rule CreateIfMissing {
+    when: Put(name)
+    requires: not exists Box{name: name}
+    ensures: Box.created(name: name)
+}
+rule ReplaceIfPresent {
+    when: Put(name)
+    let old = Box{name: name}
+    requires: exists old
+    ensures: not exists old
+    ensures: Box.created(name: name)
+}
+```
+
+`Put("y")` on a world with no box called `y` runs `CreateIfMissing` and refuses
+`ReplaceIfPresent`, whichever is declared or named first: the box the creation
+makes is not there yet for the replacement to find. Likewise two reactions to
+one act — `Stamp` setting `lamp.touched = true` and `Tally` requiring
+`lamp.touched = false` — both run, the second not refused by what the first
+wrote.
+
+What they ensure is read in that same world. `lamp.shade = lamp.colour` in a
+rule woken beside one that sets `lamp.colour = "red"` copies the colour the
+lamp had when the trigger fired, whichever rule is declared or named first,
+and a state change the lifecycle refuses is refused from the value the trigger
+found — so it is that rule's own refusal, and the other's write stands.
+
+What they ensure then lands in one world, in the walk's own order. The only
+thing that order could still decide is which of two values written to one
+field stands, and it is not allowed to. Two rules that set the same field to
+different values leave it **undecided**, and the act says which two:
+
+```text
+b does Paint(l) on Shelf
+  `PaintRed` fired, but part of what it ensures was not applied: `PaintBlue` and `PaintRed` were both woken by `Paint`: `PaintBlue` set `l.colour` to "blue" and `PaintRed` set it to "red"; the specification does not say which of the two runs first, so which value stands is undecided
+then l.colour = "red"
+  l.colour is unknown — `l.colour` was set to a value nothing settled — when it was written: `PaintBlue` and `PaintRed` were both woken by `Paint`: …
+```
+
+It stays undecided for the rest of the walk, and whatever a third rule woken
+by the same firing writes to it: agreeing with one of the two does not settle
+the question between them. A later step that reads it is undecided, and says
+the field "was set to a value nothing settled", with the clash as what was so
+when it was written: it is kept with the field, not only on the act. Writes that agree, writes to
+different fields, and a removal beside an assignment to what it removed come
+out the same in either order, and stand. Two writes agree when the spec would
+call the values equal — `{red, blue}` and `{blue, red}` are one set — and
+neither was computed from the field itself: two rules that each say `c.n =
+c.n + 1` both write `1` over the `0` the trigger found, a value no order of
+the two produces, so the field is undecided and the reason says each read it
+as the trigger found it. Settle a clash in the spec — a
+`requires` on one rule that rules the other out — and the walk can decide it.
+
+A rule that **should** see another's work is a rule that listens for what the
+other emits, not for the same trigger: `ensures: Boxed(box)` and `when:
+Boxed(box)`.
 
 ### `cannot do` — the spec refuses, and that is the point
 
@@ -802,6 +1020,109 @@ reproduces exactly. Advancing it also runs whatever the new time made true: a
 state-condition rule is not fired by anybody, and a journey that says a fortnight
 passed has already said that whatever became true in it happened.
 
+**A `null` deadline is not due.** `when: task: Task.stopped_at + config.ttl <=
+now` asks whether a deadline has passed, and a task whose `stopped_at` is `null`
+has not stopped — there is no deadline yet, so the answer is no and the rule does
+not run. No guard is needed in the trigger (the language has nowhere to write
+one). This holds for a state rule's own `when`, in the shape that asks *has it
+passed*:
+
+- the deadline on the earlier side and the clock on the later — `d <= now`,
+  `d < now`, `now >= d`, `now > d`, the clock moved or not (`now - 1.day`);
+- the deadline `null`, or `null` moved by durations the world knows —
+  `stopped_at`, `stopped_at + config.ttl`, `config.ttl + stopped_at`,
+  `sent_at + a + b`.
+
+The comparison is the whole `when`: allium rejects an `and` or an `or` in a
+state trigger (`allium.rule.invalidTrigger`), and a conjunct belongs in
+`requires`.
+
+The deadline has to be written in the trigger. A derived field that computes
+one — `expires_at: stopped_at + config.ttl`, then `when: t: Task.expires_at <=
+now` — evaluates to an unknown rather than a `null`, and stays undecided.
+
+`then <Rule> does not fire` about such a rule is answered — and about any
+state rule: when the clock settled the world in that step and none of the
+listings it read was unsure about the rule, every one of them said *no*, and
+the line holds. If any was unsure, or the step did not move the clock (an act
+settles nothing), it is still undecided.
+
+Everywhere else a `null` is read as it always is. `null + 1.hour` in a
+`requires`, an invariant or a `then` is not a timestamp, and is undecided with
+that reason. So is the opposite question in a trigger — `when: offer:
+Offer.opens_at > now`, *is it still ahead* — because a `null` answers it neither
+way, and reading "no deadline" as "never ahead" or "always ahead" would be the
+tool choosing a meaning the spec did not write. The walk says which:
+
+```text
+1. a day passes over an offer with no opening       undecided
+     after 1.day
+       while the clock moved, what it set off: `Withdraw` could not be decided: a null cannot be ordered against a timestamp — in `Offer.opens_at > now`
+```
+
+That line is about any temporal rule the clock leaves undecided over the world it
+settled on, not only a `null`: a loan whose `window` nobody set is not known to
+be overdue three weeks on, and `after 21.days` says so rather than holding.
+Each such rule is woken on the instance it could not settle before it is
+reported, so one whose `requires` already refuses — a loan already returned —
+is not. A rule whose `when` binds nothing — `when: Task.due_at <= now` — is never
+listed at all, so the clock's silence about it is not a *no*: `then <Rule> does
+not fire` about it is undecided, and says its condition is not visible from
+here. A *state* rule that is not temporal is not reported on the clock's line:
+time does not decide it, and a `then <Rule> fires` about it, when a listing
+could not decide it, still says it could not be told.
+
+**An instance that is gone has no state left to check.** A state rule's trigger
+is its entity, so the one event that runs `Cleanup` — `when: d:
+Delivery.is_expired`, `ensures: not exists d` — reaches every other rule on
+`Delivery` too, `TimesOut` among them, after the delivery is gone. What that
+rule comes to turns on whether it was due when the event woke them both.
+
+If it was not — the delivery was `done`, so never overdue — it does not apply:
+it is refused, decided, and the refusal says which rule removed the instance:
+
+```text
+`TimesOut` refused: d: Delivery.is_overdue — `d` was removed in this step, by `Cleanup`, so it has no state left for this condition to be about
+```
+
+That holds whatever the second rule calls the instance. `Lapse` reading `l:
+Lease.is_lapsed` is woken by an event that carries the lease as `Expire`'s `e`,
+and is still answered about that lease. No guard such as `requires: exists d`
+is needed for this case.
+
+If it was due — the delivery was still `sending` — the two rules raced over one
+delivery, and the specification does not say which runs first. The walk runs
+them in an order of its own — by module, then rule name — so a verdict either way would be
+that order's and would flip if a rule were renamed. It is undecided instead,
+whichever of the two the walk reaches first, and says which two rules raced:
+
+```text
+while the clock moved, what it set off: `TimesOut` could not be decided: `TimesOut` was due on `d` when this step began, and `Cleanup` removed it in the same step; the specification does not say which of the two runs first — in `d: Delivery.is_overdue`
+```
+
+A rule that removes the instance itself is not racing anybody over it, and is
+read as usual. A deadline that is not there — `d.stopped_at + config.keep <=
+now` with no `stopped_at` — was never due, so a rule waiting on one is refused
+beside the removal, not raced.
+
+The same holds a round wider. Everything due is listed before anything fires,
+so an instance one firing removes can still be waiting for its own event. That
+event is not fired about an instance another firing of the round removes —
+whichever of the two events comes first — and the rules it would have woken
+are not dropped either: they were due, so they are undecided the same way:
+
+```text
+`GiveUp` could not be decided: `GiveUp` was due on `p` in the same round, and `Close` removed it; the specification does not say which of the two runs first
+```
+
+A race leaves the step undecided, and every `then` about the world after it
+with it: the world the walk reached is one order's. Settle it in the spec — a
+`requires` on one rule that rules the other out — and the walk can decide it.
+
+Only an instance the walk removed. A reference to something the world never
+held is not answered this way — it is still undecided, as `` `Delivery#9` is
+not in this world ``.
+
 ### `then` — assert something
 
 ```
@@ -827,10 +1148,37 @@ then loan in Loans
 `==` is not this grammar and is refused rather than read as `=`.
 
 Two things to expect. A **derived** field — `open_loan_count` is
-`open_loans.count` — comes back `undecided` rather than computed, because the
-simulator cannot settle; `stipulate` is how a journey gets
-past that deliberately. And an assertion about a path nothing has set is
-`undecided` **both ways round**: `exists` does not refuse it and `does not
+`open_loans.count` — is computed from its definition, and when that cannot be
+settled it comes back `undecided` with the simulator's reason on the line:
+
+```text
+then r.ne = true
+  r.ne is unknown — `r` has no `other` set
+```
+
+`stipulate` is how a journey gets past that deliberately.
+
+A **stored** field a rule wrote with a value it could not settle says so, and
+what the write could not settle comes with it — kept with the field until
+something settles it, so the `then` a step later can still give it:
+
+```text
+b does Name(b) on Desk
+then b.out = "s"
+  b.out is unknown — `b.out` was set to a value nothing settled — when it was written: nothing defines `summary`, and no stipulation answers this call (in `summary(box)`)
+```
+
+*When it was written* is meant: a stored value is not computed again, so a
+`stipulate summary(b) = "s"` a step later does not settle `b.out` — the
+rule has to run again — and the reason says what was so then, not that
+nothing answers `summary` now. A rule that reads the field names its own
+clause — *in `box.out`* — not a sub-expression of the rule that wrote it. A
+field that nothing set and nothing computes says that instead:
+``b.done is unknown — `b` has no `done` set``.
+
+The reason names the cast member the way the journey did, not by the
+simulator's id for it. And an assertion about a path nothing has set is `undecided`
+**both ways round**: `exists` does not refuse it and `does not
 exist` does not hold, because neither is something the world said.
 
 ### `sees` — what a boundary shows
@@ -948,7 +1296,9 @@ stipulate ada.is_at_limit = false
 stipulate may_invite(chat, ada) = true
 ```
 
-Sets a value directly, mid-journey, the way `given` does at the start. Use it
+Sets a value directly, mid-journey, the way `given` does at the start (where a
+call [can be answered too](#given--what-is-already-true), and in a file's
+`world`, once for every journey). Use it
 when reaching a state honestly would take ten steps that are not what this
 journey is about. A configuration parameter is set the same way —
 `stipulate config.loan_limit = 1` — and checked the same way as
@@ -993,6 +1343,71 @@ then the call is about a value nobody knows rather than about a word:
 - any bare name inside an entity's own definition. `allowed: can(this, level)`
   reads `level` as the repo's field, and a field nobody set is not bound — so
   inside an entity no word is read, and the call stays undecided.
+
+**About what the act makes: `where`.** A reaction to a creation often asks a
+black box about the new instance — who hears about an issue, `audience(issue)`,
+the moment it is opened. `stipulate` cannot answer that: before the act there is
+no issue to name, and after it the reaction has already asked and been left
+undecided. So the answer goes under the act, beside the `creating` that names
+the instance:
+
+```no-check
+repo does Open(repo, "crash") on Tracker
+    creating issue: Issue
+    where audience(issue) = {}
+```
+
+It is in force from the engine turn after the one that made the instance
+`creating` will catch: for everything that creation sets off, and not for the
+rule that made it. It is listed in the ledger like any other stipulation:
+
+```text
+Nobody Is In The Audience  —  1 of 1 steps hold
+    stipulated  audience(issue) = {}
+   1. open an issue whose audience is empty            holds
+```
+
+As many `where` lines as there are calls to answer, each `where <call> =
+<value>`, and each held to what it is for:
+
+- **It needs a `creating`**, because without one there is nothing to wait for.
+- **It is a call, never a field.** What the act writes into what it makes is
+  what the specification says, and overruling it mid-act would be a `then` that
+  cannot fail. `stipulate` it after the act if that is really what you mean.
+- **It names the caught instance** — `audience(issue)`, `muted(issue, repo)`,
+  `reach({issue, other})`. An answer about anything else can be said with
+  `stipulate` before the act, and is refused here so there is one place to say
+  it.
+- **It answers for that instance and no other.** An act that makes two issues
+  has its first caught and answered; the second's audience is still nobody's
+  answer, and the step stays undecided, with a remark beside the act saying
+  the call was asked of something the answer is not about.
+- **The rule that makes the instance cannot read it.** A rule that creates the
+  issue and asks `audience(issue)` in its own `ensures` asked before the answer
+  existed; the step stays undecided, and the remark beside the act says so.
+- **Its arguments are read when the instance is made.** `reach(issue.repo)`
+  reads `issue.repo` as it stood then; a field the cascade sets later is not
+  what the answer is about.
+- **Its words are not checked.** A bare word in the value is a word, as it is
+  in a `stipulate` about a call: `{rpo}` is a set holding the word `rpo`, not
+  the repo.
+- **Nothing made, nothing listed.** An act that makes nothing of the kind, or
+  that its surface refuses, answered no call, and the ledger does not claim it
+  did.
+- **An answer with no value is refused**, as in `given`: `where audience(issue)
+  = repo.name` with no `name` set is undecided on the act's line, and not
+  listed. It is one of the step's lines, not an aside: a step whose act held
+  is still undecided over an answer it could not give.
+
+Written as a `stipulate` after the act instead, the answer still lands — a later
+act may ask the same question — but the step stays undecided, and when what the
+act set off asked that very call the walk says why beside the line rather than
+leaving it to look like the next line answers it:
+
+```text
+        remark  stipulate audience(issue) = {}
+          said after the act that made `issue`, so nothing the act set off could read it — to answer `audience(issue)` for what it set off, write `where` under `creating issue: Issue`
+```
 
 **Every stipulation is reported, first and always.** An agent can make any
 journey pass; it cannot make one pass invisibly.
@@ -1058,6 +1473,46 @@ A word the spec does **not** declare stays undecided: a trigger's parameters
 carry no types, so nothing else says the word is a state rather than something
 this simulator does not model. Declare the enumeration and the chain decides.
 
+**A word a definition returns.** `status_now: if status = waiting: waiting
+else: running` returns a bare word, and inside an entity's definition a word
+the spec declares as a state — in any enumeration, or any field's inline
+`waiting | running` — is that state. So `status_now` is `waiting`, and
+`stale: status_now != status` is decided. A word no enumeration declares stays
+undecided and names itself (*nothing is bound to `paused`*). Outside a
+definition a bare word is still read as a state only where a comparison's
+other side is one, a rule hands it on as above, or it is a member of a set
+written out, as below — with one exception that follows from how a filter is
+read: inside `Runs where …` in a rule or an invariant, each run is `this`, so
+the run's own unset fields and declared words are read there exactly as in a
+definition.
+
+**A word in a set written out.** `for k in {a, b}:` with `enum Kind { a | b }`
+ranges over the two states, so the clauses inside are applied once with `k` as
+`a` and once as `b`; `[b, a]` is the same, in that order. Each member is put to
+the test a definition's word is: declared as a state somewhere in the spec set,
+and not a name already in scope — a rule parameter, a `let`, a field of `this`
+whether set or not. A name in scope is what it holds; a word declared nowhere
+stays undecided and names itself, so `for k in {a, c}`, with `c` declared
+nowhere, says *`for k in {a, c}` may be missing members it could not decide on
+(nothing is bound to `c`)*, and the step is undecided. So does a member bound
+to a value nobody knows: `let x = box.preferred` with `preferred` unset makes
+`{x, b}` say *`x` is bound to a value nobody knows* rather than read as a set
+of two. A set that is one side of a comparison — `requires: kind in {a, b}` —
+is read by the comparison's rule instead: once one member is a state, the other
+unbound words are read as states too, declared or not.
+
+**A comparison with an undecided side is undecided.** `copy.status =
+available` reads `available` as a state because the other side is one. That
+reading is never given to a name that already means something: one of the
+entity's own fields nobody set, a computed field that came back undecided, a
+rule parameter nobody passed, or a name bound to something undecided — nor,
+inside a filter, one of the *element's* fields: on a shelf, `docs where status
+= active` over a doc with no `status` is undecided, not a doc whose status is
+the state `status`. Each of those is a value nobody knows, so `other != status`
+with `other` unset is undecided and says *`` `r` has no `other` set ``* — not
+`true` because the state `other` is not `waiting`. A field spelled like a state
+is still the field.
+
 **What an act set off counts too.** A rule one hop down a chain that could not
 be decided is on no line of the journey, so the act that set it off is
 undecided even when its own rule fired, and says which rule and why:
@@ -1073,6 +1528,19 @@ out — a *yes* about a field included, because the world it was read from is
 not one the act leads to. A later step is not softened: it reads the world as
 the walk left it, and a refusal there stays a refusal. The step that acted is the one that says
 something was undecided, so look there first.
+
+**`??` and `+` between strings are evaluated.** `a ?? b` is `a` when `a` is
+set, and `b` when `a` is null — the same answer as `if a != null: a else: b`,
+and like that `if`, `b` is only read when it is reached. When nobody said
+whether `a` is null — a field never set, a call nobody answered — neither
+side is the answer, and the line is undecided naming `a`: taking `b` would be
+reading *unknown* as *null*. `"a" + " " + extra` concatenates; `+` between a
+string and anything else, and `-`, `*`, `/` between strings, are undecided
+and say which two kinds of value met — *`` `+` is not defined between a string
+and an integer ``*, or *a string and a duration*, and so on — because which
+spelling a number would take is a choice the spec did not make. A name bound
+by a `let`, or a field read bare inside a computed field, carries the reason
+it is undecided to wherever it is read.
 
 `all` and `any` are the two methods that take a lambda here. Any other —
 `items.filter(i => …)` — and a lambda anywhere else is still undecided, with

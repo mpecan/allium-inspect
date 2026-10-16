@@ -16,6 +16,11 @@
 //! question is malformed, and answering it either way would report a
 //! precondition as settled that the spec never posed.
 //!
+//! **`??` is an `if` with the condition written for you.** `a ?? b` is `a`
+//! when `a` is set, `b` when it is null — and undecided when whether it is
+//! null is what nobody knows. Taking `b` there would be reading an unknown as
+//! null, which is the guess stipulation 1 forbids.
+//!
 //! **Arithmetic keeps units.** A timestamp plus a duration is a timestamp; two
 //! timestamps subtract to a duration; a duration plus an integer is nothing at
 //! all. Collapsing them to integers would let `due_at + 21` typecheck its way
@@ -54,14 +59,21 @@ pub fn compare(
     let mut left = eval(left_node, env);
     let mut right = eval(right_node, env);
 
+    // Only a name that could mean nothing else: an unset field, an undecided
+    // computed one, a parameter nobody passed or a name bound to something
+    // undecided is a value nobody knows, and a comparison with an unknown side
+    // is unknown. Read as the state it spells, `stale: agg != status` with
+    // `agg` undecided came out `true` (issue #21).
     if matches!(left.value, Value::Enum(_))
         && right.value.is_unknown()
         && let Some(state) = bare_name(right_node)
+        && env.could_be_a_state(state)
     {
         right = Evaluation::known(Value::Enum(state.to_owned()));
     } else if matches!(right.value, Value::Enum(_))
         && left.value.is_unknown()
         && let Some(state) = bare_name(left_node)
+        && env.could_be_a_state(state)
     {
         left = Evaluation::known(Value::Enum(state.to_owned()));
     }
@@ -137,7 +149,43 @@ pub fn logical(
     Evaluation { value: truth_value(truth), unresolved }
 }
 
-/// `+`, `-`, `*`, `/` over numbers, durations and timestamps.
+/// `left ?? right`: the left side unless it is null.
+///
+/// The right side is evaluated only when it is reached, the same as the branch
+/// of an `if` nobody took — a name it leaves unbound is no reason for anything
+/// when the left was set.
+pub fn coalesce(left_node: &Expr, right_node: &Expr, env: &Env<'_>) -> Evaluation {
+    let left = eval(left_node, env);
+    match left.value {
+        Value::Null => {
+            let right = eval(right_node, env);
+            let mut unresolved = left.unresolved;
+            unresolved.extend(right.unresolved);
+            // The answer is the right side, so when that is undecided in
+            // silence the operator says so, as it does for the left.
+            if right.value.is_unknown() && unresolved.is_empty() {
+                unresolved.push(super::unresolved_at(
+                    "the right side of `??` was never settled",
+                    right_node,
+                    env.source,
+                ));
+            }
+            Evaluation { value: right.value, unresolved }
+        }
+        // Whether it is null is the question, so neither side is the answer.
+        // A name bound to something undecided arrives saying nothing, and the
+        // operator says it rather than leave an unknown with no reason.
+        Value::Unknown if left.unresolved.is_empty() => Evaluation::unknown(
+            "the left side of `??` was never settled, so whether it is null is not known",
+            left_node,
+            env.source,
+        ),
+        _ => left,
+    }
+}
+
+/// `+`, `-`, `*`, `/` over numbers, durations and timestamps, and `+`
+/// between strings.
 pub fn arithmetic(
     left_node: &Expr,
     operator: BinaryOp,
@@ -177,7 +225,25 @@ pub fn arithmetic(
         // difference. In the order they were added, and never twice, so the
         // same steps give the same set whatever else is in the world.
         (Value::Set(items), BinaryOp::Add | BinaryOp::Sub, other) if !other.is_unknown() => {
-            Ok(Value::Set(combined(items, operator, other)))
+            let (members, unsure) = combined(items, operator, other);
+            if let Some(member) = unsure {
+                let span = between(left_node, right_node);
+                unresolved.push(Unresolved {
+                    reason: format!(
+                        "whether {member} is among what `-` takes away could not be decided, so \
+                         it was kept"
+                    ),
+                    expression: span.and_then(|span| span.slice(env.source)).map(str::to_owned),
+                    span,
+                });
+            }
+            Ok(Value::Set(members))
+        }
+        // `box.title + " " + extra`: concatenation, and only between two
+        // strings. A number is not spelled into one, because which spelling
+        // is a choice the spec did not make.
+        (Value::Str(left), BinaryOp::Add, Value::Str(right)) => {
+            Ok(Value::Str(format!("{left}{right}")))
         }
         (Value::Int(_), BinaryOp::Div, Value::Int(0)) => Err(Fault::DividedByZero),
         (Value::Int(left), _, Value::Int(right)) => {
@@ -198,7 +264,20 @@ pub fn arithmetic(
             // An operand that was already undecided has said why. Adding a
             // second reason on top of it would blame the operator for a gap
             // somewhere underneath it.
-            if !left.value.is_unknown() && !right.value.is_unknown() {
+            //
+            // Unless it said nothing: a name bound to something undecided
+            // arrives with no reason, and staying quiet then left an unknown
+            // with none at all.
+            if left.value.is_unknown() || right.value.is_unknown() {
+                if unresolved.is_empty() {
+                    let span = between(left_node, right_node);
+                    unresolved.push(Unresolved {
+                        reason: format!("`{}` was given a side nothing settled", name_of(operator)),
+                        expression: span.and_then(|span| span.slice(env.source)).map(str::to_owned),
+                        span,
+                    });
+                }
+            } else {
                 let span = between(left_node, right_node);
                 let reason = match fault {
                     Fault::Undefined => format!(
@@ -227,8 +306,13 @@ pub fn arithmetic(
     Evaluation { value, unresolved }
 }
 
-/// `items + other` or `items - other`, for a set on the left.
-fn combined(items: &[Value], operator: BinaryOp, other: &Value) -> Vec<Value> {
+/// `items + other` or `items - other`, for a set on the left — and, for
+/// `-`, the first member it kept without knowing whether it should have.
+///
+/// Compared as the spec compares values, as [`Value::set_of`] does: `{x} + y`
+/// with both undecided is not one member, and `s - {x}` with `x` undecided
+/// takes away nothing it cannot show is `x` — it keeps the member and says so.
+fn combined(items: &[Value], operator: BinaryOp, other: &Value) -> (Vec<Value>, Option<String>) {
     let others: &[Value] = match other {
         Value::Set(more) => more,
         one => std::slice::from_ref(one),
@@ -236,13 +320,26 @@ fn combined(items: &[Value], operator: BinaryOp, other: &Value) -> Vec<Value> {
     if operator == BinaryOp::Add {
         let mut out = items.to_vec();
         for value in others {
-            if !out.contains(value) {
+            if !out.iter().any(|member| member.equals(value) == Truth::True) {
                 out.push(value.clone());
             }
         }
-        out
+        (out, None)
     } else {
-        items.iter().filter(|item| !others.contains(item)).cloned().collect()
+        let mut unsure = None;
+        let kept = items
+            .iter()
+            .filter(|item| match Truth::any(others.iter().map(|other| item.equals(other))) {
+                Truth::True => false,
+                Truth::False => true,
+                Truth::Unknown => {
+                    unsure.get_or_insert_with(|| item.render());
+                    true
+                }
+            })
+            .cloned()
+            .collect();
+        (kept, unsure)
     }
 }
 

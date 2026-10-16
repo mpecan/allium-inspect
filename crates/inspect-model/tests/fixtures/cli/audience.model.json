@@ -1,0 +1,1 @@
+{"diagnostics":[],"entities":[{"fields":[{"name":"title","type_expr":"String"},{"name":"notified","type_expr":"Boolean"}],"kind":"internal","name":"Issue"},{"fields":[{"name":"name","type_expr":"String"}],"kind":"internal","name":"Repo"}],"version":3}

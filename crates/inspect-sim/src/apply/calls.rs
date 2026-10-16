@@ -35,20 +35,75 @@ impl Application<'_> {
             }
         }
 
-        // Otherwise a bare name: a trigger emission. Asked of the same function
-        // ingestion reports an unbindable emission by, so the two agree on
-        // what an emission is.
+        // Otherwise a name, bare or qualified: a trigger emission. Asked of the
+        // same function ingestion reports an unbindable emission by, so the
+        // two agree on what an emission is.
         match inspect_model::listening::emitted(function) {
-            Some(trigger) => {
-                let (arguments, positional) = self.emission_arguments(args);
-                Applied::effect(Effect::Emitted {
-                    trigger: trigger.to_owned(),
-                    module: self.against.module.to_owned(),
-                    arguments,
-                    positional,
-                })
-            }
-            None => self.unmodelled(function, "this call is neither a creation nor a trigger"),
+            Some((trigger, qualifier)) => self.emission(function, trigger, qualifier, args),
+            None => self.unmodelled(
+                function,
+                "this call is neither a creation (`Entity.created(…)`) nor a trigger \
+                 (`Trigger(…)` or `alias/Trigger(…)`)",
+            ),
+        }
+    }
+
+    /// `Trigger(…)`, or `alias/Trigger(…)` handing work to the module imported
+    /// under that alias.
+    ///
+    /// The emission is filed under the module whose trigger it is — this one's
+    /// for a bare name, the imported one's for a qualified name — because that
+    /// is what decides which rules hear it
+    /// ([`inspect_model::listening::hears`]). Filed under the emitter's, a
+    /// rule in `admin` waiting on `FailureReported` heard `mig`'s emission
+    /// only by the accident of `mig` importing `admin`.
+    ///
+    /// An alias this module does not import, or one whose import leads to no
+    /// module in this spec set, names nobody's trigger. Nothing is emitted,
+    /// and the reason says which alias: waking every rule of that name would
+    /// be a guess at whose trigger the author meant.
+    fn emission(
+        &self,
+        function: &Expr,
+        trigger: &str,
+        qualifier: Option<&str>,
+        args: &[CallArg],
+    ) -> Applied {
+        let Against { spec, module, .. } = self.against;
+        let Some(home) = inspect_model::listening::emitted_from(spec, module, qualifier) else {
+            return self.unmodelled(function, &self.nowhere(function, trigger, qualifier));
+        };
+        let (arguments, positional) = self.emission_arguments(args);
+        Applied::effect(Effect::Emitted {
+            trigger: trigger.to_owned(),
+            module: home,
+            arguments,
+            positional,
+        })
+    }
+
+    /// Why `alias/Trigger(…)` names nobody's trigger, as one of the two
+    /// mistakes it can be: an alias this module never imported, or a `use`
+    /// whose file is not in this spec set. The emission is quoted as written.
+    fn nowhere(&self, function: &Expr, trigger: &str, qualifier: Option<&str>) -> String {
+        let Against { spec, module, .. } = self.against;
+        let alias = qualifier.unwrap_or_default();
+        let written = self.describe(function).unwrap_or_else(|| trigger.to_owned());
+        let import = spec
+            .modules
+            .iter()
+            .find(|it| it.name == module)
+            .and_then(|it| it.imports.iter().find(|import| import.alias == alias));
+        match import {
+            Some(import) => format!(
+                "`{module}` imports `{alias}` from \"{}\", which is not in this spec set, \
+                 so `{written}` is no known module's trigger and was not emitted",
+                import.path
+            ),
+            None => format!(
+                "`{module}` imports nothing as `{alias}`, so `{written}` is no known \
+                 module's trigger and was not emitted"
+            ),
         }
     }
 
@@ -132,7 +187,7 @@ impl Application<'_> {
         // a postcondition the simulator does not model, which it is not.
         if !matches!(value, Expr::Call { .. }) {
             let evaluated = self.evaluate(value);
-            self.bindings.insert(name.to_owned(), evaluated.value);
+            self.bind(name, evaluated.value, evaluated.unresolved.clone());
             return Applied::note(evaluated.unresolved);
         }
         let applied = self.apply(value);
@@ -146,14 +201,14 @@ impl Application<'_> {
 
         match bound {
             Some(value) => {
-                self.bindings.insert(name.to_owned(), value);
+                self.bind(name, value, Vec::new());
                 applied
             }
             None => {
                 let evaluated = self.evaluate(value);
                 let mut applied = applied;
+                self.bind(name, evaluated.value, evaluated.unresolved.clone());
                 applied.unresolved.extend(evaluated.unresolved);
-                self.bindings.insert(name.to_owned(), evaluated.value);
                 applied
             }
         }
@@ -187,12 +242,17 @@ impl Application<'_> {
             {
                 evaluated = Evaluation { value: state, unresolved: Vec::new() };
             }
+            self.world.set_field_explained(
+                &id,
+                field,
+                evaluated.value,
+                evaluated.unresolved.clone(),
+            );
             applied.unresolved.extend(evaluated.unresolved);
-            self.world.set_field(&id, field, evaluated.value);
         }
 
         // The instance binds its own name, so the next clause can refer to it.
-        self.bindings.insert(entity.to_lowercase(), Value::Ref(id));
+        self.bind(&entity.to_lowercase(), Value::Ref(id), Vec::new());
         applied
     }
 

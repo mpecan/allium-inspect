@@ -1,0 +1,102 @@
+-- allium: 3
+-- Issue #26: a set literal of words, written in a rule. `{a, b}` is two
+-- states `Kind` declares, so `Fill` makes one slot of each, the same as `kind
+-- = a` and an emission's `a` already read the words. The ordered `[b, a]` is
+-- read the same way.
+--
+-- `Stray` writes a word no enumeration declares. It may be a construct this
+-- simulator does not model, so it stays undecided and the loop says which
+-- word, rather than making a slot of a kind nobody declared.
+--
+-- `Keep` asks for a word in a set literal from a precondition. `Shadowed`
+-- names a parameter spelled like a state: what was passed is what `a` is.
+-- `Preferred` puts a value nobody knows beside a word, and the set says so
+-- rather than reading as two. `Tray` stores a field spelled like a state and
+-- never sets it: `{a, b}` there is that field, not the state `a`.
+
+enum Kind { a | b }
+
+entity Box {
+    name: String
+    preferred: Kind
+    slots: Slot with box = this
+    slot_count: slots.count
+}
+
+entity Slot {
+    box: Box
+    kind: Kind
+}
+
+entity Tray {
+    name: String
+    a: Kind
+    options: {a, b}
+    option_count: options.count
+}
+
+rule Fill {
+    when: Fill(box)
+    ensures:
+        for k in {a, b}:
+            Slot.created(box: box, kind: k)
+}
+
+rule FillListed {
+    when: FillListed(box)
+    ensures:
+        for k in [b, a]:
+            Slot.created(box: box, kind: k)
+}
+
+-- A word nothing declares — after a multi-byte character, so the quoted
+-- `{a, c}` is sliced by byte, not by character.
+rule Stray {
+    when: Stray(box)
+    ensures:
+        for k in {a, c}:
+            Slot.created(box: box, kind: k)
+}
+
+rule Keep {
+    when: Keep(box, kind)
+    requires: kind in {a, b}
+    ensures: Slot.created(box: box, kind: kind)
+}
+
+rule Shadowed {
+    when: Shadowed(box, a)
+    ensures:
+        for k in {a, b}:
+            Slot.created(box: box, kind: k)
+}
+
+rule Preferred {
+    when: Preferred(box)
+    let x = box.preferred
+    ensures:
+        for k in {x, b}:
+            Slot.created(box: box, kind: k)
+}
+
+rule Touch {
+    when: Touch(tray)
+    ensures: tray.name = "touched"
+}
+
+surface Shelf {
+    facing box: Box
+    provides:
+        Fill(box)
+        FillListed(box)
+        Stray(box)
+        Keep(box, kind)
+        Shadowed(box, a)
+        Preferred(box)
+}
+
+surface Counter {
+    facing tray: Tray
+    provides:
+        Touch(tray)
+}

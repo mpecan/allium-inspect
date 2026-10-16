@@ -1,0 +1,129 @@
+-- Issue #20, as it was filed, and around it: a temporal trigger over an
+-- optional timestamp that is `null` is not due, so the clock moving leaves
+-- its rule unfired rather than undecided. Once the timestamp is set, the same
+-- trigger fires when its time comes. A trigger asking whether a `null` is
+-- still ahead of the clock is not answered either way, and says why.
+
+journey ATaskThatHasNotStoppedDoesNotExpire {
+    cast:
+        t: Task
+    given:
+        t.started_at = now
+        t.stopped_at = null
+        t.status = running
+        t.expired = false
+    1. the task goes silent and is timed out
+        after 11.minutes
+        then t.status = failure
+        then t.expired = false
+        then Expire does not fire
+    2. an hour after it stopped, it expires
+        after 1.hour
+        then t.expired = true
+        then Expire fires
+}
+
+journey InvitesWithNoDeadlinesAreNeverDue {
+    cast:
+        i: Invite
+    given:
+        i.sent_at = null
+        i.expires_at = null
+        i.lapsed = false
+        i.escalated = false
+    1. days pass over an invite nobody sent
+        after 3.days
+        then i.lapsed = false
+        then i.escalated = false
+        then Lapse does not fire
+        then Escalate does not fire
+}
+
+journey InvitesWithDeadlinesComeDue {
+    cast:
+        i: Invite
+    given:
+        i.sent_at = now
+        i.expires_at = now
+        i.lapsed = false
+        i.escalated = false
+    1. days pass over an invite that was sent
+        after 3.days
+        then i.lapsed = true
+        then i.escalated = true
+}
+
+journey AnOfferWithNoOpeningIsNotAnswered {
+    cast:
+        o: Offer
+    given:
+        o.opens_at = null
+        o.withdrawn = false
+    1. a day passes over an offer with no opening
+        after 1.day
+}
+
+journey AWithdrawnOfferWithNoOpeningHolds {
+    cast:
+        o: Offer
+    given:
+        o.opens_at = null
+        o.withdrawn = true
+    1. a day passes over an offer already withdrawn
+        after 1.day
+}
+
+journey TwoOffersWithNoOpeningAreNotAnswered {
+    cast:
+        o: Offer
+        p: Offer
+    given:
+        o.opens_at = null
+        o.withdrawn = false
+        p.opens_at = null
+        p.withdrawn = false
+    1. a day passes over two offers with no opening
+        after 1.day
+        then Withdraw does not fire
+}
+
+journey AnInviteSentWithNoExpiryNeverLapses {
+    cast:
+        i: Invite
+    given:
+        i.sent_at = now
+        i.expires_at = null
+        i.lapsed = false
+        i.escalated = false
+    1. days pass, and only the escalation comes due
+        after 3.days
+        then i.escalated = true
+        then i.lapsed = false
+        then Escalate fires
+        then Lapse does not fire
+}
+
+journey TwoUnansweredRulesAreBothNamed {
+    cast:
+        t: Task
+        o: Offer
+    given:
+        t.stopped_at = null
+        t.status = running
+        t.expired = false
+        o.opens_at = null
+        o.withdrawn = false
+    1. a day passes over a task nobody started and an offer with no opening
+        after 1.day
+}
+
+journey AChoreWhoseRuleBindsNothingIsNotAnswered {
+    cast:
+        c: Chore
+    given:
+        c.due_at = now
+        c.late = false
+    1. a day passes over a chore that came due
+        after 1.day
+        then Overdue does not fire
+}

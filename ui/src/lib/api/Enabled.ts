@@ -32,4 +32,10 @@ binding: string,
  * to put a reason, which made it the one place the simulator could go
  * quiet without breaking its own rule.
  */
-undecided: Array<Unresolved>, };
+undecided: Array<Unresolved>, 
+/**
+ * The instances behind `undecided`, each once, in the order they were
+ * read — so anything that goes on to ask *why* asks only those, rather
+ * than every instance the condition already said no about.
+ */
+unsettled_over: Array<Value>, };

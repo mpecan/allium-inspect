@@ -202,6 +202,12 @@ fn derived(
         return;
     };
 
+    for field in &detail.fields {
+        if !field.derived && !field.relationship {
+            program.add_stored(module, entity, &field.name);
+        }
+    }
+
     for item in &block.items {
         match &item.kind {
             BlockItemKind::Assignment { name, value } => {
@@ -440,6 +446,16 @@ entity Member {
             !program.derivations().fields.contains_key(&derived_key("lending", "Member", "name"))
         );
         assert_eq!(program.derivations().fields.len(), 2);
+    }
+
+    /// And recorded as stored, so a definition reading one nobody set says so
+    /// rather than taking it for a word (issue #21). Only this entity's, and
+    /// only the stored ones: the decoys share a name or a module, not both.
+    #[test]
+    fn a_stored_field_is_recorded_as_stored() {
+        let program = against(MEMBER, &member_graph());
+        let stored: Vec<&str> = program.derivations().stored.iter().map(String::as_str).collect();
+        assert_eq!(stored, [derived_key("lending", "Member", "name").as_str()]);
     }
 
     /// The graph is what knows. Without it nothing is computed, which is the
@@ -681,6 +697,29 @@ surface MyLoans {
             "ReportCopyLost",
         );
         assert_eq!(parameters, [("loan".to_owned(), false), ("note".to_owned(), true)]);
+    }
+
+    /// Issue #16: `_` keeps its place and names nothing, so nothing has to
+    /// bind it — an argument handed to it by name or by position is
+    /// discarded, and it is never reported unbound. `_?` is the same, and
+    /// `_note` is an ordinary name.
+    #[test]
+    fn a_discard_parameter_keeps_its_place_and_names_nothing() {
+        let parameters = parameters_of(
+            "rule ReportCopyLost {\n    when: MemberReportsLoss(_, loan, _?, _note)\n    \
+             ensures: loan.status = returned\n}\n",
+            "ReportCopyLost",
+        );
+        assert_eq!(
+            parameters,
+            [
+                (String::new(), false),
+                ("loan".to_owned(), false),
+                (String::new(), false),
+                ("_note".to_owned(), false)
+            ],
+            "`_?` is a discard as much as `_` is, and only the bare `_` is one"
+        );
     }
 
     /// A state rule's `when` is a condition, not a call, and names none.

@@ -1,0 +1,69 @@
+-- Issue #26: a set literal of words in a rule is iterated, one member per
+-- word the spec declares as a state.
+
+journey FillBothKinds {
+    cast:
+        bx: Box
+    1. fill
+        bx does Fill(bx) on Shelf
+            creating s: Slot
+        then s.kind = a
+}
+
+journey OneSlotOfEachKind {
+    cast:
+        bx: Box
+    1. fill
+        bx does Fill(bx) on Shelf
+        then bx.slot_count = 2
+}
+
+journey AListOfWordsInOrder {
+    cast:
+        bx: Box
+    1. fill
+        bx does FillListed(bx) on Shelf
+            creating s: Slot
+        then s.kind = b
+        then bx.slot_count = 2
+}
+
+journey AWordNothingDeclares {
+    cast:
+        bx: Box
+    1. stray
+        bx does Stray(bx) on Shelf
+}
+
+journey AWordInARequires {
+    cast:
+        bx: Box
+    1. keep
+        bx does Keep(bx, b) on Shelf
+            creating s: Slot
+        then s.kind = b
+}
+
+journey AParameterSpelledLikeAState {
+    cast:
+        bx: Box
+    1. shadowed
+        bx does Shadowed(bx, b) on Shelf
+        then bx.slot_count = 1
+}
+
+journey AnUnknownBesideAWord {
+    cast:
+        bx: Box
+    1. preferred
+        bx does Preferred(bx) on Shelf
+        then bx.slot_count = 2
+}
+
+journey AFieldSpelledLikeAState {
+    cast:
+        t: Tray
+    1. touch
+        t does Touch(t) on Counter
+        then t.option_count = 2
+}

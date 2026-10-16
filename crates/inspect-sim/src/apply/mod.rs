@@ -36,7 +36,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    eval::{Env, Evaluation, Unresolved, bare_name, eval, span_of},
+    eval::{Env, Evaluation, Told, Unresolved, bare_name, eval, remember, span_of},
     truth::Truth,
     value::{EntityId, Value},
     world::World,
@@ -121,9 +121,15 @@ impl Applied {
         self.unapplied.push(why);
     }
 
-    fn merge(&mut self, other: Applied) {
+    /// `other` after this, each reason once: a `let` says why it is
+    /// undecided where it is bound, and again wherever a later clause reads it.
+    pub(crate) fn merge(&mut self, other: Applied) {
         self.effects.extend(other.effects);
-        self.unresolved.extend(other.unresolved);
+        for note in other.unresolved {
+            if !self.unresolved.contains(&note) {
+                self.unresolved.push(note);
+            }
+        }
         self.unapplied.extend(other.unapplied);
     }
 }
@@ -153,6 +159,9 @@ pub struct Application<'a> {
     against: Against<'a>,
     world: &'a mut World,
     bindings: BTreeMap<String, Value>,
+    /// Why a name in `bindings` is undecided, when what bound it said: see
+    /// [`Env::told`].
+    told: Told,
 }
 
 impl<'a> Application<'a> {
@@ -162,7 +171,22 @@ impl<'a> Application<'a> {
         world: &'a mut World,
         bindings: BTreeMap<String, Value>,
     ) -> Self {
-        Self { against, world, bindings }
+        Self { against, world, bindings, told: BTreeMap::new() }
+    }
+
+    /// The same application, knowing why some of its bound names are
+    /// undecided — the rule's own `let`s, read before its `requires`.
+    #[must_use]
+    pub fn telling(mut self, told: Told) -> Self {
+        self.told = told;
+        self
+    }
+
+    /// Bind `name` to `value`, with `why` when that is undecided, so a later
+    /// clause reading the name can say what the binding could not settle.
+    fn bind(&mut self, name: &str, value: Value, why: Vec<Unresolved>) {
+        remember(&mut self.told, name, &value, why);
+        self.bindings.insert(name.to_owned(), value);
     }
 
     /// Apply one `ensures` clause.
@@ -310,7 +334,7 @@ impl<'a> Application<'a> {
             return Applied { effects: vec![refusal], unresolved, unapplied: Vec::new() };
         }
 
-        self.world.set_field(&id, &field, evaluated.value.clone());
+        self.world.set_field_explained(&id, &field, evaluated.value.clone(), unresolved.clone());
         Applied {
             effects: vec![Effect::Assigned { id, field, from: previous, to: evaluated.value }],
             unresolved,
@@ -407,6 +431,7 @@ impl<'a> Application<'a> {
         let mut scope = Env::new(self.world, self.against.module, self.against.source)
             .deriving(self.against.derived);
         scope.bindings.clone_from(&self.bindings);
+        scope.told.clone_from(&self.told);
         scope
     }
 

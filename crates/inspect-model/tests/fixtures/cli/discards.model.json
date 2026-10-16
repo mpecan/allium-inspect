@@ -1,0 +1,1 @@
+{"diagnostics":[],"entities":[{"fields":[{"name":"next","type_expr":"Doc"},{"name":"seen","type_expr":"Boolean"},{"name":"glanced","type_expr":"Boolean"},{"name":"landed","type_expr":"Boolean"},{"name":"hushed","type_expr":"Boolean"},{"name":"noted","type_expr":"Boolean"}],"kind":"internal","name":"Doc"}],"version":3}

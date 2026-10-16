@@ -200,9 +200,10 @@ pub(crate) fn precondition<'a>(
     // same sentence the fan-out of the loop's `ensures` says.
     let missing = (!collection.unresolved.is_empty()).then(|| {
         let mut unresolved = vec![Unresolved {
-            reason: format!(
-                "{header} may be missing members it could not decide on, so this precondition \
-                 could not be checked for them"
+            reason: missing_members(
+                &header,
+                &collection.unresolved,
+                "this precondition could not be checked for them",
             ),
             expression: quoted(&within.collection),
             span: span_of(&within.collection),
@@ -234,14 +235,90 @@ fn member(
     clause: &Expr,
     mut scope: Env<'_>,
 ) -> Evaluation {
-    scope.bindings.insert(name.to_owned(), item.clone());
+    scope.set(name.to_owned(), item.clone());
     let mut carried = Vec::new();
     for (bound, value) in &within.lets {
         let evaluated = eval(value, &scope);
         carried.extend(evaluated.unresolved);
-        scope.bindings.insert(bound.clone(), evaluated.value);
+        scope.set(bound.clone(), evaluated.value);
     }
     let mut read = eval(clause, &scope);
     read.unresolved.extend(carried);
     read
+}
+
+/// "`for w in r.active_watches` may be missing members it could not decide on
+/// (`Watch#2` has no `b` set), so …" — the one sentence both halves of a loop
+/// say about a collection that came back with reasons.
+///
+/// With the collection's first reason inside it, because the walk shows a
+/// rule's first reason and nothing after it: without the parenthesis a reader
+/// was told members may be missing and never which, or why — and the fix, a
+/// field the journey did not set on a member it cast, was one line away and
+/// out of sight (issue #23).
+pub(crate) fn missing_members(header: &str, notes: &[Unresolved], so: &str) -> String {
+    let because = notes.first().map(|note| match &note.expression {
+        Some(expression) if !note.reason.contains(&format!("`{expression}`")) => {
+            format!(" ({}, in `{expression}`)", note.reason)
+        }
+        _ => format!(" ({})", note.reason),
+    });
+    format!(
+        "{header} may be missing members it could not decide on{}, so {so}",
+        because.unwrap_or_default()
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Unresolved, missing_members};
+
+    fn note(reason: &str, expression: Option<&str>) -> Unresolved {
+        Unresolved {
+            reason: reason.to_owned(),
+            expression: expression.map(str::to_owned),
+            span: None,
+        }
+    }
+
+    /// A reason that does not quote what it is about is told where.
+    #[test]
+    fn a_reason_that_does_not_quote_its_expression_says_where() {
+        let notes = [note("could not tell", Some("active = true"))];
+        assert_eq!(
+            missing_members("`for w in X`", &notes, "so-text"),
+            "`for w in X` may be missing members it could not decide on (could not tell, in \
+             `active = true`), so so-text"
+        );
+    }
+
+    /// One that already quotes it is not told twice.
+    #[test]
+    fn a_reason_that_quotes_its_expression_is_not_told_it_again() {
+        let notes = [note("nothing is bound to `active = true`", Some("active = true"))];
+        assert_eq!(
+            missing_members("`for w in X`", &notes, "so-text"),
+            "`for w in X` may be missing members it could not decide on (nothing is bound to \
+             `active = true`), so so-text"
+        );
+    }
+
+    /// The first reason, and only the first: the walk shows one.
+    #[test]
+    fn the_first_reason_is_the_one_given() {
+        let notes = [note("first", None), note("second", None)];
+        assert_eq!(
+            missing_members("`for w in X`", &notes, "so-text"),
+            "`for w in X` may be missing members it could not decide on (first), so so-text"
+        );
+    }
+
+    /// No reasons, no parenthesis.
+    #[test]
+    fn with_no_reason_there_is_no_parenthesis() {
+        assert_eq!(
+            missing_members("`for w in X`", &[], "so-text"),
+            "`for w in X` may be missing members it could not decide on, so so-text"
+        );
+    }
 }

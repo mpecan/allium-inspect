@@ -1,0 +1,127 @@
+-- Issue #23, as it was filed, and around it: a loop over a relationship
+-- filtered on a computed field runs once per member the field is computed
+-- true for, in that member's own scope.
+
+journey T {
+    cast:
+        r: Repo
+        w: Watch
+    given:
+        w.repo = r
+        w.a = true
+        w.b = false
+    1. poke
+        r does Poke(r) on S
+        then w.entries.count = 1
+}
+
+-- Two watches, one computed in and one computed out: one entry, for the one.
+journey OnlyTheWatchingWatchGetsAnEntry {
+    cast:
+        r: Repo
+        on: Watch
+        off: Watch
+    given:
+        on.repo = r
+        on.a = false
+        on.b = true
+        off.repo = r
+        off.a = false
+        off.b = false
+    1. poke
+        r does Poke(r) on S
+        then on.entries.count = 1
+        then off.entries.count = 0
+}
+
+-- `a` is false and nobody said what `b` is, so whether `w` is watching is not
+-- known — and the walk says it is `w`'s `b` it could not read.
+journey AWatchNobodySaidAllOf {
+    cast:
+        r: Repo
+        w: Watch
+    given:
+        w.repo = r
+        w.a = false
+    1. poke
+        r does Poke(r) on S
+}
+
+-- `a` is true and nobody said what `b` is: `true or ?` is `true`, so `w` is
+-- watching, decided — and the loop over the watches that are is decided too.
+-- The `b` nobody needed is not a member the loop may be missing.
+journey AWatchHalfSaidIsStillWatching {
+    cast:
+        r: Repo
+        w: Watch
+    given:
+        w.repo = r
+        w.a = true
+    1. poke
+        r does Poke(r) on S
+        then w.entries.count = 1
+}
+
+-- The repo stores an `is_watching` of its own, `true`. The watch computes
+-- `false`, and inside `watches where is_watching = true` the name is the
+-- watch's: no entry.
+journey ARepoSaysItIsWatchingAndItsWatchSaysNot {
+    cast:
+        r: Repo
+        w: Watch
+    given:
+        r.is_watching = true
+        w.repo = r
+        w.a = false
+        w.b = false
+    1. poke
+        r does Poke(r) on S
+        then w.entries.count = 0
+}
+
+-- The loop at rule level, over the same projection: the precondition is asked
+-- of the watch computed in, and not of the one computed out.
+journey HangsOnlyTheWatchingWatch {
+    cast:
+        r: Repo
+        on: Watch
+        off: Watch
+    given:
+        on.repo = r
+        on.a = true
+        off.repo = r
+        off.a = false
+        off.b = false
+    1. hang
+        r does Hang(r) on S
+        then on.swept = true
+        then r.hung = true
+}
+
+-- At rule level too, a member nobody can decide is named by its cast name.
+journey AHangNobodySaidAllOf {
+    cast:
+        r: Repo
+        w: Watch
+    given:
+        w.repo = r
+        w.a = false
+    1. hang
+        r does Hang(r) on S
+}
+
+-- One watch decided in by half of what it computes, one nobody can decide:
+-- the member named is the one that could not be decided, not the one that was.
+journey OfTwoWatchesTheUndecidedOneIsNamed {
+    cast:
+        r: Repo
+        on: Watch
+        off: Watch
+    given:
+        on.repo = r
+        on.a = true
+        off.repo = r
+        off.a = false
+    1. poke
+        r does Poke(r) on S
+}

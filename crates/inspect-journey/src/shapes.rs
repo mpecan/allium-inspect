@@ -268,6 +268,9 @@ fn describes(journey: &Journey, line: usize) -> String {
         Some(crate::journey::Given::Assign { path, value, .. }) => {
             format!("given {} = {}", path.as_written(), value.as_written())
         }
+        Some(crate::journey::Given::Answer { answer, .. }) => {
+            format!("given {} = {}", answer.as_written(), answer.value.as_written())
+        }
         None => format!("line {line}"),
     }
 }

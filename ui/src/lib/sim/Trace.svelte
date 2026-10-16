@@ -11,6 +11,7 @@
   import Verdict from "../panels/Verdict.svelte";
   import { offered } from "./enabled";
   import type { Emission } from "./event";
+  import { notSettled } from "./unsettled";
   import { render } from "./values";
 
   interface Props {
@@ -101,7 +102,15 @@
                   <span class="verb">removed</span>
                   <code>{effect.id}</code>
                 {:else if effect.kind === "assigned"}
-                  <span class="verb">set</span>
+                  <!-- Written, and not what the world holds now: a sibling
+                       wrote the field differently, and which value stands is
+                       undecided. Why is said once, below, with what else the
+                       rule did not apply. -->
+                  {#if notSettled(effect, outcome.world).length > 0}
+                    <span class="verb unsettled">set, not settled</span>
+                  {:else}
+                    <span class="verb">set</span>
+                  {/if}
                   <code>{effect.id}.{effect.field}</code>
                   <span class="from">{render(effect.from).text}</span>
                   <span class="arrow" aria-hidden="true">→</span>
@@ -125,6 +134,23 @@
               </li>
             {/each}
           </ul>
+        {/if}
+
+        {#if rule.unapplied.length > 0}
+          <!-- What a fired rule promised and the world does not show. Without
+               it, two siblings that disagreed read as two clean writes beside
+               a field the world calls unknown, with no reason on the page. -->
+          <div class="unapplied">
+            <p class="eyebrow">Part of what it ensures was not applied</p>
+            <ul class="why">
+              {#each rule.unapplied as note, at (at)}
+                <li class="prose">
+                  {note.reason}{#if note.expression}{" — "}<code>{note.expression}</code
+                    >{/if}
+                </li>
+              {/each}
+            </ul>
+          </div>
         {/if}
       </article>
     {/each}
@@ -319,6 +345,14 @@
     color: var(--ink-faint);
     min-width: 5.5em;
   }
+  .verb.unsettled {
+    color: var(--verdict-unknown);
+  }
+
+  .unapplied {
+    margin-top: var(--gap-2);
+  }
+
   .verb.refused {
     color: var(--verdict-false);
   }

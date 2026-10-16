@@ -258,10 +258,8 @@ mod a_word_passed_down_a_chain {
         assert_eq!(verdict, Verdict::Undecided, "{detail:?}");
         assert_eq!(
             detail.as_deref(),
-            Some(
-                "what it set off: `Halted` could not be decided: nothing is bound to `abort` — in \
-                 `abort`"
-            )
+            // "— in `abort`" would say `abort` twice.
+            Some("what it set off: `Halted` could not be decided: nothing is bound to `abort`")
         );
         assert_eq!(line(&result, "then r.ended = true").0, Verdict::Undecided);
     }

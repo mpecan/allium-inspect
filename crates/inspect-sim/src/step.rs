@@ -6,11 +6,15 @@
 //! 1. **Which rules wait for this trigger.** Across every module, because a
 //!    trigger emitted in one is routinely consumed in another — that crossing is
 //!    the main thing this tool exists to make visible.
-//! 2. **Do their preconditions hold?** Reported clause by clause. Only a
-//!    definite `false` refuses the rule; an undecided one leaves the outcome
-//!    indeterminate and says which clause could not be settled.
+//! 2. **Do their preconditions hold?** Reported clause by clause, each rule
+//!    read in the world as the trigger found it — never as a sibling woken by
+//!    the same firing left it (see `siblings`). Only a definite `false` refuses
+//!    the rule; an undecided one leaves the outcome indeterminate and says
+//!    which clause could not be settled.
 //! 3. **What do the postconditions change?** Applied in declaration order,
-//!    because a creation binds a name the next clause uses.
+//!    because a creation binds a name the next clause uses, and read in the
+//!    world the trigger found as well. Two siblings that write one field
+//!    differently leave it undecided, naming both.
 //! 4. **Do the invariants still hold?** Checked after, over the world that
 //!    resulted. An invariant that was already broken before the step is
 //!    reported as such rather than blamed on the rule.
@@ -29,10 +33,12 @@ use ts_rs::TS;
 
 use crate::{
     apply::Against,
-    apply::{Application, Effect},
-    binding, creation,
-    eval::{Env, Unresolved, eval},
+    apply::Effect,
+    binding, creation, due,
+    eval::{Env, Told, Unresolved, eval, remember},
+    gone::{self, Removed},
     per_member,
+    siblings::Written,
     truth::Truth,
     value::Value,
     world::{Event, World},
@@ -131,6 +137,10 @@ pub struct Enabled {
     /// to put a reason, which made it the one place the simulator could go
     /// quiet without breaking its own rule.
     pub undecided: Vec<Unresolved>,
+    /// The instances behind `undecided`, each once, in the order they were
+    /// read — so anything that goes on to ask *why* asks only those, rather
+    /// than every instance the condition already said no about.
+    pub unsettled_over: Vec<Value>,
 }
 
 /// Everything one step produced.
@@ -173,6 +183,8 @@ impl StepOutcome {
 /// The spec text of each module, for quoting what could not be decided.
 pub type Sources = BTreeMap<String, String>;
 
+pub use crate::listing::{enabled, lists};
+
 /// Fire `event` against `world`.
 #[must_use]
 pub fn step(
@@ -188,25 +200,52 @@ pub fn step(
     let mut next = world.clone();
     let mut rules = Vec::new();
     let mut emitted = Vec::new();
+    let mut written = Written::new();
 
-    for node in spec.nodes_of(NodeKind::Rule) {
-        let Some(detail) = node.detail.as_rule() else { continue };
-        let when = program.rule(node.id.as_str()).and_then(|ast| ast.when.as_ref());
-        if !creation::wakes(spec, &node.module, (&detail.trigger, when), event) {
-            continue;
-        }
+    let woken: Vec<&inspect_model::graph::Node> = spec
+        .nodes_of(NodeKind::Rule)
+        .filter(|node| {
+            let when = program.rule(node.id.as_str()).and_then(|ast| ast.when.as_ref());
+            node.detail.as_rule().is_some_and(|detail| {
+                creation::wakes(spec, &node.module, (&detail.trigger, when), event)
+            })
+        })
+        .collect();
+    let run = |node: &inspect_model::graph::Node, next: &mut World, removed: &Removed| {
+        let detail = node.detail.as_rule()?;
         let source = sources.get(&node.module).map(String::as_str).unwrap_or_default();
-        let outcome = run_rule(
-            node.id.as_str(),
-            &node.name,
-            &node.module,
+        Some(run_rule(
+            (node.id.as_str(), &node.name, &node.module),
             detail,
-            program,
-            spec,
-            source,
-            &mut next,
-            event,
-        );
+            (program, spec, source),
+            (world, next),
+            (event, removed),
+        ))
+    };
+    // What every woken rule removes, found before any of them is judged, so a
+    // state rule whose instance a sibling removes gets the same answer whether
+    // it is declared before that sibling or after it (see `gone`). Each reads
+    // the world the trigger found, so a first pass on a copy says what each
+    // would remove. Only two rules or more can race, but a lone rule is read
+    // the same either way — one that removes its own instance is read as
+    // usual — so it is not a case of its own: a branch that changes nothing a
+    // test can see is one a mutation run cannot hold to anything.
+    let mut removed = Removed::new(world);
+    {
+        let (nobody, mut scratch) = (Removed::new(world), world.clone());
+        for node in &woken {
+            if let Some(outcome) = run(node, &mut scratch, &nobody) {
+                removed.note(&outcome);
+            }
+        }
+    }
+
+    for node in woken {
+        let Some(mut outcome) = run(node, &mut next, &removed) else { continue };
+        let rule = program.rule(node.id.as_str());
+        written.settle(&event.trigger, &mut outcome, &mut next, |field| {
+            rule.is_some_and(|rule| crate::reads::reads(rule, field, program.derivations()))
+        });
         for effect in &outcome.effects {
             if let Effect::Emitted { trigger, .. } = effect {
                 emitted.push(trigger.clone());
@@ -242,21 +281,14 @@ pub fn step(
 }
 
 /// Evaluate one rule's preconditions and, if they hold, its postconditions.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "every argument is a distinct input the rule needs; bundling them into a \
-              context struct would name the same things twice"
-)]
 fn run_rule(
-    id: &str,
-    name: &str,
-    module: &str,
+    (id, name, module): (&str, &str, &str),
     detail: &inspect_model::graph::RuleDetail,
-    program: &Program,
-    spec: &SpecGraph,
-    source: &str,
-    world: &mut World,
-    event: &Event,
+    (program, spec, source): (&Program, &SpecGraph, &str),
+    // Read in the world the trigger found; written into the one the step is
+    // building. One firing's rules are not a sequence (issue #24).
+    (world, next): (&World, &mut World),
+    (event, removed): (&Event, &Removed),
 ) -> RuleOutcome {
     let empty = inspect_model::RuleAst::default();
     let ast = program.rule(id).unwrap_or(&empty);
@@ -283,11 +315,14 @@ fn run_rule(
     // the precondition that reads it says which sub-expression could not be
     // settled — better than "nothing is bound to `existing`", which points at
     // the `let` rather than at what defeated it.
+    let mut told = Told::new();
     for (name, value) in &ast.lets {
         let evaluated = {
-            let scope = rule_scope(Env::new(world, module, source), program, &declared, &bindings);
+            let scope =
+                rule_scope(Env::new(world, module, source), program, &declared, (&bindings, &told));
             eval(value, &scope)
         };
+        remember(&mut told, name, &evaluated.value, evaluated.unresolved);
         bindings.insert(name.clone(), evaluated.value);
     }
 
@@ -353,8 +388,22 @@ fn run_rule(
     // skipping it let `HoldExpires` run beside `HoldIsGranted` on a hold whose
     // expiry was a week away, and write `lapsed` over a hold nothing lapsed.
     if let Some((binding, condition)) = state_condition(detail, ast) {
+        // Removed by a sibling woken beside it: refused if it was not due
+        // when the step began, a race the spec does not settle if it was —
+        // and either way nothing else it says is read about an absent
+        // instance.
+        if let Some(gone) = removed.when_verdict(
+            (name, bindings.get(binding)),
+            (&when_text, ast.when.as_ref()),
+            |before, id| {
+                let scope = Env::new(before, module, source).deriving(program.derivations());
+                due::trigger(condition, &about(scope, &detail.trigger, binding, id))
+            },
+        ) {
+            return gone::outcome((id, name, module), requires, unresolved, gone);
+        }
         let evaluated = match bindings.get(binding) {
-            Some(Value::Ref(id)) => eval(
+            Some(Value::Ref(id)) => due::trigger(
                 condition,
                 &about(
                     Env::new(world, module, source).deriving(program.derivations()),
@@ -389,7 +438,8 @@ fn run_rule(
     // alone; a per-member clause is sliced from the source by its own span,
     // and read once for each member its loop keeps.
     let mut top_level = detail.clauses_of("requires");
-    let scope = || rule_scope(Env::new(world, module, source), program, &declared, &bindings);
+    let scope =
+        || rule_scope(Env::new(world, module, source), program, &declared, (&bindings, &told));
     for (index, clause) in ast.requires.iter().enumerate() {
         let (text, read) = match ast.per_member.get(&index) {
             Some(within) => (
@@ -423,21 +473,18 @@ fn run_rule(
         }
     };
 
-    let mut effects = Vec::new();
-    let mut unapplied = Vec::new();
-    if disposition == Disposition::Fired {
-        let mut application = Application::new(
+    let applied = if disposition == Disposition::Fired {
+        crate::siblings::apply(
             Against { spec, module, source, derived: program.derivations() },
-            world,
-            bindings,
-        );
-        for clause in &ast.ensures {
-            let applied = application.apply(clause);
-            effects.extend(applied.effects);
-            unresolved.extend(applied.unresolved);
-            unapplied.extend(applied.unapplied);
-        }
-    }
+            (world, next),
+            (bindings, told),
+            &ast.ensures,
+        )
+    } else {
+        crate::Applied::default()
+    };
+    let crate::Applied { effects, unresolved: noted, unapplied } = applied;
+    unresolved.extend(noted);
 
     RuleOutcome {
         rule: id.to_owned(),
@@ -475,72 +522,6 @@ fn check_invariants(
         .collect()
 }
 
-/// Every state-condition rule whose condition holds over `world`.
-/// Every state-condition rule whose condition holds in `world`.
-///
-/// Distinct from [`StepOutcome::newly_enabled`], which subtracts the ones that
-/// already held before the step. That subtraction is right for the browser,
-/// where the list is "what your action just made possible"; it is wrong for
-/// anything asking what the world currently makes true, because a rule that was
-/// already enabled and never run would never appear.
-#[must_use]
-pub fn enabled(
-    spec: &SpecGraph,
-    program: &Program,
-    sources: &Sources,
-    world: &World,
-) -> Vec<Enabled> {
-    let mut found = Vec::new();
-
-    for node in spec.nodes_of(NodeKind::Rule) {
-        let Some(detail) = node.detail.as_rule() else { continue };
-        if detail.source == TriggerSource::External {
-            continue;
-        }
-        let Some(ast) = program.rule(node.id.as_str()) else { continue };
-        let Some((binding, condition)) = state_condition(detail, ast) else { continue };
-
-        let source = sources.get(&node.module).map(String::as_str).unwrap_or_default();
-        let entity = detail.trigger.as_str();
-        let mut over = Vec::new();
-        let mut undecided = Vec::new();
-
-        for instance in world.instances_of(entity) {
-            let scope = about(
-                Env::new(world, &node.module, source).deriving(program.derivations()),
-                entity,
-                binding,
-                &instance.id,
-            );
-            let evaluated = eval(condition, &scope);
-            match evaluated.truth() {
-                Truth::True => over.push(Value::Ref(instance.id.clone())),
-                // A condition nobody could settle is not a condition that said
-                // no, and the browser offers these as the steps a person may
-                // take next — so an instance missing from that list for a
-                // reason nothing recorded is a rule silently not offered.
-                Truth::Unknown => undecided.extend(evaluated.unresolved),
-                Truth::False => {}
-            }
-        }
-
-        if !over.is_empty() || !undecided.is_empty() {
-            found.push(Enabled {
-                rule: node.id.as_str().to_owned(),
-                name: node.name.clone(),
-                module: node.module.clone(),
-                trigger: detail.trigger.clone(),
-                source: detail.source,
-                over,
-                binding: binding.to_owned(),
-                undecided,
-            });
-        }
-    }
-
-    found
-}
-
 /// The scope a rule's `let`s and preconditions are read in.
 ///
 /// One function for both, so they cannot disagree about what is in scope —
@@ -550,10 +531,12 @@ fn rule_scope<'a>(
     base: Env<'a>,
     program: &'a Program,
     declared: &[String],
-    bindings: &BTreeMap<String, Value>,
+    (bindings, told): (&BTreeMap<String, Value>, &Told),
 ) -> Env<'a> {
     let mut scope = base.deriving(program.derivations()).declaring(declared.iter().cloned());
     scope.bindings.clone_from(bindings);
+    // Why a `let` is undecided, for the precondition that reads it to say.
+    scope.told.clone_from(told);
     scope
 }
 
@@ -561,7 +544,7 @@ fn rule_scope<'a>(
 ///
 /// A binding, not a call. A rule written any other way — or one somebody
 /// outside fires — has no instance for a condition to be about.
-fn state_condition<'a>(
+pub(crate) fn state_condition<'a>(
     detail: &inspect_model::graph::RuleDetail,
     ast: &'a inspect_model::RuleAst,
 ) -> Option<(&'a str, &'a Expr)> {
@@ -602,24 +585,23 @@ fn carried(event: &Event, world: &World, entity: &str) -> Option<crate::value::E
 /// One function for the two places that read it — whether the rule is enabled,
 /// and whether a firing woke *this* rule — because two scopes built by hand are
 /// two answers waiting to disagree about the same condition.
-fn about<'a>(
+pub(crate) fn about<'a>(
     mut scope: Env<'a>,
     entity: &str,
     binding: &str,
     instance: &crate::value::EntityId,
 ) -> Env<'a> {
-    scope.bindings.insert(binding.to_owned(), Value::Ref(instance.clone()));
-    scope.bindings.insert("this".to_owned(), Value::Ref(instance.clone()));
+    scope.set(binding.to_owned(), Value::Ref(instance.clone()));
+    scope.set("this", Value::Ref(instance.clone()));
     // The entity's own name too. `when: copy: Copy.status = lost` reads as
     // "for each Copy, where *this* copy's status is lost" — inside the
     // condition the type name means the instance, not the collection. Without
     // this the condition asks whether *every* copy is lost, which is a
     // different question and answers `unknown`.
-    scope.bindings.insert(entity.to_owned(), Value::Ref(instance.clone()));
-    if let Some(found) = scope.world.instance(instance) {
-        for (field, value) in &found.fields {
-            scope.bindings.insert(field.clone(), value.clone());
-        }
+    scope.set(entity.to_owned(), Value::Ref(instance.clone()));
+    let world = scope.world;
+    if let Some(found) = world.instance(instance) {
+        scope.bind_stored(found);
     }
     scope
 }

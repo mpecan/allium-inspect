@@ -1,0 +1,1 @@
+{"command":"analyse","diagnostics":[{"code":"allium.rule.unreachableTrigger","location":{"col":11,"file":"failures.allium","line":15},"message":"Rule 'Record' listens for trigger 'FailureReported' but no local surface provides or rule emits it.","severity":"info"}],"findings":[],"spec_file":"failures.allium"}

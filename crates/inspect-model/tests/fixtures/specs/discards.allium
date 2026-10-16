@@ -1,0 +1,65 @@
+-- allium: 3
+-- discards.allium
+--
+-- A listener that discards a parameter with `_` (issue #16).
+--
+-- `Publish` emits `Published(doc: doc, by: doc)` by name. `MarkSeen` wants
+-- only `doc` and discards the rest with `_`, which nothing reads, so nothing
+-- has to bind it; `Glance` does the same with `_?`. `Move` emits
+-- `Moved(doc, doc.next)` by position, two different docs, and `Land` discards
+-- the first. `Annotate` names an argument `reason` that `Mark` has no
+-- parameter for, beside a `_` and an optional `cause?` it may have been meant
+-- for: which is a guess. `hush.allium` does the same as `MarkSeen` across a
+-- module boundary — the shape the issue was filed with.
+
+entity Doc {
+    next: Doc
+    seen: Boolean
+    glanced: Boolean
+    landed: Boolean
+    hushed: Boolean
+    noted: Boolean
+}
+
+rule Publish {
+    when: Publish(doc)
+    ensures: Published(doc: doc, by: doc)
+}
+
+rule MarkSeen {
+    when: Published(doc, _)
+    ensures: doc.seen = true
+}
+
+rule Glance {
+    when: Published(doc, _?)
+    ensures: doc.glanced = true
+}
+
+rule Move {
+    when: Move(doc)
+    ensures: Moved(doc, doc.next)
+}
+
+rule Land {
+    when: Moved(_, to)
+    ensures: to.landed = true
+}
+
+rule Annotate {
+    when: Annotate(doc)
+    ensures: Noted(doc: doc, reason: doc)
+}
+
+rule Mark {
+    when: Noted(doc, _, cause?)
+    ensures: doc.noted = true
+}
+
+surface Desk {
+    facing d: Doc
+    provides:
+        Publish(d)
+        Move(d)
+        Annotate(d)
+}

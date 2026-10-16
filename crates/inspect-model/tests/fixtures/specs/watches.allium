@@ -1,0 +1,52 @@
+-- allium: 3
+-- Issue #23: a relationship filtered on a field the member computes rather
+-- than stores. `active_watches` keeps the watches whose `is_watching` is true,
+-- and `is_watching` is `a or b` on the watch. A loop over that projection is
+-- decided when every member's `a` and `b` are, and when one is not, the reason
+-- is that member's.
+--
+-- `Repo.is_watching` is a field the repo stores under the name the watch
+-- computes: inside the filter the bare name is still the watch's. `Hang` is
+-- the same loop at rule level, with a precondition inside it.
+
+entity Repo {
+    name: String
+    hung: Boolean
+    is_watching: Boolean
+    watches: Watch with repo = this
+    active_watches: watches where is_watching = true
+}
+
+entity Watch {
+    repo: Repo
+    a: Boolean
+    b: Boolean
+    swept: Boolean
+    is_watching: a or b
+    entries: Entry with watch = this
+}
+
+entity Entry {
+    watch: Watch
+}
+
+surface S {
+    facing r: Repo
+    provides: Poke(r)
+    provides: Hang(r)
+}
+
+rule Poke {
+    when: Poke(r)
+    ensures:
+        for w in r.active_watches:
+            Entry.created(watch: w)
+}
+
+rule Hang {
+    when: Hang(r)
+    for w in r.active_watches:
+        requires: w.a = true
+        ensures: w.swept = true
+    ensures: r.hung = true
+}

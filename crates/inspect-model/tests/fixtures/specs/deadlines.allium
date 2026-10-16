@@ -1,0 +1,92 @@
+-- allium: 3
+-- deadlines.allium
+--
+-- Temporal triggers over optional timestamps (issue #20).
+--
+-- A `null` deadline is not due. `Expire` waits for a task's `stopped_at` plus
+-- a ttl to pass; a task still running has no `stopped_at`, so it has nothing
+-- to expire, and the clock moving must not leave `Expire` undecided. `Zombie`
+-- and `ApplyStop` are the chain from the issue as it was filed: the clock
+-- times a silent task out, which is what finally sets its `stopped_at`.
+--
+-- `Invite` asks the same question two more ways: a bare optional (`Lapse`)
+-- and a deadline built from two offsets with a strict `<` (`Escalate`). `Offer` asks the opposite
+-- question — is the opening still ahead — which a `null` does not answer
+-- either way, so `Withdraw` stays undecided on an offer with no `opens_at`.
+--
+-- `Overdue` reads a chore's deadline without binding the chore it is about.
+-- `allium check` takes it as temporal, and the clock's listing never reads it,
+-- so the listing's silence about it is not a *no*.
+
+config {
+    ttl: Duration = 1.hour
+    zombie: Duration = 10.minutes
+    grace: Duration = 1.day
+}
+
+entity Task {
+    started_at: Timestamp
+    stopped_at: Timestamp?
+    status: running | failure
+    expired: Boolean
+}
+
+rule Zombie {
+    when: task: Task.started_at + config.zombie <= now
+    requires: task.status = running
+    ensures: TimedOut(task: task)
+}
+
+rule ApplyStop {
+    when: TimedOut(task)
+    requires: task.status = running
+    ensures:
+        task.status = failure
+        task.stopped_at = now
+}
+
+rule Expire {
+    when: task: Task.stopped_at + config.ttl <= now
+    requires: not task.expired
+    ensures: task.expired = true
+}
+
+entity Invite {
+    sent_at: Timestamp?
+    expires_at: Timestamp?
+    lapsed: Boolean
+    escalated: Boolean
+}
+
+rule Lapse {
+    when: invite: Invite.expires_at <= now
+    requires: not invite.lapsed
+    ensures: invite.lapsed = true
+}
+
+rule Escalate {
+    when: invite: Invite.sent_at + config.grace + config.grace < now
+    requires: not invite.escalated
+    ensures: invite.escalated = true
+}
+
+entity Offer {
+    opens_at: Timestamp?
+    withdrawn: Boolean
+}
+
+rule Withdraw {
+    when: offer: Offer.opens_at > now
+    requires: not offer.withdrawn
+    ensures: offer.withdrawn = true
+}
+
+entity Chore {
+    due_at: Timestamp
+    late: Boolean
+}
+
+rule Overdue {
+    when: Chore.due_at <= now
+    ensures: Chore.late = true
+}

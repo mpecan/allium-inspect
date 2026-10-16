@@ -595,6 +595,29 @@ else
 fi
 git -C "$sq" reset -q --hard HEAD~1
 
+# Refused: Rust changed in the working tree and not committed, modified or
+# new. A diff-scoped pass reads history only, so it found nothing to mutate and
+# re-stamped a pass onto HEAD over code it never looked at. The receipt below
+# is one the accepted case re-stamps, so only the refusal can stop it.
+for dirty in modified untracked; do
+    case "$dirty" in
+        modified) printf 'pub fn changed() {}\n' >> "$sq/src/lib.rs" ;;
+        untracked) printf 'pub fn new() {}\n' > "$sq/src/new.rs" ;;
+    esac
+    printf '# scratch\n%s 40/40 0 %s %s\n' "$gone" "$stamp" "$sq_fp" > "$sq_mut"
+    cp "$sq_mut" "$scratch/before.txt"
+    expect_fail "re-stamp over $dirty Rust nobody committed" "commit them first" restamp
+    checks=$((checks + 1))
+    if cmp -s "$sq_mut" "$scratch/before.txt"; then
+        echo "ok:   a receipt is not re-stamped over $dirty Rust"
+    else
+        echo "FAIL: a receipt was re-stamped over $dirty Rust"
+        failures=$((failures + 1))
+    fi
+    git -C "$sq" checkout -q -- src/lib.rs
+    rm -f "$sq/src/new.rs"
+done
+
 # Accepted: 0 survivors, same sources, commit gone after a squash-merge. The
 # new receipt names HEAD, keeps the score and the time the mutants actually
 # ran, and carries HEAD's fingerprint.

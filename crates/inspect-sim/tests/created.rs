@@ -257,6 +257,7 @@ fn offered(name: &str, trigger: &str, binding: &str, over: &[&EntityId]) -> Enab
         over: over.iter().map(|id| Value::Ref((*id).clone())).collect(),
         binding: binding.to_owned(),
         undecided: Vec::new(),
+        unsettled_over: Vec::new(),
     }
 }
 

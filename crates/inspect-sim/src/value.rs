@@ -17,7 +17,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::truth::Truth;
+use crate::{eval::Unresolved, truth::Truth};
 
 /// The identity of one entity instance in a world.
 ///
@@ -96,6 +96,19 @@ impl Value {
         matches!(self, Value::Unknown)
     }
 
+    /// Unknown, or a set holding something unknown at any depth.
+    ///
+    /// `{x.f}` with `f` unset is not the set of one known thing, and two of
+    /// them are not equal because both say `Unknown` inside.
+    #[must_use]
+    pub fn holds_unknown(&self) -> bool {
+        match self {
+            Value::Unknown => true,
+            Value::Set(items) => items.iter().any(Value::holds_unknown),
+            _ => false,
+        }
+    }
+
     /// The value as a truth, for a bare expression used as a condition.
     ///
     /// Only a boolean is a condition. A non-empty string is not "truthy" here —
@@ -170,6 +183,28 @@ impl Value {
         }
     }
 
+    /// A set of `items`, each member held once.
+    ///
+    /// `{a, b, a}` is the set `{a, b}`, and [`Value::equals`] counts members,
+    /// so whatever builds a set from what a spec wrote builds it here — the
+    /// seed reading a default and the evaluator reading the same words in a
+    /// rule. Built two ways, `config.apps = {a, b, a}` came out false against
+    /// a default written `{a, b, a}` (issue #25).
+    ///
+    /// Only a member *definitely* equal to an earlier one is dropped: two
+    /// undecided members may or may not be the same thing, and dropping one
+    /// would decide that they were.
+    #[must_use]
+    pub fn set_of(items: impl IntoIterator<Item = Value>) -> Value {
+        let mut members: Vec<Value> = Vec::new();
+        for item in items {
+            if !members.iter().any(|member| member.equals(&item) == Truth::True) {
+                members.push(item);
+            }
+        }
+        Value::Set(members)
+    }
+
     /// Whether two values are equal, in three-valued logic.
     ///
     /// Anything compared with [`Value::Unknown`] is undecided — including
@@ -194,16 +229,34 @@ impl Value {
             // can be paired off by pairs that are definitely equal, unequal if
             // they cannot be even counting every undecided pair as equal, and
             // undecided between the two.
+            //
+            // Counting members is only an answer when every member is known.
+            // `{x, y}` with both undecided may be one member twice, so its
+            // size says nothing; read as two against `{a}`, it was told no,
+            // and `config.apps = {a, b, a}` was refused against a default the
+            // spec wrote the same way (issue #25). With an undecided member
+            // anywhere the two are unequal only if some member has nothing on
+            // the other side it could be.
             (Value::Set(left), Value::Set(right)) => {
-                if left.len() != right.len() {
-                    return Truth::False;
-                }
                 let pairs: Vec<Vec<Truth>> =
                     left.iter().map(|a| right.iter().map(|b| a.equals(b)).collect()).collect();
-                if paired(&pairs, |truth| truth == Truth::True) {
+                if left.len() == right.len() && paired(&pairs, |truth| truth == Truth::True) {
                     Truth::True
-                } else if paired(&pairs, |truth| truth != Truth::False) {
-                    Truth::Unknown
+                } else if self.holds_unknown() || other.holds_unknown() {
+                    let stranded_left =
+                        pairs.iter().any(|row| row.iter().all(|truth| *truth == Truth::False));
+                    let stranded_right = (0..right.len())
+                        .any(|column| pairs.iter().all(|row| row[column] == Truth::False));
+                    // More members definitely distinct on one side than the
+                    // other holds at all, counting a repeat once: `{x} = {a,
+                    // b}` is no, whatever `x` is.
+                    let outnumbered =
+                        distinct_known(left) > right.len() || distinct_known(right) > left.len();
+                    if stranded_left || stranded_right || outnumbered {
+                        Truth::False
+                    } else {
+                        Truth::Unknown
+                    }
                 } else {
                     Truth::False
                 }
@@ -278,6 +331,18 @@ fn render_duration(millis: i64) -> String {
     format!("{millis}.milliseconds")
 }
 
+/// How many members of `items` are settled and definitely distinct from each
+/// other: a lower bound on how many members the collection has.
+fn distinct_known(items: &[Value]) -> usize {
+    let mut members: Vec<&Value> = Vec::new();
+    for item in items.iter().filter(|item| !item.holds_unknown()) {
+        if !members.iter().any(|member| member.equals(item) == Truth::True) {
+            members.push(item);
+        }
+    }
+    members.len()
+}
+
 /// Whether every row of `pairs` can be given a column of its own whose cell
 /// `admits` — a perfect matching, found by augmenting paths. The collections
 /// a spec compares are a handful long, so the simple search is enough.
@@ -337,13 +402,32 @@ pub struct Instance {
     pub module: String,
     /// Field values, ordered so a world serialises identically twice.
     pub fields: BTreeMap<String, Value>,
+    /// Why a field holds [`Value::Unknown`], for each one a rule wrote that way.
+    ///
+    /// The reason belongs to the write — `box.out = box.title ?? summary(box)`
+    /// with nobody answering `summary` — and is needed at the read, which may
+    /// be a journey's `then` a step later. Stored as a bare unknown, it read
+    /// back as "`b.out` is unknown" and nothing else: the shape stipulation 1
+    /// calls indistinguishable from a bug (issue #27).
+    ///
+    /// Left out of the wire when empty, so a world with nothing undecided in
+    /// it serialises exactly as it did before this existed.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[ts(optional, as = "Option<BTreeMap<String, Vec<Unresolved>>>")]
+    pub why: BTreeMap<String, Vec<Unresolved>>,
 }
 
 impl Instance {
     /// An instance of `entity` from `module`, with no fields set.
     #[must_use]
     pub fn new(id: EntityId, entity: impl Into<String>, module: impl Into<String>) -> Self {
-        Self { id, entity: entity.into(), module: module.into(), fields: BTreeMap::new() }
+        Self {
+            id,
+            entity: entity.into(),
+            module: module.into(),
+            fields: BTreeMap::new(),
+            why: BTreeMap::new(),
+        }
     }
 
     /// The value of `field`.
@@ -357,9 +441,39 @@ impl Instance {
         self.fields.get(field).cloned().unwrap_or(Value::Unknown)
     }
 
-    /// Set `field` to `value`.
+    /// Set `field` to `value`, forgetting why it was undecided before.
     pub fn set(&mut self, field: impl Into<String>, value: Value) {
-        self.fields.insert(field.into(), value);
+        let field = field.into();
+        self.why.remove(&field);
+        self.fields.insert(field, value);
+    }
+
+    /// Set `field` to `value`, and when that is undecided — or a collection
+    /// holding something undecided — remember `why`.
+    ///
+    /// A settled value forgets any reason, the same as [`Self::set`]: a reason
+    /// kept beside a value it no longer explains would be read as explaining
+    /// whatever is written there next. `{a, pick(b)}` with `pick` unanswered
+    /// is not settled: its member may be `a`, so its count is not known.
+    pub fn set_explained(&mut self, field: impl Into<String>, value: Value, why: Vec<Unresolved>) {
+        let field = field.into();
+        let undecided = value.holds_unknown() && !why.is_empty();
+        self.set(field.clone(), value);
+        if undecided {
+            self.why.insert(field, why);
+        }
+    }
+
+    /// Why `field` holds an undecided value, when a write said.
+    ///
+    /// Nothing for a field that holds anything else, whatever arrived over the
+    /// wire beside it.
+    #[must_use]
+    pub fn why(&self, field: &str) -> &[Unresolved] {
+        match self.fields.get(field) {
+            Some(value) if value.holds_unknown() => self.why.get(field).map_or(&[], Vec::as_slice),
+            _ => &[],
+        }
     }
 
     /// The same instance with `field` set.
@@ -481,6 +595,20 @@ mod tests {
     }
 
     #[test]
+    fn a_set_holds_each_member_once_and_every_undecided_one() {
+        assert_eq!(
+            Value::set_of([Value::Int(1), Value::Int(2), Value::Int(1), Value::Float(2.0)]),
+            Value::Set(vec![Value::Int(1), Value::Int(2)])
+        );
+        // Two undecided members may be one thing or two; neither is dropped.
+        assert_eq!(
+            Value::set_of([Value::Unknown, Value::Unknown, Value::Int(1)]),
+            Value::Set(vec![Value::Unknown, Value::Unknown, Value::Int(1)])
+        );
+        assert_eq!(Value::set_of([]), Value::Set(Vec::new()));
+    }
+
+    #[test]
     fn collections_compare_element_by_element() {
         let one = Value::Set(vec![Value::Int(1), Value::Int(2)]);
         assert_eq!(one.equals(&Value::Set(vec![Value::Int(1), Value::Int(2)])), Truth::True);
@@ -489,6 +617,27 @@ mod tests {
             one.equals(&Value::Set(vec![Value::Int(1), Value::Unknown])),
             Truth::Unknown,
             "one undecided element leaves the whole comparison undecided"
+        );
+    }
+
+    /// More members definitely distinct on one side than the other holds at
+    /// all is a decided no, an undecided member or not: `{x}` cannot be two
+    /// things. A repeat counts once, and an undecided member counts for none.
+    #[test]
+    fn a_set_too_small_to_hold_the_others_distinct_members_is_not_equal() {
+        let (a, b) = (Value::Enum("a".to_owned()), Value::Enum("b".to_owned()));
+        let lone = Value::Set(vec![Value::Unknown]);
+        let two = Value::Set(vec![a.clone(), b.clone()]);
+        assert_eq!(lone.equals(&two), Truth::False);
+        assert_eq!(two.equals(&lone), Truth::False);
+        let repeated = Value::Set(vec![a.clone(), a.clone()]);
+        assert_eq!(lone.equals(&repeated), Truth::Unknown, "`x` may be `a`");
+        let pair = Value::Set(vec![Value::Unknown, Value::Unknown]);
+        assert_eq!(pair.equals(&two), Truth::Unknown);
+        assert_eq!(
+            pair.equals(&Value::Set(vec![a])),
+            Truth::Unknown,
+            "`x` and `y` may both be `a`"
         );
     }
 
@@ -508,6 +657,17 @@ mod tests {
         assert_eq!(open.equals(&text(&["b", "a"])), Truth::Unknown);
         let closed = Value::Set(vec![Value::Unknown, Value::Str("c".to_owned())]);
         assert_eq!(closed.equals(&text(&["a", "b"])), Truth::False);
+        // Sizes are not counted past an undecided member: two of them may be
+        // one member written twice, and an empty side strands every member of
+        // the other.
+        let two_open = Value::Set(vec![Value::Unknown, Value::Unknown]);
+        assert_eq!(two_open.equals(&text(&["a"])), Truth::Unknown);
+        assert_eq!(text(&["a"]).equals(&two_open), Truth::Unknown);
+        let three = Value::Set(vec![Value::Unknown, Value::Unknown, Value::Str("c".to_owned())]);
+        assert_eq!(three.equals(&text(&["a", "b"])), Truth::False);
+        assert_eq!(text(&["a", "b"]).equals(&three), Truth::False);
+        assert_eq!(text(&[]).equals(&Value::Set(vec![Value::Unknown])), Truth::False);
+        assert_eq!(Value::Set(vec![Value::Unknown]).equals(&text(&[])), Truth::False);
         // A pairing found only by moving an earlier choice.
         let left = Value::Set(vec![Value::Unknown, Value::Str("a".to_owned())]);
         assert_eq!(left.equals(&text(&["a", "b"])), Truth::Unknown);
@@ -614,6 +774,55 @@ mod tests {
             .with("status", Value::Enum("visible".to_owned()));
         assert_eq!(instance.field("body"), Value::Str("hello".to_owned()));
         assert_eq!(instance.field("status"), Value::Enum("visible".to_owned()));
+    }
+
+    /// Only an undecided value keeps a reason, and only a reason that says
+    /// something: a settled write that carried a note about a branch it did
+    /// not need, or an unknown with nothing to say, stores nothing — so the
+    /// wire stays as it was (issue #27).
+    #[test]
+    fn only_an_undecided_value_keeps_why() {
+        let note = crate::eval::Unresolved {
+            reason: "nothing is bound to `x`".to_owned(),
+            expression: None,
+            span: None,
+        };
+        let mut instance = Instance::new(EntityId::new("M", 1), "M", "m");
+        instance.set_explained("settled", Value::Int(1), vec![note.clone()]);
+        instance.set_explained("silent", Value::Unknown, Vec::new());
+        assert!(instance.why.is_empty(), "{:?}", instance.why);
+        instance.set_explained("open", Value::Unknown, vec![note.clone()]);
+        assert_eq!(instance.why("open"), std::slice::from_ref(&note));
+    }
+
+    /// A reason kept beside a value it no longer explains would be read as
+    /// explaining whatever is written there next — another unknown included.
+    #[test]
+    fn rewriting_a_field_forgets_why_it_was_undecided() {
+        let note = crate::eval::Unresolved {
+            reason: "nothing is bound to `x`".to_owned(),
+            expression: None,
+            span: None,
+        };
+        let mut instance = Instance::new(EntityId::new("M", 1), "M", "m");
+        instance.set_explained("f", Value::Unknown, vec![note.clone()]);
+        instance.set_explained("f", Value::Unknown, Vec::new());
+        assert!(instance.why("f").is_empty());
+        assert!(!instance.why.contains_key("f"), "{:?}", instance.why);
+        instance.set_explained("f", Value::Unknown, vec![note]);
+        instance.set("f", Value::Unknown);
+        assert!(!instance.why.contains_key("f"), "{:?}", instance.why);
+    }
+
+    /// A world comes back from the browser; a reason sent beside a settled
+    /// value explains nothing and is not given.
+    #[test]
+    fn a_reason_beside_a_settled_value_on_the_wire_is_not_given() {
+        let json = r#"{"id":"M#1","entity":"M","module":"m","fields":{"f":{"kind":"int","value":1}},
+            "why":{"f":[{"reason":"stale","expression":null,"span":null}]}}"#;
+        let instance: Instance = serde_json::from_str(json).expect("an instance");
+        assert_eq!(instance.field("f"), Value::Int(1));
+        assert!(instance.why("f").is_empty());
     }
 
     #[test]

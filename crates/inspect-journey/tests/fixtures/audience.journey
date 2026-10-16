@@ -1,0 +1,189 @@
+-- Issue #18: a reaction to an act's creation asks a black box about the
+-- instance the act made. `stipulate` cannot answer it — before the act the
+-- issue does not exist to be named, and after it the reaction has already
+-- asked — so the answer is written under the act, beside `creating`.
+
+-- As the issue was filed: said after the act, too late for what it set off.
+journey TheAnswerComesTooLate {
+    cast:
+        repo: Repo
+    1. open an issue whose audience is empty
+        repo does Open(repo, "crash") on Tracker
+            creating issue: Issue
+        stipulate audience(issue) = {}
+        then issue.title = "crash"
+}
+
+journey NobodyIsInTheAudience {
+    cast:
+        repo: Repo
+    1. open an issue whose audience is empty
+        repo does Open(repo, "crash") on Tracker
+            creating issue: Issue
+            where audience(issue) = {}
+        then Notify fires
+        then issue.title = "crash"
+        then issue.notified = false
+}
+
+journey TheRepoIsTheAudience {
+    cast:
+        repo: Repo
+    1. open an issue the repo hears about
+        repo does Open(repo, "crash") on Tracker
+            creating issue: Issue
+            where audience(issue) = {repo}
+        then issue.notified = true
+}
+
+-- Two issues made by one act. The answer is about the one caught, and the
+-- other's audience is still a question nobody answered.
+journey OnlyTheCaughtIsAnswered {
+    cast:
+        repo: Repo
+    1. split a report into two issues
+        repo does Split(repo, "crash") on Tracker
+            creating issue: Issue
+            where audience(issue) = {}
+        then issue.notified = false
+}
+
+-- An answer with no value answers nothing, under `creating` as in `given`:
+-- refused on the act's line, and not listed.
+journey AnAnswerWithNoValue {
+    cast:
+        repo: Repo
+    1. open an issue and answer with a name nobody set
+        repo does Open(repo, "crash") on Tracker
+            creating issue: Issue
+            where audience(issue) = repo.name
+}
+
+-- Caught nothing, so answered nothing: no line in the ledger.
+journey NothingToAnswerFor {
+    cast:
+        repo: Repo
+    1. open an issue and catch a repo that was never made
+        repo does Open(repo, "crash") on Tracker
+            creating other: Repo
+            where audience(other) = {}
+}
+
+-- Something else left unsettled: `Mute` asks `quiet`, which nothing answers.
+-- A late `stipulate` about a call nobody asked is not why, and is not told it
+-- is; a late one about `quiet` is.
+journey SomethingElseIsUnsettled {
+    cast:
+        repo: Repo
+    1. open a quiet issue
+        repo does Open(repo, "quiet") on Tracker
+            creating issue: Issue
+            where audience(issue) = {}
+        stipulate colour(issue) = "red"
+        stipulate quiet(issue) = true
+}
+
+-- Answered under the act, and said again after it: nothing was left
+-- unsettled, so nothing came too late.
+journey AnsweredAndSaidAgain {
+    cast:
+        repo: Repo
+    1. open an issue and say its audience twice
+        repo does Open(repo, "crash") on Tracker
+            creating issue: Issue
+            where audience(issue) = {}
+        stipulate audience(issue) = {}
+        then issue.notified = false
+}
+
+-- Late, but about the repo, which the act did not make: `where` could not
+-- have said it, so the walk does not suggest it.
+journey AboutSomethingTheActDidNotMake {
+    cast:
+        repo: Repo
+    1. open an issue and answer for the repo
+        repo does Open(repo, "crash") on Tracker
+            creating issue: Issue
+        stipulate audience(repo) = {}
+}
+
+-- `Report` makes the issue and asks about it in one rule, in the turn before
+-- the answer is in force.
+journey AskedAsItWasMade {
+    cast:
+        repo: Repo
+    1. report an issue whose audience is empty
+        repo does Report(repo, "crash") on Tracker
+            creating issue: Issue
+            where audience(issue) = {}
+}
+
+-- `CoreTracker` faces the core repo only. Refused at the door, or unsure
+-- whether the door is open, the act is undone, and so is every answer in it.
+journey TheDoorIsClosed {
+    cast:
+        repo: Repo
+    given:
+        repo.name = "fork"
+    1. a fork opens an issue
+        repo does Open(repo, "crash") on CoreTracker
+            creating issue: Issue
+            where audience(issue) = {}
+}
+
+journey TheDoorMightBeClosed {
+    cast:
+        repo: Repo
+    1. a repo nobody named opens an issue
+        repo does Open(repo, "crash") on CoreTracker
+            creating issue: Issue
+            where audience(issue) = {}
+}
+
+-- Unsure whether the door is open, what the act would have woken is unsure
+-- too, and a `then … fires` about it says which rule and why.
+journey WhatTheDoorMightHaveWoken {
+    cast:
+        repo: Repo
+    1. a repo nobody named opens an issue
+        repo does Open(repo, "crash") on CoreTracker
+            creating issue: Issue
+            where audience(issue) = {}
+        then Open fires
+}
+
+journey TheDoorIsOpen {
+    cast:
+        repo: Repo
+    given:
+        repo.name = "core"
+    1. the core repo opens an issue
+        repo does Open(repo, "crash") on CoreTracker
+            creating issue: Issue
+            where audience(issue) = {}
+        then issue.notified = false
+}
+
+-- Caught, answered, and removed by what the act set off: the name names
+-- nothing once the act is over, as it would without the `where`.
+journey CaughtAndDiscarded {
+    cast:
+        repo: Repo
+    1. open an issue that is spam
+        repo does Open(repo, "spam") on Tracker
+            creating issue: Issue
+            where spam(issue) = true
+        stipulate issue.title = "ham"
+}
+
+-- Answered, with something `for` cannot range over. Notify read the answer,
+-- so the remark about who asked what is not given; what is left is the
+-- simulator's own reason.
+journey AnsweredWithANumber {
+    cast:
+        repo: Repo
+    1. open an issue whose audience is a number
+        repo does Open(repo, "crash") on Tracker
+            creating issue: Issue
+            where audience(issue) = 3
+}

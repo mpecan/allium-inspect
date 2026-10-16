@@ -14,6 +14,7 @@
 //!
 //! Pure, like the two crates it sits on. No clock, no filesystem, no process.
 
+mod answers;
 mod assert;
 pub mod check;
 mod clauses;
@@ -28,6 +29,7 @@ pub mod parse;
 mod reach;
 pub mod report;
 pub mod run;
+mod said;
 mod shapes;
 mod standing;
 mod states;
@@ -42,7 +44,7 @@ pub use evidence::{
     claims, resolve, seal, step_texts,
 };
 pub use journey::{
-    Assertion, Axis, Cast, Clause, Comparison, Given, Journey, Path, Step, Subject, Term,
+    Assertion, Axis, Cast, Clause, Comparison, Given, Journey, Path, Step, Subject, Term, Where,
 };
 pub use parse::{ParseError, parse};
 pub use report::{Strictness, as_json, passes, render};

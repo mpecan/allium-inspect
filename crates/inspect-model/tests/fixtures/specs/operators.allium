@@ -1,0 +1,74 @@
+-- allium: 3
+-- Issue #27: `??` and string `+`, and a field written with a value nothing
+-- settled — it says why when it is read back.
+
+entity Box {
+    title: String?
+    tag: String
+    out: String?
+    label: String?
+    done: Boolean?
+    -- Computed over a field a rule may write undecided: read bare, it still
+    -- says what the write could not settle.
+    shown: out + "!"
+    same: out = "s"
+}
+
+-- The left side, or — when it is null — what `summary` answers.
+rule Name {
+    when: Name(box)
+    ensures: box.out = box.title ?? summary(box)
+}
+
+-- The same choice, spelled out.
+rule NameSpelledOut {
+    when: NameSpelledOut(box)
+    ensures: box.out = if box.title != null: box.title else: summary(box)
+}
+
+-- The fall-through named by a `let`, which used to arrive saying nothing.
+rule NameThroughALet {
+    when: NameThroughALet(box)
+    ensures:
+        let fallback = summary(box)
+        box.out = box.title ?? fallback
+}
+
+-- Reads what `Name` wrote, in a clause of its own.
+rule Ship {
+    when: Ship(box)
+    requires: box.out = "s"
+    ensures: box.done = true
+}
+
+rule Label {
+    when: Label(box, extra)
+    ensures: box.label = box.tag + " " + extra
+}
+
+surface Desk {
+    facing b: Box
+    provides:
+        Name(b)
+        NameSpelledOut(b)
+        NameThroughALet(b)
+        Ship(b)
+        Label(b, extra)
+}
+
+-- Somebody whose box a rule may have named undecided: whether the actor's
+-- filter admits them says what the write could not settle.
+actor Shipper {
+    identified_by: Box where out = "s"
+}
+
+rule Seal {
+    when: Seal(box)
+    ensures: box.done = true
+}
+
+surface Dock {
+    facing shipper: Shipper
+    provides:
+        Seal(shipper)
+}

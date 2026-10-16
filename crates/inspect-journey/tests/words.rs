@@ -249,20 +249,32 @@ fn configuration_is_left_to_the_walk() {
 fn the_fixtures_own_journeys_report_no_word() {
     let sets: &[(&str, &[&str])] = &[
         ("absence", LENDING),
+        ("audience", common::AUDIENCE),
         ("chains", common::CHAINS),
+        ("cleanup", common::CLEANUP),
+        ("deadlines", common::DEADLINES),
+        ("defaults", common::DEFAULTS),
         ("facing", common::FACING),
+        ("failures", common::FAILURES),
         ("fanout", common::FANOUT),
         ("forms", LENDING),
+        ("given_answers", common::GRANTS),
+        ("given_answers_moved", common::GRANTS),
         ("grants", common::GRANTS),
         ("guards", common::GUARDS),
+        ("kinds", common::KINDS),
         ("lending", LENDING),
         ("loss", LENDING),
+        ("operators", common::OPERATORS),
         ("orders", common::ORDERS),
         ("packing", common::PACKING),
         ("pinboard", common::PINBOARD),
         ("reservations", LENDING),
+        ("runs", common::RUNS),
+        ("siblings", common::SIBLINGS),
         ("switches", common::SWITCHES),
         ("undecided", LENDING),
+        ("watches", common::WATCHES),
     ];
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
     let on_disk = std::fs::read_dir(&directory)

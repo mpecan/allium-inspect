@@ -267,12 +267,19 @@ pub(super) fn filtered(source: &Expr, condition: &Expr, env: &Env<'_>) -> Evalua
         let scope = element_scope(env, item);
         let verdict = eval(condition, &scope);
         let holds = verdict.truth();
-        unresolved.extend(verdict.unresolved);
         // Only a definite yes keeps an element. An undecided predicate leaves
         // the element out *and* leaves a note saying so, rather than silently
         // widening or narrowing the result.
-        if holds == Truth::True {
-            kept.push(item.clone());
+        //
+        // And only an undecided one leaves a note. A collection's notes are
+        // read downstream as "may be missing members" — by a loop over it, by
+        // `all` and `any` — so a note from a member that *was* decided says
+        // something false: `a or b` with `a` true is decided in, and still
+        // carries "has no `b` set" from the side nobody needed (issue #23).
+        match holds {
+            Truth::True => kept.push(item.clone()),
+            Truth::False => {}
+            Truth::Unknown => unresolved.extend(verdict.unresolved),
         }
     }
     Evaluation { value: Value::Set(kept), unresolved }
@@ -328,7 +335,7 @@ pub(super) fn quantified(
     let mut verdicts = Vec::new();
     for item in &items {
         let mut scope = element_scope(env, item);
-        scope.bindings.insert(name.clone(), item.clone());
+        scope.set(name.clone(), item.clone());
 
         // `for l in Loans where status = open:` narrows what is claimed about.
         if let Some(filter) = filter {
@@ -387,9 +394,23 @@ pub(crate) fn element_scope<'a>(env: &'a Env<'a>, item: &Value) -> Env<'a> {
     if let Value::Ref(id) = item
         && let Some(instance) = env.world.instance(id)
     {
-        for (field, value) in &instance.fields {
-            scope.bindings.insert(field.clone(), value.clone());
+        if let Some(outer) = scope.element.replace(id.clone()) {
+            scope.enclosing.push(outer);
         }
+        // A bare name the element declares is the element's, whether or not
+        // it holds a value. Inside a definition the bindings already hold
+        // `this`'s stored fields bare, and one spelled like a field the
+        // element computes, or stores and never set, answered for every
+        // element in its place — a definite verdict about the wrong instance.
+        // Unbound here, the element's own lookup answers it: computed in its
+        // scope, or "has no `x` set" (issue #23).
+        scope.bindings.retain(|name, _| name == "this" || !env.has(id, name));
+        // A reason is only ever for a name still bound: one left beside a
+        // name unbound here would be read as explaining whatever is bound
+        // under it next.
+        let bound = &scope.bindings;
+        scope.told.retain(|name, _| bound.contains_key(name));
+        scope.bind_stored(instance);
     }
     scope
 }
@@ -402,20 +423,12 @@ pub(super) fn membership(
     negated: bool,
 ) -> Evaluation {
     let needle = eval(element, env);
-    let haystack = match collection {
-        // `message.status in {visible, amended}` — beside a state, a bare name
-        // in a set written out is a state too. It is the judgement `compare`
-        // makes for `status = visible`, one element at a time, and made for
-        // the same reason: the other side says which was meant. Without it
-        // the set asked for the value of a binding called `visible`, and every
-        // rule guarded this way was undecided.
-        Expr::SetLiteral { elements, .. } | Expr::ListLiteral { elements, .. }
-            if matches!(needle.value, Value::Enum(_)) =>
-        {
-            states_beside(elements, env)
-        }
-        _ => eval(collection, env),
-    };
+    // `message.status in {visible, amended}` reads its declared words as
+    // states through the one reading every set written out gets, so `in` puts
+    // a word to the same test `=` and a `for` do: an unset field, a parameter
+    // or a name bound to an undecided value is not the state it spells (see
+    // `literals::set_literal`).
+    let haystack = eval(collection, env);
     // Only the collection's own reasons say it may be short of members; the
     // needle's say something about the needle.
     let incomplete = !haystack.unresolved.is_empty();
@@ -455,24 +468,4 @@ pub(super) fn membership(
     };
     let truth = if negated { inside.not() } else { inside };
     Evaluation { value: truth_value(truth), unresolved }
-}
-
-/// A literal set whose unbound bare names are read as the states they spell.
-///
-/// Only the names nothing bound: `{pending, current}` where `current` is a
-/// binding is that binding's value, the same as anywhere else.
-fn states_beside(elements: &[Expr], env: &Env<'_>) -> Evaluation {
-    let mut items = Vec::with_capacity(elements.len());
-    let mut unresolved = Vec::new();
-    for element in elements {
-        let evaluated = eval(element, env);
-        match (evaluated.value, bare_name(element)) {
-            (Value::Unknown, Some(state)) => items.push(Value::Enum(state.to_owned())),
-            (value, _) => {
-                unresolved.extend(evaluated.unresolved);
-                items.push(value);
-            }
-        }
-    }
-    Evaluation { value: Value::Set(items), unresolved }
 }

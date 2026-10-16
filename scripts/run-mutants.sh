@@ -40,6 +40,20 @@ OUT="$OUT_PARENT/mutants.out"
 # it checks more. When a test starts reading something new, add it here.
 MUTATION_INPUTS=(crates apps Cargo.toml Cargo.lock rust-toolchain.toml .cargo specs docs/journeys)
 
+# A receipt names a commit, and says the code at that commit was mutated. The
+# diff-scoped pass reads committed history only, so over an uncommitted change it
+# found nothing to mutate and re-stamped a pass onto HEAD — a receipt for code
+# the run never looked at, while the debt gate (which counts the working tree)
+# was asking for exactly that code to be mutated. A full pass mutates the
+# working tree but would stamp HEAD's commit and fingerprint on it, which is the
+# same claim the other way round. Either way: commit first.
+uncommitted="$(git status --porcelain --untracked-files=all -- "${MUTATION_INPUTS[@]}" "$RUST_PATHSPEC")"
+if [ -n "$uncommitted" ]; then
+    echo "Uncommitted changes to what a mutation run measures:"
+    printf '%s\n' "$uncommitted" | sed 's/^/       /'
+    fail "commit them first — a receipt names a commit, and these are in none"
+fi
+
 # Move a 0-survivor receipt onto HEAD when nothing the run depended on has
 # changed. Called only when the base came from the receipt and the Rust diff
 # from it is empty, so there is nothing to mutate — and without this the receipt

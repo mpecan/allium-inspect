@@ -13,6 +13,7 @@ function entry(trigger: string, over: string[]): Enabled {
     over: over.map((value) => ({ kind: "ref", value })),
     binding: "o",
     undecided: [],
+    unsettled_over: [],
   };
 }
 

@@ -21,7 +21,7 @@ use inspect_sim::{
     Value,
     step::{Sources, StepOutcome},
     value::EntityId,
-    world::{Answer, Event, World},
+    world::{Event, World},
 };
 
 pub use crate::shapes::{
@@ -31,7 +31,7 @@ pub(crate) use crate::shapes::{Settled, worst};
 use crate::{
     assert::Sight,
     check::{self, Verdict},
-    journey::{Assertion, Clause, Journey, Step, Subject, Term},
+    journey::{Assertion, Clause, Journey, Step, Term},
     outcome::{refusal, verdict_of},
 };
 
@@ -79,7 +79,14 @@ pub fn walk(
         unapplied: Vec::new(),
         refused: Vec::new(),
         created: Vec::new(),
+        removed: BTreeMap::new(),
+        awaiting: None,
+        landed: Vec::new(),
+        unheard: Vec::new(),
+        answered: Vec::new(),
+        refused_in_the_world: Vec::new(),
         cut_off: None,
+        listed: None,
         firings: 0,
         moved: false,
         notes: Vec::new(),
@@ -126,10 +133,15 @@ pub fn walk(
 }
 
 /// A rule the engine could not decide, and the first reason it gave.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct Undecided {
     pub(crate) rule: String,
     pub(crate) why: String,
+    /// The calls nothing answered when it ran, as the spec wrote them:
+    /// `audience(issue)`. What a remark about an answer matches against.
+    pub(crate) asked: Vec<String>,
+    /// The engine turn of its act it ran in.
+    pub(crate) turn: usize,
 }
 
 pub(crate) struct Walker<'a> {
@@ -162,9 +174,31 @@ pub(crate) struct Walker<'a> {
     /// Every instance made since it, in the order it was made — the act's own
     /// first, then whatever it set off.
     pub(crate) created: Vec<EntityId>,
+    /// Every instance removed since it, and the rule that removed it first.
+    pub(crate) removed: BTreeMap<EntityId, String>,
+    /// An act's `where` answers, until what they are about is made.
+    pub(crate) awaiting: Option<crate::answers::Awaiting>,
+    /// The `where` answers that landed since the last clause, and on what.
+    pub(crate) landed: Vec<crate::answers::Landed>,
+    /// Why a `where` answer was refused once its instance landed, for the
+    /// act's line to say.
+    pub(crate) unheard: Vec<String>,
+    /// Every answer `given` or a file's world put in force, and the line that
+    /// said it — so a later one about the same call can say what it replaced.
+    pub(crate) answered: Vec<crate::answers::FromTheStart>,
+    /// Lines of a file's world that answered a call with something that had
+    /// no value, and so put nothing in force. Kept past the walk that laid the
+    /// world out, because a journey continuing from it does not lay it out
+    /// again and would otherwise list the line `from the file`.
+    pub(crate) refused_in_the_world: Vec<usize>,
     /// A cascade since it that was cut off before it settled, and where. Kept
     /// apart from `undecided`: it names triggers still waiting, not a rule.
     pub(crate) cut_off: Option<String>,
+    /// Since it, whether the clock settled the world to the end — and if so,
+    /// every state rule some round's listing could not decide for an instance.
+    /// A rule settled to the end and not in here was decided *false* wherever
+    /// it was asked, so `then … does not fire` about it has an answer.
+    pub(crate) listed: Option<std::collections::BTreeSet<String>>,
     /// Events fired since it, the act's own included, against the budget that
     /// stops a cascade that grows faster than the round bound can catch.
     pub(crate) firings: usize,
@@ -231,6 +265,35 @@ impl Walker<'_> {
                 continue;
             }
             let mut outcome = self.walk_clause(clause);
+            // A stipulation that landed and has something to say about when
+            // it was said: worth reading, and no reason the step fails.
+            if matches!(clause, Clause::Stipulate { .. })
+                && outcome.verdict == Verdict::Specified
+                && let Some(detail) = outcome.detail.take()
+            {
+                asides.push(Outcome {
+                    verdict: Verdict::Remark,
+                    detail: Some(detail),
+                    ..outcome.clone()
+                });
+            }
+            // An act whose `where` answered a call something still asked
+            // unanswered: which of the two ways, beside the act.
+            //
+            // And a `where` answer refused once its instance landed: the
+            // journey said something the walk could not put in force. That is
+            // a line of the step, not an aside — undecided in its verdict, as
+            // a `stipulate` refused for the same reason is — or a step whose
+            // act held would read "holds" over an answer it never gave.
+            let mut unheard = Vec::new();
+            if matches!(clause, Clause::Does { .. }) {
+                asides.extend(self.unanswered().into_iter().map(|detail| Outcome {
+                    verdict: Verdict::Remark,
+                    detail: Some(detail),
+                    ..outcome.clone()
+                }));
+                unheard = std::mem::take(&mut self.unheard);
+            }
             // A definite `false` that follows something undecided is not the
             // spec forbidding anything — it is a consequence of a world this
             // tool could not finish computing. Reporting it as a refusal would
@@ -248,7 +311,16 @@ impl Walker<'_> {
                     None => "something earlier in this step was undecided".to_owned(),
                 });
             }
+            let refused: Vec<Outcome> = unheard
+                .into_iter()
+                .map(|detail| Outcome {
+                    verdict: Verdict::Undecided,
+                    detail: Some(detail),
+                    ..outcome.clone()
+                })
+                .collect();
             outcomes.push(outcome);
+            outcomes.extend(refused);
         }
         Walked {
             number: step.number,
@@ -263,19 +335,28 @@ impl Walker<'_> {
     fn walk_clause(&mut self, clause: &Clause) -> Outcome {
         let about = about(clause);
         match clause {
-            Clause::Does { actor, trigger, arguments, surface, creating, negated, line } => self
-                .act(
-                    &Act {
-                        actor,
-                        trigger,
-                        arguments,
-                        surface,
-                        creating: creating.as_ref(),
-                        negated: *negated,
-                    },
-                    *line,
-                    about,
-                ),
+            Clause::Does {
+                actor,
+                trigger,
+                arguments,
+                surface,
+                creating,
+                answering,
+                negated,
+                line,
+            } => self.act(
+                &Act {
+                    actor,
+                    trigger,
+                    arguments,
+                    surface,
+                    creating: creating.as_ref(),
+                    answering,
+                    negated: *negated,
+                },
+                *line,
+                about,
+            ),
             Clause::After { duration, line, .. } => self.advance(duration, *line, about),
             Clause::Then { assertion, line } => self.assert(assertion, *line, about),
             Clause::Sees { actor, subject, surface, contexts, negated, line } => self.observe(
@@ -283,42 +364,7 @@ impl Walker<'_> {
                 about,
             ),
             Clause::Stipulate { subject, value, line } => {
-                let value = self.value_of(value);
-                let written = format!("{} = {}", subject.as_written(), value.render());
-                match subject {
-                    // Listed only once it landed. The ledger exists so a reader
-                    // can see everything the journey was told rather than
-                    // shown, and a line in it that never reached the world is a
-                    // false receipt.
-                    Subject::Path(path) => match self.assign(path, value) {
-                        Ok(()) => {
-                            self.stipulated.push(Stipulation {
-                                said: written,
-                                through: self.standing_on.clone(),
-                            });
-                            Outcome {
-                                line: *line,
-                                verdict: Verdict::Specified,
-                                about,
-                                detail: None,
-                            }
-                        }
-                        Err(crate::config::Unwritten { verdict, reason }) => {
-                            Outcome { line: *line, verdict, about, detail: Some(reason) }
-                        }
-                    },
-                    // A call writes nowhere: there is no field to set, which is
-                    // the whole reason it needs saying. It is remembered and
-                    // answered from when the specification asks.
-                    Subject::Call { name, arguments } => {
-                        let arguments: Vec<Value> =
-                            arguments.iter().map(|term| self.value_of(term)).collect();
-                        self.world.answers.push(Answer { call: name.clone(), arguments, value });
-                        self.stipulated
-                            .push(Stipulation { said: written, through: self.standing_on.clone() });
-                        Outcome { line: *line, verdict: Verdict::Specified, about, detail: None }
-                    }
-                }
+                self.stipulate(subject, value, *line, about)
             }
         }
     }
@@ -344,7 +390,12 @@ impl Walker<'_> {
             event = event.passing(self.value_of(argument));
         }
 
+        // A `where` under `creating` is in force from the moment what it is
+        // about is made, so the cascade that follows reads it.
+        self.awaiting = crate::answers::Awaiting::of(creating, act.answering);
+        let named = creating.and_then(|caught| self.bound.get(&caught.name).cloned());
         let outcome = self.fire(&event);
+        self.awaiting = None;
 
         // `bruno cannot do MemberAsksToChat(…)`: the journey asserting a
         // refusal it *wants*, which without this reads as `refused` — the
@@ -359,22 +410,19 @@ impl Walker<'_> {
             return self.blocked(&outcome, line, about);
         }
 
+        let mut missing = None;
         if let Some(caught) = creating {
-            // The first made, not the first in the world's order: ids sort as
-            // text, so `Order#10` comes before `Order#9`, and a reaction that
-            // made another order would be caught instead of the act's own
-            // whenever the count crossed a digit.
-            let bare = caught.type_expr.rsplit('/').next().unwrap_or(&caught.type_expr);
-            let fresh = self
-                .created
-                .iter()
-                .find(|id| id.entity() == bare && self.world.instance(id).is_some())
-                .cloned();
-            match fresh {
+            match self.first_made(caught) {
                 Some(id) => {
                     self.bind(caught, Some(id), Origin::Caught);
                 }
                 None => {
+                    // A `where` bound the name early, to an instance the act
+                    // then removed: what it named before is what it names.
+                    match named {
+                        Some(id) => self.bound.insert(caught.name.clone(), id),
+                        None => self.bound.remove(&caught.name),
+                    };
                     // Listed anyway, with nothing behind it. A name the journey
                     // uses from here on that resolves to no instance is exactly
                     // what the reader is trying to understand, and leaving it
@@ -385,19 +433,10 @@ impl Walker<'_> {
                     // creates nothing, and reporting only the empty hands sent
                     // a reader looking at their own journey for a mistake that
                     // was three lines up in the specification.
-                    let missing = format!(
+                    missing = Some(format!(
                         "nothing of kind `{}` was created for `{}`",
                         caught.type_expr, caught.name
-                    );
-                    return Outcome {
-                        line,
-                        verdict: verdict_of(&outcome),
-                        about,
-                        detail: Some(match refusal(&outcome) {
-                            Some(why) => format!("{missing} — {why}"),
-                            None => missing,
-                        }),
-                    };
+                    ));
                 }
             }
         }
@@ -409,12 +448,23 @@ impl Walker<'_> {
         // the spec answering, either way, when nothing had been decided.
         // Undecided here, the same as the clock moving into a rule nobody
         // could decide, and every refusal after it in this step with it.
-        if verdict == Verdict::Specified
+        //
+        // With a `creating` that caught nothing it is usually the cause: `for
+        // x in config.chosen` over a parameter nothing settled made nothing,
+        // and read as the rule refusing nothing that was a held line with an
+        // empty name behind it (issue #25).
+        let (verdict, why) = if verdict == Verdict::Specified
             && let Some(why) = self.unsettled()
         {
-            return Outcome { line, verdict: Verdict::Undecided, about, detail: Some(why) };
-        }
-        Outcome { line, verdict, about, detail: refusal(&outcome) }
+            (Verdict::Undecided, Some(why))
+        } else {
+            (verdict, refusal(&outcome, |note| self.said_of_the_cast(note)))
+        };
+        let detail = match (missing, why) {
+            (Some(missing), Some(why)) => Some(format!("{missing} — {why}")),
+            (missing, why) => missing.or(why),
+        };
+        Outcome { line, verdict, about, detail }
     }
 
     /// What a `cannot do` came to: the verdicts, mirrored.
@@ -429,7 +479,9 @@ impl Walker<'_> {
     /// clause exists for exactly the cases somebody is relying on.
     fn blocked(&self, outcome: &StepOutcome, line: usize, about: String) -> Outcome {
         let (verdict, detail) = match verdict_of(outcome) {
-            Verdict::Refused => (Verdict::Specified, refusal(outcome)),
+            Verdict::Refused => {
+                (Verdict::Specified, refusal(outcome, |note| self.said_of_the_cast(note)))
+            }
             Verdict::Specified => (
                 Verdict::Refused,
                 Some(format!(
@@ -437,7 +489,7 @@ impl Walker<'_> {
                     self.fired.first().map_or("the act", String::as_str)
                 )),
             ),
-            other => (other, refusal(outcome)),
+            other => (other, refusal(outcome, |note| self.said_of_the_cast(note))),
         };
         Outcome { line, verdict, about, detail }
     }
@@ -498,6 +550,8 @@ pub(crate) struct Act<'a> {
     pub(crate) arguments: &'a [Term],
     pub(crate) surface: &'a str,
     pub(crate) creating: Option<&'a crate::journey::Cast>,
+    /// What the act's `where` lines say calls answer for what it makes.
+    pub(crate) answering: &'a [crate::journey::Where],
     /// Whether the journey said this *cannot* happen.
     pub(crate) negated: bool,
 }

@@ -46,6 +46,10 @@ pub const ORDERS: &[&str] = &["orders"];
 /// The pinboard fixture and the module whose entity it creates.
 pub const PINBOARD: &[&str] = &["notes", "pinboard"];
 
+/// The migrations fixture and the module it emits a trigger into, written
+/// `admin/FailureReported(…)` (issue #17).
+pub const FAILURES: &[&str] = &["failures", "migrations"];
+
 /// The cells fixture, alone: a reaction that makes another of its own kind.
 pub const CELLS: &[&str] = &["cells"];
 
@@ -59,6 +63,22 @@ pub const SHOPS: &[&str] = &["shop", "warehouse"];
 /// The chains fixture and the module that listens to it across a boundary:
 /// emitted triggers, and how what they carry reaches a listener's names.
 pub const CHAINS: &[&str] = &["chains", "relay"];
+
+/// The discards fixture and the module that listens to it across a boundary:
+/// listeners that discard a parameter with `_` (issue #16).
+pub const DISCARDS: &[&str] = &["discards", "hush"];
+
+/// The deadlines fixture, alone: temporal triggers over optional timestamps
+/// that may be `null` (issue #20).
+pub const DEADLINES: &[&str] = &["deadlines"];
+
+/// The cleanup fixture, alone: an instance removed while the clock moves, and
+/// the state rules that were watching it (issue #22).
+pub const CLEANUP: &[&str] = &["cleanup"];
+
+/// The watches fixture, alone: a relationship filtered on a field each member
+/// computes, and a loop over it (issue #23).
+pub const WATCHES: &[&str] = &["watches"];
 
 /// The fanout fixture, alone: a rule that iterates an entity collection and
 /// emits once per member, and the rule chained from that emission.
@@ -80,6 +100,30 @@ pub const QUEUE: &[&str] = &["drafts", "queue"];
 /// theirs and emits one of them: who hears an emission, and a listener whose
 /// own `let` binds what its `when` names.
 pub const NEWSROOM: &[&str] = &["newsroom", "press"];
+
+/// The runs fixture, alone: a status derived from words and compared against
+/// the stored one (issue #21).
+pub const RUNS: &[&str] = &["runs"];
+
+/// The audience fixture, alone: a reaction to a creation that asks a black
+/// box about the instance just made (issue #18).
+pub const AUDIENCE: &[&str] = &["audience"];
+
+/// The siblings fixture, alone: rules woken by one trigger, each reading the
+/// world as the trigger found it (issue #24).
+pub const SIBLINGS: &[&str] = &["siblings"];
+
+/// The defaults fixture, alone: config parameters whose defaults are sets,
+/// lists and enumeration values (issue #25).
+pub const DEFAULTS: &[&str] = &["defaults"];
+
+/// The kinds fixture, alone: a set literal of words a rule iterates (issue
+/// #26).
+pub const KINDS: &[&str] = &["kinds"];
+
+/// The operators fixture, alone: `??`, string `+`, and a field written with a
+/// value nothing settled (issue #27).
+pub const OPERATORS: &[&str] = &["operators"];
 
 /// `modules`, replayed from their recordings, with each module's source.
 pub fn library(modules: &[&str]) -> (SpecGraph, Program, Sources) {

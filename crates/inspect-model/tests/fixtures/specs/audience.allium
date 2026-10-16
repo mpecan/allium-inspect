@@ -1,0 +1,80 @@
+-- allium: 3
+-- audience.allium
+--
+-- A fixture of its own, standing alone: a reaction to a creation that asks a
+-- black box about the new instance (issue #18). `audience` is named and never
+-- defined, so only a journey can say what it answers, and the instance it is
+-- asked about does not exist until the act that sets the reaction off has run.
+--
+-- `Split` makes two issues in one act, so a journey can show that an answer
+-- about the one it caught says nothing about the other. `Report` makes an
+-- issue and asks about it in the same rule, before any `where` is in force.
+-- `Mute` and `Discard` ask black boxes of their own, only of issues titled for
+-- them, so a journey can leave something unsettled that `audience` has no part
+-- in. `CoreTracker` faces one repo only, so an act can be refused at the door.
+
+entity Issue {
+    title: String
+    notified: Boolean
+}
+
+entity Repo {
+    name: String
+}
+
+rule Open {
+    when: Open(repo, title)
+    ensures: Issue.created(title: title, notified: false)
+}
+
+rule Split {
+    when: Split(repo, title)
+    ensures:
+        Issue.created(title: title, notified: false)
+        Issue.created(title: title, notified: false)
+}
+
+rule Report {
+    when: Report(repo, title)
+    ensures:
+        let issue = Issue.created(title: title, notified: false)
+        if audience(issue) = {}:
+            issue.notified = true
+}
+
+rule Notify {
+    when: issue: Issue.created
+    ensures:
+        for r in audience(issue):
+            issue.notified = true
+}
+
+rule Mute {
+    when: issue: Issue.created
+    requires: issue.title = "quiet" and quiet(issue)
+    ensures: issue.notified = false
+}
+
+rule Discard {
+    when: issue: Issue.created
+    requires: issue.title = "spam" and spam(issue)
+    ensures: not exists issue
+}
+
+actor Maintainer {
+    identified_by: Repo where name = "core"
+}
+
+surface CoreTracker {
+    facing maintainer: Maintainer
+    provides:
+        Open(maintainer, title)
+}
+
+surface Tracker {
+    facing repo: Repo
+    provides:
+        Open(repo, title)
+        Split(repo, title)
+        Report(repo, title)
+}
