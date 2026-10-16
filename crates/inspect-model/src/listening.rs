@@ -381,10 +381,15 @@ mod tests {
              rule G {\n    when: G(doc)\n    ensures:\n        let x = B(w: doc)\n}\n\
              rule V {\n    when: V(doc)\n    ensures: doc.seen = f(B(v: doc))\n}\n\
              rule W {\n    when: W(doc)\n    ensures:\n        let y = doc.seen\n}\n\
+             rule H {\n    when: H(doc)\n    ensures:\n        let y = if doc.seen: B(t: doc) else: B(s: doc)\n}\n\
+             rule K {\n    when: K(doc)\n    ensures:\n        if doc.seen:\n            B(r: doc)\n            B(q: doc)\n}\n\
              rule L {\n    when: B(doc)\n    ensures: doc.seen = true\n}\n",
         ));
         let emitters: Vec<&str> = found.iter().map(|(emitter, _, _)| emitter.as_str()).collect();
-        assert_eq!(emitters, ["A", "A", "F", "G"], "{found:?}");
+        // `H`'s `let` is over a conditional, which the simulator evaluates
+        // as a value rather than applying, so neither of its calls emits;
+        // `K`'s branch of two lines is a block, and both of them emit.
+        assert_eq!(emitters, ["A", "A", "F", "G", "K", "K"], "{found:?}");
     }
 
     #[test]
