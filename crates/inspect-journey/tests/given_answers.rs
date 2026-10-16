@@ -111,6 +111,29 @@ fn an_answer_whose_argument_has_no_value_is_refused_and_not_listed() {
     assert_eq!(walk.verdict(), Verdict::Undecided, "{out}");
 }
 
+/// A step's `stipulate` is refused the same way, on its own line, and is not
+/// listed: two lines above a rule saying nobody answered, it was a receipt
+/// for an answer no call could read.
+#[test]
+fn a_step_answer_whose_argument_has_no_value_is_refused_and_not_listed() {
+    let walk = walked("AStepAnswerWithNoValue");
+    let out = text(&walk);
+    let line = walk.steps[0]
+        .outcomes
+        .iter()
+        .find(|outcome| outcome.about.starts_with("stipulate can(r.level, code)"))
+        .unwrap_or_else(|| panic!("the line: {out}"));
+    assert_eq!(line.verdict, Verdict::Undecided, "{out}");
+    let detail = line.detail.as_deref().unwrap_or_default();
+    assert!(
+        detail.contains("`r.level` has no value here")
+            && detail.contains("answers no call the specification can ask"),
+        "{detail}"
+    );
+    assert!(said(&walk).is_empty(), "{:?}", said(&walk));
+    assert!(!out.contains("stipulated  can(r.level"), "{out}");
+}
+
 /// Answers are put in force after every field line, so an argument may read
 /// a field set on a later line.
 #[test]

@@ -119,6 +119,7 @@ impl Walker<'_> {
         self.created.clear();
         self.removed.clear();
         self.landed.clear();
+        self.unheard.clear();
         self.cut_off = None;
         self.listed = None;
         self.firings = 0;
@@ -152,7 +153,7 @@ impl Walker<'_> {
                 }
                 Disposition::Refused => self.refused.push(Undecided {
                     rule: rule.name.clone(),
-                    why: crate::outcome::refused(rule),
+                    why: crate::outcome::refused(rule, |note| self.said_of_the_cast(note)),
                     ..Undecided::default()
                 }),
                 Disposition::Unsimulatable => {}
@@ -259,17 +260,33 @@ impl Walker<'_> {
                 self.undecided_over_what_is_left(undecided);
                 return Settled::Yes;
             }
-            for (event, over, woken) in waiting {
-                // Listed before anything this round fired, and since removed
-                // by a firing before this one (issue #22). Not fired about an
-                // instance that is gone — and not dropped without a word
-                // either: every rule here was due on it, beside the one that
-                // removed it, and which goes first is the spec's to say.
-                if let Value::Ref(id) = &over
-                    && self.world.instance(id).is_none()
-                {
-                    self.raced(&woken, id);
-                    continue;
+            // Who in this round removes what, read before any of it fires
+            // (issue #22): a rule due on an instance another firing of the
+            // same round removes is a race whichever event happens to come
+            // first, so the answer cannot be read off the order.
+            let removes = self.round_removes(&waiting);
+            for (at, (event, over, woken)) in waiting.into_iter().enumerate() {
+                // Not fired about an instance another firing removes — and
+                // not dropped without a word either: every rule here was due
+                // on it, beside the one that removes it, and which goes first
+                // is the spec's to say.
+                if let Value::Ref(id) = &over {
+                    let by = removes
+                        .get(id)
+                        .and_then(|by| by.iter().find(|(from, _)| *from != at))
+                        .map(|(_, rule)| rule.clone())
+                        .or_else(|| {
+                            self.world.instance(id).is_none().then(|| {
+                                self.removed
+                                    .get(id)
+                                    .cloned()
+                                    .unwrap_or_else(|| "another rule".to_owned())
+                            })
+                        });
+                    if let Some(by) = by {
+                        self.raced(&woken, id, &by);
+                        continue;
+                    }
                 }
                 let outcome = self.fire(&event);
                 // What woke it, and whatever else the same firing ran: a rule

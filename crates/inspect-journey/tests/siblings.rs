@@ -88,6 +88,15 @@ fn two_siblings_writing_one_field_leave_it_undecided() {
                 && detail.contains("does not say which of the two runs first")),
         "{said:#?}"
     );
+    // Quoted word for word in the reference, which `allium-journey guide`
+    // ships to spec authors.
+    const REFERENCE: &str = include_str!("../../../docs/journeys/reference.md");
+    let act = line(&walk, "b does Paint(l) on Shelf").detail.clone().unwrap_or_default();
+    assert!(
+        !act.is_empty() && REFERENCE.contains(&act),
+        "the reference does not quote:
+{act}"
+    );
 }
 
 /// What a postcondition reads is the world the trigger found: `Shade` copies
@@ -139,4 +148,28 @@ fn a_refusal_is_the_rules_own_and_two_permitted_moves_clash() {
 fn state_rules_and_creation_reactions_read_the_world_the_trigger_found() {
     all_held(&walked("BothStateRulesRun"));
     all_held(&walked("BothReactionsRun"));
+}
+
+/// The same set written in two orders is one value, as the spec compares
+/// them: both siblings stand, and the set is what they agreed on.
+#[test]
+fn siblings_writing_one_set_in_two_orders_agree() {
+    all_held(&walked("TwoTaggersAgree"));
+}
+
+/// Both add one to the count the trigger found and write the same `1` — a
+/// value no order of the two produces. Not an agreement: the count is
+/// undecided, and says that each read it as the trigger found it.
+#[test]
+fn two_increments_from_one_read_are_not_an_agreement() {
+    let walk = walked("TwoCountsFromOneRead");
+    assert_eq!(line(&walk, "then CountOnce fires").verdict, Verdict::Specified);
+    let said = line(&walk, "then l.touches = 1");
+    assert_eq!(said.verdict, Verdict::Undecided, "{said:#?}");
+    let detail = said.detail.as_deref().unwrap_or_default();
+    assert!(
+        detail.contains("both computed it from `l.touches` as the trigger found it")
+            && detail.contains("the second would read what the first wrote"),
+        "{detail}"
+    );
 }

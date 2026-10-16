@@ -5,7 +5,10 @@
 -- delivery is gone. `Close` removes a parcel that `GiveUp` is due to look at
 -- in the same round, from an event of its own. `Expire` and `Lapse` watch a
 -- `Lease` under different names, so the event that wakes one does not carry
--- the other's.
+-- the other's. `Alert`, and `Abandon` beside `Shut`, are the same two races
+-- with the watching rule named so it sorts before the one that removes: the
+-- answer must not turn on which runs first. `Zombie` is due on a deadline that
+-- is not there, beside the cleanup.
 
 config {
     keep: Duration = 7.days
@@ -15,6 +18,8 @@ config {
 entity Delivery {
     status: sending | done
     finished_at: Timestamp
+    stopped_at: Timestamp?
+    alerted: Boolean
     is_expired: finished_at + config.keep <= now
     is_overdue: status = sending
 }
@@ -28,6 +33,19 @@ rule Cleanup {
 rule TimesOut {
     when: d: Delivery.is_overdue
     requires: d.finished_at < now
+    ensures: d.status = done
+}
+
+-- Sorts before `Cleanup`, and is due exactly when `TimesOut` is.
+rule Alert {
+    when: d: Delivery.is_overdue
+    requires: d.finished_at < now
+    ensures: d.alerted = true
+}
+
+-- A delivery nobody stopped has no deadline here: never due, removed or not.
+rule Zombie {
+    when: d: Delivery.stopped_at + config.keep <= now
     ensures: d.status = done
 }
 
@@ -67,4 +85,25 @@ rule Expire {
 rule Lapse {
     when: l: Lease.is_lapsed
     ensures: l.lapsed = true
+}
+
+entity Crate {
+    opened_at: Timestamp
+    late: Boolean
+}
+
+entity Dock {
+    closed_at: Timestamp
+    crate: Crate
+}
+
+-- `Close` and `GiveUp` the other way round: the rule that is due sorts first.
+rule Abandon {
+    when: c: Crate.opened_at + config.patience <= now
+    ensures: c.late = true
+}
+
+rule Shut {
+    when: k: Dock.closed_at + config.patience <= now
+    ensures: not exists k.crate
 }

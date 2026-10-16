@@ -44,6 +44,13 @@ pub(crate) fn stored_unknown(instance: &Instance, field: &str) -> Unresolved {
     Unresolved { reason, expression: None, span: None }
 }
 
+/// Whether reading `field` of `instance`, holding `value`, has something to
+/// say: it is undecided, or a collection holding something undecided that its
+/// write said why about. A bare `{x}` nobody explained is left as it is read.
+pub(crate) fn undecided(instance: &Instance, field: &str, value: &Value) -> bool {
+    value.is_unknown() || !instance.why(field).is_empty()
+}
+
 /// `note`, anchored at `span` when it was not anchored already.
 pub(crate) fn anchored(mut note: Unresolved, span: Option<Span>, source: &str) -> Unresolved {
     if note.span.is_none() && note.expression.is_none() {
@@ -66,7 +73,7 @@ pub(crate) fn anchored_at(note: Unresolved, at: &Expr, source: &str) -> Unresolv
 /// kept beside a settled value would be read as explaining whatever unknown is
 /// bound under that name next; an empty one is no reason at all.
 pub(crate) fn remember(told: &mut Told, name: &str, value: &Value, why: Vec<Unresolved>) {
-    if value.is_unknown() && !why.is_empty() {
+    if value.holds_unknown() && !why.is_empty() {
         told.insert(name.to_owned(), why);
     } else {
         told.remove(name);
@@ -103,8 +110,11 @@ impl Env<'_> {
     /// note reading it back gives.
     pub fn bind_stored(&mut self, instance: &Instance) {
         for (field, value) in &instance.fields {
-            let why =
-                if value.is_unknown() { vec![stored_unknown(instance, field)] } else { Vec::new() };
+            let why = if undecided(instance, field, value) {
+                vec![stored_unknown(instance, field)]
+            } else {
+                Vec::new()
+            };
             self.set_explained(field.clone(), value.clone(), why);
         }
     }

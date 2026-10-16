@@ -21,7 +21,7 @@ use inspect_sim::{
     Value,
     step::{Sources, StepOutcome},
     value::EntityId,
-    world::{Answer, Event, World},
+    world::{Event, World},
 };
 
 pub use crate::shapes::{
@@ -31,7 +31,7 @@ pub(crate) use crate::shapes::{Settled, worst};
 use crate::{
     assert::Sight,
     check::{self, Verdict},
-    journey::{Assertion, Clause, Journey, Step, Subject, Term},
+    journey::{Assertion, Clause, Journey, Step, Term},
     outcome::{refusal, verdict_of},
 };
 
@@ -82,6 +82,7 @@ pub fn walk(
         removed: BTreeMap::new(),
         awaiting: None,
         landed: Vec::new(),
+        unheard: Vec::new(),
         answered: Vec::new(),
         refused_in_the_world: Vec::new(),
         cut_off: None,
@@ -179,6 +180,9 @@ pub(crate) struct Walker<'a> {
     pub(crate) awaiting: Option<crate::answers::Awaiting>,
     /// The `where` answers that landed since the last clause, and on what.
     pub(crate) landed: Vec<crate::answers::Landed>,
+    /// Why a `where` answer was refused once its instance landed, for the
+    /// act's line to say.
+    pub(crate) unheard: Vec<String>,
     /// Every answer `given` or a file's world put in force, and the line that
     /// said it — so a later one about the same call can say what it replaced.
     pub(crate) answered: Vec<crate::answers::FromTheStart>,
@@ -281,6 +285,11 @@ impl Walker<'_> {
                     detail: Some(detail),
                     ..outcome.clone()
                 }));
+                // A `where` answer refused once its instance landed: the
+                // journey said something the walk could not put in force.
+                asides.extend(std::mem::take(&mut self.unheard).into_iter().map(|detail| {
+                    Outcome { verdict: Verdict::Undecided, detail: Some(detail), ..outcome.clone() }
+                }));
             }
             // A definite `false` that follows something undecided is not the
             // spec forbidding anything — it is a consequence of a world this
@@ -343,43 +352,7 @@ impl Walker<'_> {
                 about,
             ),
             Clause::Stipulate { subject, value, line } => {
-                let value = self.value_of(value);
-                let written = format!("{} = {}", subject.as_written(), value.render());
-                match subject {
-                    // Listed only once it landed. The ledger exists so a reader
-                    // can see everything the journey was told rather than
-                    // shown, and a line in it that never reached the world is a
-                    // false receipt.
-                    Subject::Path(path) => match self.assign(path, value) {
-                        Ok(()) => {
-                            self.stipulated.push(Stipulation {
-                                said: written,
-                                through: self.standing_on.clone(),
-                            });
-                            Outcome {
-                                line: *line,
-                                verdict: Verdict::Specified,
-                                about,
-                                detail: None,
-                            }
-                        }
-                        Err(crate::config::Unwritten { verdict, reason }) => {
-                            Outcome { line: *line, verdict, about, detail: Some(reason) }
-                        }
-                    },
-                    // A call writes nowhere: there is no field to set, which is
-                    // the whole reason it needs saying. It is remembered and
-                    // answered from when the specification asks.
-                    Subject::Call { name, arguments } => {
-                        let detail = self.too_late(name, arguments);
-                        let arguments: Vec<Value> =
-                            arguments.iter().map(|term| self.value_of(term)).collect();
-                        self.world.tell(Answer { call: name.clone(), arguments, value });
-                        self.stipulated
-                            .push(Stipulation { said: written, through: self.standing_on.clone() });
-                        Outcome { line: *line, verdict: Verdict::Specified, about, detail }
-                    }
-                }
+                self.stipulate(subject, value, *line, about)
             }
         }
     }

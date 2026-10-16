@@ -121,7 +121,8 @@ impl Env<'_> {
     ///
     /// - a name bound to a value that is itself undecided;
     /// - a parameter of the rule that nobody passed;
-    /// - a field of `this`, or of the element a filter is looking at: a stored
+    /// - a field of `this`, or of the element a filter is looking at — or of
+    ///   one a filter it is inside is looking at: a stored
     ///   one nobody set, or a computed one that came back undecided. `stale:
     ///   agg != status` with `agg` undecided is undecided, not a comparison
     ///   against a state called `agg`; and in `docs where status = active` a
@@ -134,7 +135,11 @@ impl Env<'_> {
             Some(Value::Ref(id)) => Some(id),
             _ => None,
         };
-        ![this, self.element.as_ref()].into_iter().flatten().any(|id| self.has(id, name))
+        ![this, self.element.as_ref()]
+            .into_iter()
+            .flatten()
+            .chain(&self.enclosing)
+            .any(|id| self.has(id, name))
     }
 
     /// Whether the entity `id` is an instance of stores, computes or defines

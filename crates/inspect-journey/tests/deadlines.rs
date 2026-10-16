@@ -141,3 +141,18 @@ fn two_rules_the_clock_left_undecided_are_both_named() {
     assert_eq!(detail.matches("`Withdraw` could not be decided").count(), 1, "{detail}");
     assert_eq!(detail.matches("`Zombie` could not be decided").count(), 1, "{detail}");
 }
+
+/// A temporal rule whose `when` binds nothing is never read by the clock's
+/// listing, as due or as undecided. Its silence is not a *no*: the chore's
+/// deadline has passed, and `then Overdue does not fire` holding would be
+/// an unknown read as false.
+#[test]
+fn a_rule_the_listing_never_reads_is_not_decided_by_its_silence() {
+    let walk = walked("AChoreWhoseRuleBindsNothingIsNotAnswered");
+    let all = outcomes(&walk);
+    let (verdict, _, detail) =
+        all.iter().find(|(_, about, _)| about == "then Overdue does not fire").expect("the line");
+    assert_eq!(*verdict, Verdict::Undecided, "{all:#?}");
+    let detail = detail.clone().expect("it says why");
+    assert!(detail.contains("`Overdue` never became true"), "{detail}");
+}

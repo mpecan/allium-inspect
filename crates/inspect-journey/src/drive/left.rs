@@ -1,7 +1,11 @@
 //! What the clock left undecided, said once the world has stopped changing.
 
+use std::collections::BTreeMap;
+
 use inspect_model::NodeKind;
-use inspect_sim::{Disposition, Enabled, EntityId, step::step, world::Event};
+use inspect_sim::{
+    Disposition, Effect, Enabled, EntityId, Unresolved, Value, step::step, world::Event,
+};
 
 use crate::run::{Undecided, Walker};
 
@@ -46,32 +50,64 @@ impl Walker<'_> {
     }
 
     /// Rules a round listed as due on `instance`, which another firing in the
-    /// same round removed before their own event came round.
+    /// same round, by rule `by`, removes.
     ///
-    /// Undecided, each naming the rule that removed it. The round fires its
-    /// events in a fixed order, so had theirs come first they would have run:
-    /// a `then … does not fire` about them holding here would be that order's
-    /// answer, flipped by renaming a rule, and not the specification's.
-    pub(super) fn raced(&mut self, woken: &[String], instance: &EntityId) {
-        let by = self.removed.get(instance).map_or("another rule", String::as_str);
+    /// Undecided, each naming the rule that removes it, whichever of the two
+    /// firings the round happens to reach first: had theirs come first they
+    /// would have run, and a `then … does not fire` holding here — or a `then
+    /// … fires` holding when the order is the other way round — would be
+    /// that order's answer, flipped by renaming a rule, and not the
+    /// specification's. Said of the cast, as every reason the walk gives.
+    pub(super) fn raced(&mut self, woken: &[String], instance: &EntityId, by: &str) {
         let mut said = Vec::new();
         for id in woken {
             let Some(node) = self.spec.nodes_of(NodeKind::Rule).find(|it| it.id.as_str() == id)
             else {
                 continue;
             };
-            said.push(Undecided {
-                rule: node.name.clone(),
-                why: format!(
-                    "`{}` was due on `{instance}` in the same round, and `{by}` removed it \
-                     before it ran; the specification does not say which of the two runs first",
+            let why = self.said_of_the_cast(&Unresolved {
+                reason: format!(
+                    "`{}` was due on `{instance}` in the same round, and `{by}` removed it; the \
+                     specification does not say which of the two runs first",
                     node.name
                 ),
+                expression: None,
+                span: None,
+            });
+            said.push(Undecided {
+                rule: node.name.clone(),
+                why,
                 // No `turn`: it orders the calls a rule asked against a `where`
                 // that landed, and a rule that never ran asked nothing.
                 ..Undecided::default()
             });
         }
         self.undecided.extend(said);
+    }
+
+    /// What each event of a round removes, read on the world the round
+    /// began in, by the index of the event and the rule that removes it.
+    ///
+    /// Only a round of two events or more can race, so a round of one is
+    /// not read twice.
+    pub(super) fn round_removes(
+        &self,
+        waiting: &[(Event, Value, Vec<String>)],
+    ) -> BTreeMap<EntityId, Vec<(usize, String)>> {
+        let mut removes: BTreeMap<EntityId, Vec<(usize, String)>> = BTreeMap::new();
+        if waiting.len() < 2 {
+            return removes;
+        }
+        for (at, (event, _, _)) in waiting.iter().enumerate() {
+            let outcome = step(self.spec, self.program, self.sources, &self.world, event);
+            for rule in &outcome.rules {
+                for effect in &rule.effects {
+                    if let Effect::Removed { id, .. } = effect {
+                        removes.entry(id.clone()).or_default().push((at, rule.name.clone()));
+                    }
+                }
+            }
+        }
+        removes
     }
 }

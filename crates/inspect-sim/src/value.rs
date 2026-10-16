@@ -247,7 +247,16 @@ impl Value {
                         pairs.iter().any(|row| row.iter().all(|truth| *truth == Truth::False));
                     let stranded_right = (0..right.len())
                         .any(|column| pairs.iter().all(|row| row[column] == Truth::False));
-                    if stranded_left || stranded_right { Truth::False } else { Truth::Unknown }
+                    // More members definitely distinct on one side than the
+                    // other holds at all, counting a repeat once: `{x} = {a,
+                    // b}` is no, whatever `x` is.
+                    let outnumbered =
+                        distinct_known(left) > right.len() || distinct_known(right) > left.len();
+                    if stranded_left || stranded_right || outnumbered {
+                        Truth::False
+                    } else {
+                        Truth::Unknown
+                    }
                 } else {
                     Truth::False
                 }
@@ -320,6 +329,18 @@ fn render_duration(millis: i64) -> String {
         }
     }
     format!("{millis}.milliseconds")
+}
+
+/// How many members of `items` are settled and definitely distinct from each
+/// other: a lower bound on how many members the collection has.
+fn distinct_known(items: &[Value]) -> usize {
+    let mut members: Vec<&Value> = Vec::new();
+    for item in items.iter().filter(|item| !item.holds_unknown()) {
+        if !members.iter().any(|member| member.equals(item) == Truth::True) {
+            members.push(item);
+        }
+    }
+    members.len()
 }
 
 /// Whether every row of `pairs` can be given a column of its own whose cell
@@ -427,14 +448,16 @@ impl Instance {
         self.fields.insert(field, value);
     }
 
-    /// Set `field` to `value`, and when that is undecided, remember `why`.
+    /// Set `field` to `value`, and when that is undecided — or a collection
+    /// holding something undecided — remember `why`.
     ///
     /// A settled value forgets any reason, the same as [`Self::set`]: a reason
     /// kept beside a value it no longer explains would be read as explaining
-    /// whatever is written there next.
+    /// whatever is written there next. `{a, pick(b)}` with `pick` unanswered
+    /// is not settled: its member may be `a`, so its count is not known.
     pub fn set_explained(&mut self, field: impl Into<String>, value: Value, why: Vec<Unresolved>) {
         let field = field.into();
-        let undecided = value.is_unknown() && !why.is_empty();
+        let undecided = value.holds_unknown() && !why.is_empty();
         self.set(field.clone(), value);
         if undecided {
             self.why.insert(field, why);
@@ -448,7 +471,7 @@ impl Instance {
     #[must_use]
     pub fn why(&self, field: &str) -> &[Unresolved] {
         match self.fields.get(field) {
-            Some(Value::Unknown) => self.why.get(field).map_or(&[], Vec::as_slice),
+            Some(value) if value.holds_unknown() => self.why.get(field).map_or(&[], Vec::as_slice),
             _ => &[],
         }
     }
@@ -594,6 +617,27 @@ mod tests {
             one.equals(&Value::Set(vec![Value::Int(1), Value::Unknown])),
             Truth::Unknown,
             "one undecided element leaves the whole comparison undecided"
+        );
+    }
+
+    /// More members definitely distinct on one side than the other holds at
+    /// all is a decided no, an undecided member or not: `{x}` cannot be two
+    /// things. A repeat counts once, and an undecided member counts for none.
+    #[test]
+    fn a_set_too_small_to_hold_the_others_distinct_members_is_not_equal() {
+        let (a, b) = (Value::Enum("a".to_owned()), Value::Enum("b".to_owned()));
+        let lone = Value::Set(vec![Value::Unknown]);
+        let two = Value::Set(vec![a.clone(), b.clone()]);
+        assert_eq!(lone.equals(&two), Truth::False);
+        assert_eq!(two.equals(&lone), Truth::False);
+        let repeated = Value::Set(vec![a.clone(), a.clone()]);
+        assert_eq!(lone.equals(&repeated), Truth::Unknown, "`x` may be `a`");
+        let pair = Value::Set(vec![Value::Unknown, Value::Unknown]);
+        assert_eq!(pair.equals(&two), Truth::Unknown);
+        assert_eq!(
+            pair.equals(&Value::Set(vec![a])),
+            Truth::Unknown,
+            "`x` and `y` may both be `a`"
         );
     }
 

@@ -1,5 +1,5 @@
-//! A state rule woken about an instance an earlier rule in the same step
-//! removed (issue #22).
+//! A state rule woken about an instance a sibling in the same step removes
+//! (issue #22).
 //!
 //! `Cleanup` and `TimesOut` both watch a `Delivery`, so the one event that
 //! fires the first reaches the second as well — after the delivery is gone.
@@ -36,6 +36,21 @@ fn read(path: &Path) -> String {
         .unwrap_or_else(|error| panic!("fixture {} is readable: {error}", path.display()))
 }
 
+/// The recorded `cleanup` fixture's graph and program, for `sources` as
+/// edited — read by the library, as `parse` and `analyse` are.
+fn graph_with(sources: &Sources) -> (SpecGraph, Program) {
+    let root = fixtures();
+    let path = root.join("specs/cleanup.allium");
+    let mut runner = MapRunner::new(read(&root.join("cli/VERSION")).trim());
+    for command in Command::ALL {
+        let document = read(&root.join(format!("cli/cleanup.{command}.json")));
+        runner = runner.with(command, &path, serde_json::from_str(&document).expect("JSON"));
+    }
+    let reader = MemoryReader::default().with(&path, sources["cleanup"].clone());
+    let Ingestion { graph, program } = ingest(&runner, &reader, &[path]).expect("ingests");
+    (graph, program)
+}
+
 /// The recorded `cleanup` fixture, ingested exactly as the server does.
 fn recorded() -> (SpecGraph, Program, Sources) {
     let root = fixtures();
@@ -52,12 +67,14 @@ fn recorded() -> (SpecGraph, Program, Sources) {
     (graph, program, sources)
 }
 
-/// A delivery that finished at zero, with `status` as given, eight days on.
+/// A delivery that finished at zero and was never stopped, with `status` as
+/// given, eight days on.
 fn world(graph: &SpecGraph, status: &str) -> (World, EntityId) {
     let mut world = seed(graph);
     let delivery = world.create("Delivery", "cleanup");
     world.set_field(&delivery, "status", Value::Enum(status.to_owned()));
     world.set_field(&delivery, "finished_at", Value::Timestamp(0));
+    world.set_field(&delivery, "stopped_at", Value::Null);
     world.now = 8 * DAY;
     (world, delivery)
 }
@@ -141,6 +158,71 @@ fn a_timeout_due_beside_the_cleanup_that_removed_it_is_undecided() {
             && reason.contains("does not say which of the two runs first"),
         "{reason}"
     );
+}
+
+/// `Alert` is due exactly when `TimesOut` is, and sorts before `Cleanup`, so
+/// the step reads it while the delivery is still in the world it is building.
+/// The same race, so the same answer: undecided, nothing applied — and not
+/// fired, which is what reading the answer off the order gave.
+#[test]
+fn a_rule_read_before_the_cleanup_that_removes_its_instance_races_it_all_the_same() {
+    let (graph, program, mut sources) = recorded();
+    let (world, delivery) = world(&graph, "sending");
+    let event = Event::new("Delivery", "cleanup").with("d", Value::Ref(delivery.clone()));
+    let outcome = step(&graph, &program, &sources, &world, &event);
+    let alert = rule(&outcome, "Alert");
+    assert_eq!(alert.disposition, Disposition::Undecided, "{alert:#?}");
+    assert!(alert.effects.is_empty(), "{alert:#?}");
+    let reason = &alert.unresolved.first().expect("it says why").reason;
+    assert!(
+        reason.contains("`Alert` was due on `Delivery#1`")
+            && reason.contains("`Cleanup` removed it"),
+        "{reason}"
+    );
+    assert_eq!(
+        rule(&outcome, "TimesOut").unresolved.first().map(|it| it.reason.replace("TimesOut", "")),
+        Some(reason.replace("Alert", "")),
+        "both sides of the cleanup are told the same thing"
+    );
+
+    // Rename `Alert` so it sorts after `Cleanup`, as `TimesOut` does: the
+    // same verdict and the same words.
+    let text = sources["cleanup"].replace("rule Alert {", "rule Zalert {");
+    sources.insert("cleanup".to_owned(), text);
+    let renamed = graph_with(&sources);
+    let outcome = step(&renamed.0, &renamed.1, &sources, &world, &event);
+    let zalert = rule(&outcome, "Zalert");
+    assert_eq!(zalert.disposition, Disposition::Undecided, "{zalert:#?}");
+    assert_eq!(
+        zalert.unresolved.first().map(|it| it.reason.replace("Zalert", "Alert")),
+        Some(reason.clone())
+    );
+}
+
+/// The rule that removes the instance itself is not racing anybody for it:
+/// `Cleanup` fires whatever else watched the delivery.
+#[test]
+fn the_rule_that_removes_it_is_read_as_usual() {
+    let (graph, _, _) = recorded();
+    let (world, delivery) = world(&graph, "sending");
+    let outcome = fired(&world, &delivery);
+    assert_eq!(rule(&outcome, "Cleanup").disposition, Disposition::Fired, "{outcome:#?}");
+    assert!(outcome.world.instance(&delivery).is_none());
+}
+
+/// `Zombie` reads a deadline that is not there: never due, so refused beside
+/// the cleanup, decided, rather than raced. Read with the ordinary reading of
+/// a condition, `null + config.keep <= now` is undecided and it would race.
+#[test]
+fn a_null_deadline_beside_the_cleanup_was_never_due() {
+    let (graph, _, _) = recorded();
+    let (world, delivery) = world(&graph, "done");
+    let outcome = fired(&world, &delivery);
+    let zombie = rule(&outcome, "Zombie");
+    assert_eq!(zombie.disposition, Disposition::Refused, "{zombie:#?}");
+    assert!(zombie.unresolved.is_empty(), "{zombie:#?}");
+    let note = &zombie.requires[0].unresolved.first().expect("it says why").reason;
+    assert!(note.contains("removed in this step, by `Cleanup`"), "{note}");
 }
 
 /// The event that woke `Expire` carries the lease as `e`; `Lapse` calls it

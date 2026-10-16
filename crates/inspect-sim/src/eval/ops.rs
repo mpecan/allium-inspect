@@ -76,14 +76,6 @@ pub fn compare(
         && env.could_be_a_state(state)
     {
         left = Evaluation::known(Value::Enum(state.to_owned()));
-    } else if right.value.holds_unknown()
-        && let Some(states) = states_written(right_node, &left.value, env)
-    {
-        right = states;
-    } else if left.value.holds_unknown()
-        && let Some(states) = states_written(left_node, &right.value, env)
-    {
-        left = states;
     }
 
     let mut unresolved = left.unresolved;
@@ -107,41 +99,6 @@ pub fn compare(
     };
 
     Evaluation { value: truth_value(truth), unresolved }
-}
-
-/// `config.apps = {a, b}`: the same judgement, one member at a time, for a
-/// collection written out beside a collection holding states.
-///
-/// Each member is read as the state it spells under the same test as a lone
-/// name, and a set is built as every set from a spec's words is, by
-/// [`Value::set_of`]. Without it every member was a binding nobody made, and
-/// a rule guarded by a set-valued parameter could never be decided.
-fn states_written(node: &Expr, beside: &Value, env: &Env<'_>) -> Option<Evaluation> {
-    let Value::Set(members) = beside else { return None };
-    if !members.iter().any(|member| matches!(member, Value::Enum(_))) {
-        return None;
-    }
-    let (elements, ordered) = match node {
-        Expr::SetLiteral { elements, .. } => (elements, false),
-        Expr::ListLiteral { elements, .. } => (elements, true),
-        _ => return None,
-    };
-    let mut items = Vec::with_capacity(elements.len());
-    let mut unresolved = Vec::new();
-    for element in elements {
-        let evaluated = eval(element, env);
-        match bare_name(element) {
-            Some(state) if evaluated.value.is_unknown() && env.could_be_a_state(state) => {
-                items.push(Value::Enum(state.to_owned()));
-            }
-            _ => {
-                unresolved.extend(evaluated.unresolved);
-                items.push(evaluated.value);
-            }
-        }
-    }
-    let value = if ordered { Value::Set(items) } else { Value::set_of(items) };
-    Some(Evaluation { value, unresolved })
 }
 
 /// Why two values could not be ordered, quoting the pair.
@@ -268,7 +225,19 @@ pub fn arithmetic(
         // difference. In the order they were added, and never twice, so the
         // same steps give the same set whatever else is in the world.
         (Value::Set(items), BinaryOp::Add | BinaryOp::Sub, other) if !other.is_unknown() => {
-            Ok(Value::Set(combined(items, operator, other)))
+            let (members, unsure) = combined(items, operator, other);
+            if let Some(member) = unsure {
+                let span = between(left_node, right_node);
+                unresolved.push(Unresolved {
+                    reason: format!(
+                        "whether {member} is among what `-` takes away could not be decided, so \
+                         it was kept"
+                    ),
+                    expression: span.and_then(|span| span.slice(env.source)).map(str::to_owned),
+                    span,
+                });
+            }
+            Ok(Value::Set(members))
         }
         // `box.title + " " + extra`: concatenation, and only between two
         // strings. A number is not spelled into one, because which spelling
@@ -337,8 +306,13 @@ pub fn arithmetic(
     Evaluation { value, unresolved }
 }
 
-/// `items + other` or `items - other`, for a set on the left.
-fn combined(items: &[Value], operator: BinaryOp, other: &Value) -> Vec<Value> {
+/// `items + other` or `items - other`, for a set on the left — and, for
+/// `-`, the first member it kept without knowing whether it should have.
+///
+/// Compared as the spec compares values, as [`Value::set_of`] does: `{x} + y`
+/// with both undecided is not one member, and `s - {x}` with `x` undecided
+/// takes away nothing it cannot show is `x` — it keeps the member and says so.
+fn combined(items: &[Value], operator: BinaryOp, other: &Value) -> (Vec<Value>, Option<String>) {
     let others: &[Value] = match other {
         Value::Set(more) => more,
         one => std::slice::from_ref(one),
@@ -346,13 +320,26 @@ fn combined(items: &[Value], operator: BinaryOp, other: &Value) -> Vec<Value> {
     if operator == BinaryOp::Add {
         let mut out = items.to_vec();
         for value in others {
-            if !out.contains(value) {
+            if !out.iter().any(|member| member.equals(value) == Truth::True) {
                 out.push(value.clone());
             }
         }
-        out
+        (out, None)
     } else {
-        items.iter().filter(|item| !others.contains(item)).cloned().collect()
+        let mut unsure = None;
+        let kept = items
+            .iter()
+            .filter(|item| match Truth::any(others.iter().map(|other| item.equals(other))) {
+                Truth::True => false,
+                Truth::False => true,
+                Truth::Unknown => {
+                    unsure.get_or_insert_with(|| item.render());
+                    true
+                }
+            })
+            .cloned()
+            .collect();
+        (kept, unsure)
     }
 }
 

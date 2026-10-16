@@ -394,7 +394,9 @@ pub(crate) fn element_scope<'a>(env: &'a Env<'a>, item: &Value) -> Env<'a> {
     if let Value::Ref(id) = item
         && let Some(instance) = env.world.instance(id)
     {
-        scope.element = Some(id.clone());
+        if let Some(outer) = scope.element.replace(id.clone()) {
+            scope.enclosing.push(outer);
+        }
         // A bare name the element declares is the element's, whether or not
         // it holds a value. Inside a definition the bindings already hold
         // `this`'s stored fields bare, and one spelled like a field the
@@ -421,20 +423,12 @@ pub(super) fn membership(
     negated: bool,
 ) -> Evaluation {
     let needle = eval(element, env);
-    let haystack = match collection {
-        // `message.status in {visible, amended}` — beside a state, a bare name
-        // in a set written out is a state too. It is the judgement `compare`
-        // makes for `status = visible`, one element at a time, and made for
-        // the same reason: the other side says which was meant. Without it
-        // the set asked for the value of a binding called `visible`, and every
-        // rule guarded this way was undecided.
-        Expr::SetLiteral { elements, .. } | Expr::ListLiteral { elements, .. }
-            if matches!(needle.value, Value::Enum(_)) =>
-        {
-            states_beside(elements, env)
-        }
-        _ => eval(collection, env),
-    };
+    // `message.status in {visible, amended}` reads its declared words as
+    // states through the one reading every set written out gets, so `in` puts
+    // a word to the same test `=` and a `for` do: an unset field, a parameter
+    // or a name bound to an undecided value is not the state it spells (see
+    // `literals::set_literal`).
+    let haystack = eval(collection, env);
     // Only the collection's own reasons say it may be short of members; the
     // needle's say something about the needle.
     let incomplete = !haystack.unresolved.is_empty();
@@ -474,24 +468,4 @@ pub(super) fn membership(
     };
     let truth = if negated { inside.not() } else { inside };
     Evaluation { value: truth_value(truth), unresolved }
-}
-
-/// A literal set whose unbound bare names are read as the states they spell.
-///
-/// Only the names nothing bound: `{pending, current}` where `current` is a
-/// binding is that binding's value, the same as anywhere else.
-fn states_beside(elements: &[Expr], env: &Env<'_>) -> Evaluation {
-    let mut items = Vec::with_capacity(elements.len());
-    let mut unresolved = Vec::new();
-    for element in elements {
-        let evaluated = eval(element, env);
-        match (evaluated.value, bare_name(element)) {
-            (Value::Unknown, Some(state)) => items.push(Value::Enum(state.to_owned())),
-            (value, _) => {
-                unresolved.extend(evaluated.unresolved);
-                items.push(value);
-            }
-        }
-    }
-    Evaluation { value: Value::Set(items), unresolved }
 }

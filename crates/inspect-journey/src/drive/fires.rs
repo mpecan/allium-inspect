@@ -39,8 +39,11 @@ impl Walker<'_> {
         // Unless the clock settled the world this step and no round of it
         // left the rule undecided: then every listing that asked said *no*,
         // and the answer is the spec's — a task with no `stopped_at` does
-        // not expire (issue #20).
-        let decided = self.listed.as_ref().is_some_and(|unsure| !unsure.contains(rule));
+        // not expire (issue #20). Only for a rule a listing reads at all: one
+        // whose `when` binds nothing — `when: Task.due_at <= now` — is never
+        // listed, and silence about it is not a *no*.
+        let decided = self.listed.as_ref().is_some_and(|unsure| !unsure.contains(rule))
+            && self.listing_reads(rule);
         if !ran && !decided && self.waits_on_the_world(rule) {
             // Nobody fires a state-condition rule; it becomes true or it does
             // not. Outside a settled clock nothing listed it, so a rule whose
@@ -74,6 +77,15 @@ impl Walker<'_> {
             Truth::from_bool(ran != negated),
             Some(if ran { format!("`{rule}` ran") } else { format!("`{rule}` did not run") }),
         )
+    }
+
+    /// Whether the clock's listing reads `rule` at all, and so whether its
+    /// silence about it says anything.
+    fn listing_reads(&self, rule: &str) -> bool {
+        self.spec
+            .nodes_of(NodeKind::Rule)
+            .find(|node| node.name == rule)
+            .is_some_and(|node| inspect_sim::step::lists(self.program, node))
     }
 
     /// Whether a rule waits on the world rather than on somebody acting.

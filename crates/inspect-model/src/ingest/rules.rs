@@ -197,6 +197,28 @@ pub fn trigger_from_when(value: &Value) -> (String, TriggerDetail) {
                 },
             )
         }
+        // A condition that binds nothing: `when: Task.due_at <= now`. `allium
+        // plan` files it as temporal, and it is one — filed as an action from
+        // outside, a `then … does not fire` about it held because nobody
+        // fired it, when the clock had made it true. Still unnamed: there is
+        // no instance for the simulator to read it about, so nothing wakes
+        // it, and a walk says so rather than answering for it.
+        Some(("Comparison" | "LogicalOp" | "Not" | "In" | "NotIn" | "Exists" | "NotExists", _)) => {
+            (
+                String::new(),
+                TriggerDetail {
+                    source: if mentions_now(value) {
+                        TriggerSource::Temporal
+                    } else {
+                        TriggerSource::State
+                    },
+                    parameters: Vec::new(),
+                    optional: Vec::new(),
+                    condition: None,
+                    entity: None,
+                },
+            )
+        }
         _ => (
             String::new(),
             TriggerDetail {
@@ -462,6 +484,23 @@ mod more_tests {
         assert!(mentions_now(&json!({"a": {"b": [{"Now": {}}]}})));
         assert!(!mentions_now(&json!({"a": {"b": [{"Ident": {"name": "now_ish"}}]}})));
         assert!(!mentions_now(&json!("now")), "a string is not the clock");
+    }
+
+    /// A condition that binds nothing is still a condition: temporal when it
+    /// reads the clock, a state condition when it does not, and unnamed.
+    #[test]
+    fn an_unbound_condition_is_a_state_or_temporal_trigger_with_no_name() {
+        let due = json!({"Comparison": {
+            "span": {"start": 0, "end": 0},
+            "left": {"MemberAccess": {"object": ident("Task"), "field": {"name": "due_at"}}},
+            "op": "LtEq",
+            "right": {"Now": {"span": {"start": 0, "end": 0}}},
+        }});
+        let (name, detail) = trigger_from_when(&due);
+        assert!(name.is_empty());
+        assert_eq!(detail.source, TriggerSource::Temporal);
+        let late = json!({"Not": {"span": {"start": 0, "end": 0}, "operand": ident("late")}});
+        assert_eq!(trigger_from_when(&late).1.source, TriggerSource::State);
     }
 
     #[test]

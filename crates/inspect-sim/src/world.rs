@@ -233,7 +233,7 @@ impl World {
         }
         self.answers
             .iter()
-            .find(|answer| answer.call == call && answer.arguments == arguments)
+            .find(|answer| answer.call == call && same_arguments(&answer.arguments, arguments))
             .map(|answer| &answer.value)
     }
 
@@ -291,11 +291,9 @@ impl World {
     /// first instead, the lookup found the first and the ledger listed the
     /// second — a receipt for an answer no call was given.
     pub fn tell(&mut self, answer: Answer) {
-        match self
-            .answers
-            .iter_mut()
-            .find(|said| said.call == answer.call && said.arguments == answer.arguments)
-        {
+        match self.answers.iter_mut().find(|said| {
+            said.call == answer.call && same_arguments(&said.arguments, &answer.arguments)
+        }) {
             Some(said) => said.value = answer.value,
             None => self.answers.push(answer),
         }
@@ -312,6 +310,15 @@ impl World {
         self.now = now;
         self
     }
+}
+
+/// Whether two calls' arguments are the same, as the spec compares values:
+/// `f({a, b})` is `f({b, a})`, and `f(1)` is `f(1.0)`. One test for asking and
+/// telling, so an answer that replaces another is one a lookup would find.
+#[must_use]
+pub fn same_arguments(left: &[Value], right: &[Value]) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right).all(|(a, b)| a.equals(b) == crate::truth::Truth::True)
 }
 
 #[cfg(test)]
@@ -391,6 +398,36 @@ mod answer_tests {
         );
         assert_eq!(
             world.answer("may_invite", &[Value::Int(1), Value::Int(9)]),
+            Some(&Value::Bool(false))
+        );
+    }
+
+    /// Arguments are compared as the spec compares values: a set in another
+    /// order, or a whole number with a point, is the same argument — asked
+    /// and told alike, so a replacement is one the lookup would find.
+    #[test]
+    fn arguments_equal_as_the_spec_compares_them_are_the_same_call() {
+        let set = |names: &[&str]| {
+            Value::Set(names.iter().map(|it| Value::Enum((*it).to_owned())).collect())
+        };
+        let mut world = World::new();
+        world.tell(Answer {
+            call: "reach".to_owned(),
+            arguments: vec![set(&["a", "b"]), Value::Int(1)],
+            value: Value::Bool(true),
+        });
+        assert_eq!(
+            world.answer("reach", &[set(&["b", "a"]), Value::Float(1.0)]),
+            Some(&Value::Bool(true))
+        );
+        world.tell(Answer {
+            call: "reach".to_owned(),
+            arguments: vec![set(&["b", "a"]), Value::Int(1)],
+            value: Value::Bool(false),
+        });
+        assert_eq!(world.answers.len(), 1, "replaced, not kept beside");
+        assert_eq!(
+            world.answer("reach", &[set(&["a", "b"]), Value::Int(1)]),
             Some(&Value::Bool(false))
         );
     }

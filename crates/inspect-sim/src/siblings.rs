@@ -30,6 +30,7 @@ use crate::{
     apply::{Against, Application, Applied, Effect},
     eval::{Told, Unresolved},
     step::{Disposition, RuleOutcome},
+    truth::Truth,
     value::{EntityId, Value},
     world::World,
 };
@@ -85,8 +86,9 @@ pub(crate) fn apply(
 /// Where one field stands among the siblings that wrote it so far.
 #[derive(Debug)]
 enum Stands {
-    /// One value, from this rule — the first of several that agreed.
-    Settled(String, Value),
+    /// One value, from this rule — the first of several that agreed — and
+    /// whether any of them read the field to compute it.
+    Settled(String, Value, bool),
     /// Two rules disagreed, and which value stands is undecided for the rest
     /// of the step.
     Contested(String, String),
@@ -112,7 +114,19 @@ impl Written {
     /// that happened to be written last is one order's answer. A rule weighs
     /// in with the last value it wrote to a field: writing it twice is its own
     /// sequence, not a clash.
-    pub(crate) fn settle(&mut self, trigger: &str, outcome: &mut RuleOutcome, world: &mut World) {
+    ///
+    /// Two values agree when they are equal as the spec compares them — `{a,
+    /// b}` is `{b, a}` — and neither was computed from the field itself.
+    /// `reads` says whether `outcome` read a field: `c.n = c.n + 1` from two
+    /// siblings is the same `1` over the same stale `0`, and run one after the
+    /// other they would have made `2` (see `reads`).
+    pub(crate) fn settle(
+        &mut self,
+        trigger: &str,
+        outcome: &mut RuleOutcome,
+        world: &mut World,
+        reads: impl Fn(&str) -> bool,
+    ) {
         if outcome.disposition != Disposition::Fired {
             return;
         }
@@ -124,14 +138,23 @@ impl Written {
         }
         let mut clashes = Vec::new();
         for (key, wrote) in last {
+            let read = reads(&key.1);
             let said = match self.by.get(&key) {
                 None => {
-                    self.by.insert(key, Stands::Settled(outcome.name.clone(), wrote.clone()));
+                    self.by.insert(key, Stands::Settled(outcome.name.clone(), wrote.clone(), read));
                     continue;
                 }
-                Some(Stands::Settled(_, earlier)) if earlier == wrote => continue,
-                Some(Stands::Settled(first, earlier)) => {
-                    let said = clash(trigger, (first, &outcome.name), &key, earlier, wrote);
+                Some(Stands::Settled(_, earlier, read_before))
+                    if !read && !read_before && earlier.equals(wrote) == Truth::True =>
+                {
+                    continue;
+                }
+                Some(Stands::Settled(first, earlier, read_before)) => {
+                    let said = if earlier.equals(wrote) == Truth::True {
+                        stale(trigger, (first, &outcome.name), &key, (wrote, *read_before, read))
+                    } else {
+                        clash(trigger, (first, &outcome.name), &key, earlier, wrote)
+                    };
                     self.by.insert(
                         key.clone(),
                         Stands::Contested(first.clone(), outcome.name.clone()),
@@ -148,6 +171,30 @@ impl Written {
         outcome.unresolved.extend(clashes.iter().cloned());
         outcome.unapplied.extend(clashes);
     }
+}
+
+/// Two siblings that wrote one field the same value, at least one of them
+/// computed from the value the trigger found.
+fn stale(
+    trigger: &str,
+    (first, second): (&str, &str),
+    (id, field): &(EntityId, String),
+    (wrote, first_read, second_read): (&Value, bool, bool),
+) -> Unresolved {
+    let who = match (first_read, second_read) {
+        (true, true) => format!("both computed it from `{id}.{field}` as the trigger found it"),
+        (true, false) => {
+            format!("`{first}` computed it from `{id}.{field}` as the trigger found it")
+        }
+        _ => format!("`{second}` computed it from `{id}.{field}` as the trigger found it"),
+    };
+    undecided(format!(
+        "`{first}` and `{second}` were both woken by `{trigger}` and both set `{id}.{field}` to \
+         {}, but {who}; run one after the other, the second would read what the first wrote, \
+         and the specification does not say which of the two runs first, so which value stands \
+         is undecided",
+        wrote.render()
+    ))
 }
 
 /// Two siblings, one field, and no answer from the spec about which stands.
@@ -231,11 +278,11 @@ mod tests {
         let (mut world, lamp) = lamp();
         let mut written = Written::new();
         let mut blue = writing("PaintBlue", Disposition::Fired, vec![set(&lamp, "colour", "blue")]);
-        written.settle("Paint", &mut blue, &mut world);
+        written.settle("Paint", &mut blue, &mut world, |_| false);
         assert!(blue.unapplied.is_empty(), "the first write is not a clash: {blue:#?}");
         world.set_field(&lamp, "colour", Value::Str("red".to_owned()));
         let mut red = writing("PaintRed", Disposition::Fired, vec![set(&lamp, "colour", "red")]);
-        written.settle("Paint", &mut red, &mut world);
+        written.settle("Paint", &mut red, &mut world, |_| false);
         assert_eq!(red.unapplied.len(), 1, "{red:#?}");
         assert_eq!(red.unresolved, red.unapplied);
         let reason = &red.unapplied[0].reason;
@@ -255,14 +302,14 @@ mod tests {
         let (mut world, lamp) = lamp();
         let mut written = Written::new();
         let mut first = writing("A", Disposition::Fired, vec![set(&lamp, "colour", "red")]);
-        written.settle("Paint", &mut first, &mut world);
+        written.settle("Paint", &mut first, &mut world, |_| false);
         world.set_field(&lamp, "colour", Value::Str("red".to_owned()));
         let mut same = writing(
             "B",
             Disposition::Fired,
             vec![set(&lamp, "colour", "red"), set(&lamp, "shade", "dark")],
         );
-        written.settle("Paint", &mut same, &mut world);
+        written.settle("Paint", &mut same, &mut world, |_| false);
         assert!(same.unapplied.is_empty() && same.unresolved.is_empty(), "{same:#?}");
         assert_eq!(world.instance(&lamp).unwrap().field("colour"), Value::Str("red".to_owned()));
     }
@@ -277,11 +324,11 @@ mod tests {
             Disposition::Fired,
             vec![set(&lamp, "colour", "red"), set(&lamp, "colour", "blue")],
         );
-        written.settle("Paint", &mut twice, &mut world);
+        written.settle("Paint", &mut twice, &mut world, |_| false);
         assert!(twice.unapplied.is_empty(), "{twice:#?}");
         // And the value a later sibling is weighed against is its last.
         let mut later = writing("B", Disposition::Fired, vec![set(&lamp, "colour", "blue")]);
-        written.settle("Paint", &mut later, &mut world);
+        written.settle("Paint", &mut later, &mut world, |_| false);
         assert!(later.unapplied.is_empty(), "{later:#?}");
     }
 
@@ -295,13 +342,13 @@ mod tests {
         for (rule, colour) in [("A", "red"), ("B", "blue")] {
             world.set_field(&lamp, "colour", Value::Str(colour.to_owned()));
             let mut outcome = writing(rule, Disposition::Fired, vec![set(&lamp, "colour", colour)]);
-            written.settle("Paint", &mut outcome, &mut world);
+            written.settle("Paint", &mut outcome, &mut world, |_| false);
         }
         assert_eq!(world.instance(&lamp).unwrap().field("colour"), Value::Unknown);
         // What the third rule's own postcondition wrote into the world.
         world.set_field(&lamp, "colour", Value::Str("red".to_owned()));
         let mut third = writing("C", Disposition::Fired, vec![set(&lamp, "colour", "red")]);
-        written.settle("Paint", &mut third, &mut world);
+        written.settle("Paint", &mut third, &mut world, |_| false);
         assert_eq!(world.instance(&lamp).unwrap().field("colour"), Value::Unknown);
         assert_eq!(third.unapplied.len(), 1, "{third:#?}");
         let reason = &third.unapplied[0].reason;
@@ -320,7 +367,7 @@ mod tests {
         let (mut world, lamp) = lamp();
         let mut written = Written::new();
         let mut open = writing("Open", Disposition::Fired, vec![set(&lamp, "status", "open")]);
-        written.settle("Go", &mut open, &mut world);
+        written.settle("Go", &mut open, &mut world, |_| false);
         world.set_field(&lamp, "status", Value::Str("open".to_owned()));
         let mut lose = writing(
             "Lose",
@@ -333,7 +380,7 @@ mod tests {
                 reason: "no".to_owned(),
             }],
         );
-        written.settle("Go", &mut lose, &mut world);
+        written.settle("Go", &mut lose, &mut world, |_| false);
         assert!(lose.unapplied.is_empty(), "{lose:#?}");
         assert_eq!(world.instance(&lamp).unwrap().field("status"), Value::Str("open".to_owned()));
     }
@@ -344,13 +391,91 @@ mod tests {
         let (mut world, lamp) = lamp();
         let mut written = Written::new();
         let mut first = writing("A", Disposition::Fired, vec![set(&lamp, "colour", "red")]);
-        written.settle("Paint", &mut first, &mut world);
+        written.settle("Paint", &mut first, &mut world, |_| false);
         let mut refused = writing("B", Disposition::Refused, vec![set(&lamp, "colour", "blue")]);
-        written.settle("Paint", &mut refused, &mut world);
+        written.settle("Paint", &mut refused, &mut world, |_| false);
         assert!(refused.unapplied.is_empty(), "{refused:#?}");
         // And it left nothing for a third to clash with.
         let mut third = writing("C", Disposition::Fired, vec![set(&lamp, "colour", "red")]);
-        written.settle("Paint", &mut third, &mut world);
+        written.settle("Paint", &mut third, &mut world, |_| false);
         assert!(third.unapplied.is_empty(), "{third:#?}");
+    }
+
+    fn assign(id: &EntityId, field: &str, to: Value) -> Effect {
+        Effect::Assigned { id: id.clone(), field: field.to_owned(), from: Value::Unknown, to }
+    }
+
+    fn hues(names: &[&str]) -> Value {
+        Value::Set(names.iter().map(|it| Value::Enum((*it).to_owned())).collect())
+    }
+
+    /// Equal as the spec compares them: a set written in another order, and
+    /// a whole number beside the same number with a point.
+    #[test]
+    fn siblings_writing_equal_values_spelled_differently_agree() {
+        let (mut world, lamp) = lamp();
+        let mut written = Written::new();
+        let mut one = writing(
+            "A",
+            Disposition::Fired,
+            vec![
+                assign(&lamp, "hues", hues(&["red", "blue"])),
+                assign(&lamp, "level", Value::Int(1)),
+            ],
+        );
+        written.settle("Tag", &mut one, &mut world, |_| false);
+        world.set_field(&lamp, "hues", hues(&["blue", "red"]));
+        let mut two = writing(
+            "B",
+            Disposition::Fired,
+            vec![
+                assign(&lamp, "hues", hues(&["blue", "red"])),
+                assign(&lamp, "level", Value::Float(1.0)),
+            ],
+        );
+        written.settle("Tag", &mut two, &mut world, |_| false);
+        assert!(two.unapplied.is_empty(), "{two:#?}");
+        assert_eq!(world.instance(&lamp).unwrap().field("hues"), hues(&["blue", "red"]));
+    }
+
+    /// The same value from a stale read is a lost update, not an agreement:
+    /// in either order the second would have read the first one's write.
+    #[test]
+    fn the_same_value_computed_from_the_field_itself_is_contested() {
+        for (first_reads, second_reads, says) in [
+            (true, true, "both computed it from `Lamp#1.n`"),
+            (true, false, "`A` computed it from `Lamp#1.n`"),
+            (false, true, "`B` computed it from `Lamp#1.n`"),
+        ] {
+            let (mut world, lamp) = lamp();
+            let mut written = Written::new();
+            let mut one = writing("A", Disposition::Fired, vec![assign(&lamp, "n", Value::Int(1))]);
+            written.settle("Bump", &mut one, &mut world, |field| first_reads && field == "n");
+            world.set_field(&lamp, "n", Value::Int(1));
+            let mut two = writing("B", Disposition::Fired, vec![assign(&lamp, "n", Value::Int(1))]);
+            written.settle("Bump", &mut two, &mut world, |field| second_reads && field == "n");
+            assert_eq!(world.instance(&lamp).unwrap().field("n"), Value::Unknown);
+            assert_eq!(two.unapplied.len(), 1, "{two:#?}");
+            let reason = &two.unapplied[0].reason;
+            assert!(
+                reason.contains("both set `Lamp#1.n` to 1")
+                    && reason.contains(says)
+                    && reason.contains("the second would read what the first wrote"),
+                "{reason}"
+            );
+            assert_eq!(world.instance(&lamp).unwrap().why("n"), two.unapplied.as_slice());
+        }
+    }
+
+    /// Two undecided values are not thereby the same value.
+    #[test]
+    fn two_unknown_writes_do_not_agree() {
+        let (mut world, lamp) = lamp();
+        let mut written = Written::new();
+        let mut one = writing("A", Disposition::Fired, vec![assign(&lamp, "n", Value::Unknown)]);
+        written.settle("Bump", &mut one, &mut world, |_| false);
+        let mut two = writing("B", Disposition::Fired, vec![assign(&lamp, "n", Value::Unknown)]);
+        written.settle("Bump", &mut two, &mut world, |_| false);
+        assert_eq!(two.unapplied.len(), 1, "{two:#?}");
     }
 }

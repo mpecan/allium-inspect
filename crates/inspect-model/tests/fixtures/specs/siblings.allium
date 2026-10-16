@@ -19,6 +19,14 @@
 -- come out the same in either order (`Bin`/`Label`, `MarkTossed`/`TossOut`).
 -- State rules (`ALapse`/`BFlag`) and creation reactions (`AScrap`/`BLabel`)
 -- read the world the trigger found as well.
+--
+-- Two siblings agree when the spec would call their values equal: `TagOne`
+-- and `TagTwo` write one set in two orders. They do not when either computed
+-- its value from the field it writes: `CountOnce` and `CountAgain` both add
+-- one to the count the trigger found, and run one after the other they would
+-- have added two.
+
+enum Hue { red | blue }
 
 entity Box {
     name: String
@@ -44,6 +52,7 @@ entity Lamp {
     touches: Integer
     shade: String
     tossed: Boolean
+    hues: Set<Hue>
 }
 
 rule PaintRed {
@@ -116,6 +125,26 @@ rule MarkTossed {
 rule TossOut {
     when: Toss(lamp)
     ensures: not exists lamp
+}
+
+rule TagOne {
+    when: Tag(lamp)
+    ensures: lamp.hues = {red, blue}
+}
+
+rule TagTwo {
+    when: Tag(lamp)
+    ensures: lamp.hues = {blue, red}
+}
+
+rule CountOnce {
+    when: Bump(lamp)
+    ensures: lamp.touches = lamp.touches + 1
+}
+
+rule CountAgain {
+    when: Bump(lamp)
+    ensures: lamp.touches = lamp.touches + 1
 }
 
 entity Door {
@@ -206,4 +235,6 @@ surface Shelf {
         Knock(door)
         Slam(door)
         Pack(name)
+        Tag(lamp)
+        Bump(lamp)
 }

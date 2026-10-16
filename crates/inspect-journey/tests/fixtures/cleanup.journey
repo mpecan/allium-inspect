@@ -10,6 +10,7 @@ journey ADeliveryCleanedUpHasNoTimeoutToCheck {
     given:
         d.status = done
         d.finished_at = now
+        d.stopped_at = null
     1. wait
         after 8.days
         then Cleanup fires
@@ -25,10 +26,27 @@ journey AnOverdueDeliveryRacesItsCleanup {
     given:
         d.status = sending
         d.finished_at = now
+        d.stopped_at = null
     1. wait
         after 8.days
         then Cleanup fires
         then TimesOut does not fire
+        then Alert does not fire
+}
+
+-- A deadline that is not there is never passed, removed or not: `Zombie` is
+-- refused beside the cleanup, decided, rather than raced.
+journey AnUnstoppedDeliveryCleanedUpNeverWasDue {
+    cast:
+        d: Delivery
+    given:
+        d.status = done
+        d.finished_at = now
+        d.stopped_at = null
+    1. wait
+        after 8.days
+        then Cleanup fires
+        then Zombie does not fire
 }
 
 -- The same race one round wider: both rules come due in the same round, from
@@ -46,6 +64,23 @@ journey AParcelOnAClosedRouteRacesGivingUp {
         after 2.hours
         then Close fires
         then GiveUp does not fire
+}
+
+-- The same race with the names the other way round: the crate's own event
+-- comes first in the round, and that must not decide it.
+journey ACrateOnAShutDockRacesBeingAbandoned {
+    cast:
+        c: Crate
+        k: Dock
+    given:
+        c.opened_at = now
+        c.late = false
+        k.closed_at = now
+        k.crate = c
+    1. the dock shuts and takes its crate with it
+        after 2.hours
+        then Shut fires
+        then Abandon does not fire
 }
 
 -- Under different names: the event that wakes `Expire` carries `e`, and

@@ -55,6 +55,15 @@ journey AnArgumentWithNoValue {
         r does Grant(r) on Settings
 }
 
+-- The same refusal for a step's `stipulate`: not listed, and the world's own
+-- answer still stands.
+journey AStepAnswerWithNoValue {
+    1. a step says something about a value nobody knows
+        stipulate can(r.level, code) = false
+        r does Grant(r) on Settings
+        then r.flag = true
+}
+
 -- Answers are put in force after every field line, so an argument may read a
 -- field a later line sets.
 journey AnArgumentReadsALaterLine {

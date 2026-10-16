@@ -152,3 +152,29 @@ journey BothReactionsRun {
         then AScrap fires
         then BLabel fires
 }
+
+journey TwoTaggersAgree {
+    cast:
+        b: Box
+        l: Lamp
+    given:
+        l.hues = {}
+    1. tag it
+        b does Tag(l) on Shelf
+        then TagOne fires
+        then TagTwo fires
+        then l.hues = {red, blue}
+}
+
+journey TwoCountsFromOneRead {
+    cast:
+        b: Box
+        l: Lamp
+    given:
+        l.touches = 0
+    1. bump
+        b does Bump(l) on Shelf
+        then CountOnce fires
+        then CountAgain fires
+        then l.touches = 1
+}

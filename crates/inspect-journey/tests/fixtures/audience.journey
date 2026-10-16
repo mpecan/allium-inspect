@@ -48,6 +48,17 @@ journey OnlyTheCaughtIsAnswered {
         then issue.notified = false
 }
 
+-- An answer with no value answers nothing, under `creating` as in `given`:
+-- refused on the act's line, and not listed.
+journey AnAnswerWithNoValue {
+    cast:
+        repo: Repo
+    1. open an issue and answer with a name nobody set
+        repo does Open(repo, "crash") on Tracker
+            creating issue: Issue
+            where audience(issue) = repo.name
+}
+
 -- Caught nothing, so answered nothing: no line in the ledger.
 journey NothingToAnswerFor {
     cast:

@@ -25,7 +25,8 @@ use inspect_sim::{Value, step::RuleOutcome, value::EntityId, world::Answer};
 
 use crate::{
     Outcome,
-    journey::{Cast, Term, Where},
+    check::Verdict,
+    journey::{Cast, Subject, Term, Where},
     run::{Stipulation, Undecided, Walker},
 };
 
@@ -83,6 +84,27 @@ pub(crate) fn asked(rule: &RuleOutcome) -> Vec<String> {
         }
     }
     asked
+}
+
+/// The first term of an answer about a call with no value, and what that
+/// leaves the line doing — or `None` when every term has one.
+///
+/// One test for all three ways a journey answers a call — `given` or a file's
+/// world, a `stipulate`, and a `where` under `creating` — so none of them can
+/// list a line the others refuse. The simulator never matches an unknown
+/// argument, and an unknown answer settles nothing: either way the ledger
+/// would list a line that answers nothing, two lines above a rule saying it
+/// was not answered — a false receipt.
+pub(crate) fn unsettled<'a>(
+    (terms, arguments): (&'a [Term], &[Value]),
+    (term, value): (&'a Term, &Value),
+) -> Option<(&'a Term, &'static str)> {
+    terms
+        .iter()
+        .zip(arguments)
+        .find(|(_, value)| value.holds_unknown())
+        .map(|(term, _)| (term, "answers no call the specification can ask"))
+        .or_else(|| value.holds_unknown().then_some((term, "gives the call no answer")))
 }
 
 /// A rule left unsettled in engine turn `turn`, with the calls it asked.
@@ -153,9 +175,25 @@ impl Walker<'_> {
         // act, once, when it catches the same instance.
         self.bound.insert(caught.name.clone(), id.clone());
         for answer in answering {
-            let arguments = answer.arguments.iter().map(|term| self.value_of(term)).collect();
+            let arguments: Vec<Value> =
+                answer.arguments.iter().map(|term| self.value_of(term)).collect();
             let value = self.value_of(&answer.value);
-            let said = format!("{} = {}", answer.as_written(), value.render());
+            // Refused, as `given` refuses it, and said on the act's line: the
+            // answer could only be weighed once the instance landed.
+            if let Some((term, consequence)) =
+                unsettled((&answer.arguments, &arguments), (&answer.value, &value))
+            {
+                self.unheard.push(format!(
+                    "`{}` has no value once `{}` is made, so `where {}` {consequence}",
+                    term.as_written(),
+                    caught.name,
+                    answer.as_written()
+                ));
+                continue;
+            }
+            // In the journey's words, as `given` and `stipulate` list a call:
+            // `{repo}`, not the world's `{Repo#1}`.
+            let said = format!("{} = {}", answer.as_written(), answer.value.as_written());
             self.world.tell(Answer { call: answer.call.clone(), arguments, value });
             self.landed.push(Landed {
                 call: answer.call.clone(),
@@ -174,11 +212,9 @@ impl Walker<'_> {
     /// journey wrote it. The file's world lists its own lines `from the file`.
     ///
     /// An argument or an answer with no value is refused rather than
-    /// recorded. The simulator never matches an unknown argument, and an
-    /// unknown answer settles nothing — either way the ledger would list a
-    /// line that answers nothing, two lines above a rule saying it was not
-    /// answered. A refused world line is left out of the inherited ledger, by
-    /// [`Self::lay_out`], in every journey that takes the world.
+    /// recorded (see [`unsettled`]). A refused world line is left out of the
+    /// inherited ledger, by [`Self::lay_out`], in every journey that takes the
+    /// world.
     ///
     /// An answer replacing one the file's world gave marks that world line
     /// overridden; one replacing an earlier line in the same journey's
@@ -188,16 +224,9 @@ impl Walker<'_> {
         let arguments: Vec<Value> =
             answer.arguments.iter().map(|term| self.value_of(term)).collect();
         let value = self.value_of(&answer.value);
-        let unsettled = answer
-            .arguments
-            .iter()
-            .zip(&arguments)
-            .find(|(_, value)| value.holds_unknown())
-            .map(|(term, _)| (term, "answers no call the specification can ask"))
-            .or_else(|| {
-                value.holds_unknown().then_some((&answer.value, "gives the call no answer"))
-            });
-        if let Some((term, consequence)) = unsettled {
+        if let Some((term, consequence)) =
+            unsettled((&answer.arguments, &arguments), (&answer.value, &value))
+        {
             self.notes.push(Outcome {
                 line,
                 verdict: crate::check::Verdict::Undecided,
@@ -217,7 +246,10 @@ impl Walker<'_> {
         let replaced: Vec<FromTheStart> = self
             .answered
             .iter()
-            .filter(|earlier| earlier.call == answer.call && earlier.arguments == arguments)
+            .filter(|earlier| {
+                earlier.call == answer.call
+                    && inspect_sim::world::same_arguments(&earlier.arguments, &arguments)
+            })
             .cloned()
             .collect();
         for earlier in replaced {
@@ -249,6 +281,62 @@ impl Walker<'_> {
         });
         if listed {
             self.stipulated.push(Stipulation { said, through: self.standing_on.clone() });
+        }
+    }
+
+    /// `stipulate <path> = <value>`, or `stipulate <call>(…) = <value>`: what
+    /// the journey says outright rather than shows.
+    pub(crate) fn stipulate(
+        &mut self,
+        subject: &Subject,
+        stipulated: &Term,
+        line: usize,
+        about: String,
+    ) -> Outcome {
+        let value = self.value_of(stipulated);
+        let written = format!("{} = {}", subject.as_written(), value.render());
+        match subject {
+            // Listed only once it landed. The ledger exists so a reader
+            // can see everything the journey was told rather than
+            // shown, and a line in it that never reached the world is a
+            // false receipt.
+            Subject::Path(path) => match self.assign(path, value) {
+                Ok(()) => {
+                    self.stipulated
+                        .push(Stipulation { said: written, through: self.standing_on.clone() });
+                    Outcome { line, verdict: Verdict::Specified, about, detail: None }
+                }
+                Err(crate::config::Unwritten { verdict, reason }) => {
+                    Outcome { line, verdict, about, detail: Some(reason) }
+                }
+            },
+            // A call writes nowhere: there is no field to set, which is
+            // the whole reason it needs saying. It is remembered and
+            // answered from when the specification asks.
+            Subject::Call { name, arguments: terms } => {
+                let arguments: Vec<Value> = terms.iter().map(|term| self.value_of(term)).collect();
+                // Refused, as `given` refuses it, and not listed.
+                if let Some((term, consequence)) =
+                    unsettled((terms, &arguments), (stipulated, &value))
+                {
+                    return Outcome {
+                        line,
+                        verdict: Verdict::Undecided,
+                        about,
+                        detail: Some(format!(
+                            "`{}` has no value here, so this {consequence}",
+                            term.as_written()
+                        )),
+                    };
+                }
+                let detail = self.too_late(name, terms);
+                self.world.tell(Answer { call: name.clone(), arguments, value });
+                // In the journey's words, as every answer to a call is
+                // listed, wherever it is said.
+                let said = format!("{} = {}", subject.as_written(), stipulated.as_written());
+                self.stipulated.push(Stipulation { said, through: self.standing_on.clone() });
+                Outcome { line, verdict: Verdict::Specified, about, detail }
+            }
         }
     }
 

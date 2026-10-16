@@ -51,7 +51,8 @@ fn the_reaction_reads_the_answer_it_was_given() {
         "{}",
         render(std::slice::from_ref(&walk))
     );
-    assert_eq!(said(&walk), ["audience(issue) = {Repo#1}"]);
+    // In the journey's words, as `given` and `stipulate` list an answer.
+    assert_eq!(said(&walk), ["audience(issue) = {repo}"]);
 }
 
 /// Said after the act, the answer still lands — a later act might ask — but
@@ -236,4 +237,26 @@ fn an_answer_that_was_read_draws_no_remark_about_who_asked() {
     assert_eq!(walk.steps[0].verdict(), Verdict::Undecided, "{text}");
     assert!(walk.steps[0].asides.is_empty(), "{text}");
     assert!(text.contains("ranges over an integer"), "{text}");
+}
+
+/// A `where` whose answer has no value once the instance is made is refused
+/// as `given` refuses one, on the act's line, and not listed.
+#[test]
+fn an_answer_under_creating_with_no_value_is_refused_and_not_listed() {
+    let walk = walked("AnAnswerWithNoValue");
+    let step = &walk.steps[0];
+    assert!(said(&walk).is_empty(), "{:?}", said(&walk));
+    let aside = step
+        .asides
+        .iter()
+        .find(|aside| aside.detail.as_deref().is_some_and(|it| it.contains("has no value")))
+        .unwrap_or_else(|| panic!("said on the act's line: {:#?}", step.asides));
+    assert_eq!(aside.verdict, Verdict::Undecided);
+    let detail = aside.detail.as_deref().unwrap_or_default();
+    assert!(
+        detail.contains("`repo.name` has no value once `issue` is made")
+            && detail.contains("`where audience(issue)` gives the call no answer"),
+        "{detail}"
+    );
+    assert_eq!(step.verdict(), Verdict::Undecided);
 }

@@ -51,7 +51,7 @@ pub(crate) fn refusal(
     for rule in &outcome.rules {
         match rule.disposition {
             Disposition::Refused => {
-                return Some(format!("`{}` refused: {}", rule.name, refused(rule)));
+                return Some(format!("`{}` refused: {}", rule.name, refused(rule, &say)));
             }
             Disposition::Undecided => {
                 return Some(format!(
@@ -77,8 +77,13 @@ pub(crate) fn refusal(
 /// With what the simulator said about a false clause as a whole, when it said
 /// anything: a precondition inside a loop names the member that failed it and
 /// the loop, and without that `h.active = true` is a clause about nobody in
-/// particular.
-pub(crate) fn refused(rule: &RuleOutcome) -> String {
+/// particular. That reason is worded by `say`, as an undecided one is, so it
+/// names the cast as the journey did; only its reason, since the clause it is
+/// about is already quoted beside it.
+pub(crate) fn refused(
+    rule: &RuleOutcome,
+    say: impl Fn(&inspect_sim::Unresolved) -> String,
+) -> String {
     let blocking: Vec<String> = rule
         .requires
         .iter()
@@ -89,7 +94,14 @@ pub(crate) fn refused(rule: &RuleOutcome) -> String {
                 .iter()
                 .find(|note| note.expression.as_deref() == Some(clause.text.as_str()));
             match whole {
-                Some(note) => format!("{} — {}", clause.text, note.reason),
+                Some(note) => {
+                    let reason = inspect_sim::Unresolved {
+                        reason: note.reason.clone(),
+                        expression: None,
+                        span: None,
+                    };
+                    format!("{} — {}", clause.text, say(&reason))
+                }
                 None => clause.text.clone(),
             }
         })

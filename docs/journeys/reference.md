@@ -139,16 +139,19 @@ the line says. Answers are put in force after every field in the block is
 written, so `allowed(note.author)` reads the author whichever line set it. An
 argument that still has no value — `allowed(ada.team)` with no `team` set — or
 an answer that has none — `allowed(ada) = ada.team` — is **undecided**, says
-which term, and is not listed, in `given` or in a file's `world`: no call could
-ever be answered by it, and a ledger line for it would be a receipt for nothing.
+which term, and is not listed, in `given` or in a file's `world`, in a step's
+`stipulate` or in a `where` under `creating`: no call could ever be answered by
+it, and a ledger line for it would be a receipt for nothing.
 A later answer about the same call with the same arguments replaces an earlier
 one, so a `stipulate` in a step changes what `given` said rather than standing
 beside it, and of two such lines in one `given` only the later is listed.
 
 The line is listed as written — `may_reserve(ada, book) = true`, not the ids
-those names resolved to — the way a `world` lists its lines. A `stipulate` in a
-step lists the value it resolved to, because there the clock and the world have
-moved since the journey began.
+those names resolved to — the way a `world` lists its lines, and so is an answer
+to a call wherever it is said: in a step's `stipulate` or a `where`, `audience(issue)
+= {repo}` and not `{Repo#1}`. A `stipulate` in a step that sets a *field* lists
+the value it resolved to, because there the clock and the world have moved since
+the journey began.
 
 Values may be a number (`5`, `2_000_000`), a duration (`21.days`), a string
 (`"Ada"`), `true`, `false`, `null`, a set (`{a, b}`), a name the journey cast, or
@@ -956,7 +959,7 @@ different values leave it **undecided**, and the act says which two:
 
 ```text
 b does Paint(l) on Shelf
-  `PaintRed` fired, but part of what it ensures was not applied: `PaintBlue` and `PaintRed` were both woken by `Paint`: `PaintBlue` set `Lamp#1.colour` to "blue" and `PaintRed` set it to "red"; the specification does not say which of the two runs first, so which value stands is undecided
+  `PaintRed` fired, but part of what it ensures was not applied: `PaintBlue` and `PaintRed` were both woken by `Paint`: `PaintBlue` set `l.colour` to "blue" and `PaintRed` set it to "red"; the specification does not say which of the two runs first, so which value stands is undecided
 then l.colour = "red"
   l.colour is unknown — `l.colour` was set to a value nothing settled — when it was written: `PaintBlue` and `PaintRed` were both woken by `Paint`: …
 ```
@@ -967,7 +970,12 @@ the question between them. A later step that reads it is undecided, and says
 the field "was set to a value nothing settled", with the clash as what was so
 when it was written: it is kept with the field, not only on the act. Writes that agree, writes to
 different fields, and a removal beside an assignment to what it removed come
-out the same in either order, and stand. Settle a clash in the spec — a
+out the same in either order, and stand. Two writes agree when the spec would
+call the values equal — `{red, blue}` and `{blue, red}` are one set — and
+neither was computed from the field itself: two rules that each say `c.n =
+c.n + 1` both write `1` over the `0` the trigger found, a value no order of
+the two produces, so the field is undecided and the reason says each read it
+as the trigger found it. Settle a clash in the spec — a
 `requires` on one rule that rules the other out — and the walk can decide it.
 
 A rule that **should** see another's work is a rule that listens for what the
@@ -1057,7 +1065,10 @@ settled on, not only a `null`: a loan whose `window` nobody set is not known to
 be overdue three weeks on, and `after 21.days` says so rather than holding.
 Each such rule is woken on the instance it could not settle before it is
 reported, so one whose `requires` already refuses — a loan already returned —
-is not. A *state* rule that is not temporal is not reported on the clock's line:
+is not. A rule whose `when` binds nothing — `when: Task.due_at <= now` — is never
+listed at all, so the clock's silence about it is not a *no*: `then <Rule> does
+not fire` about it is undecided, and says its condition is not visible from
+here. A *state* rule that is not temporal is not reported on the clock's line:
 time does not decide it, and a `then <Rule> fires` about it, when a listing
 could not decide it, still says it could not be told.
 
@@ -1071,7 +1082,7 @@ If it was not — the delivery was `done`, so never overdue — it does not appl
 it is refused, decided, and the refusal says which rule removed the instance:
 
 ```text
-`TimesOut` refused: d: Delivery.is_overdue — `Delivery#1` was removed earlier in this step, by `Cleanup`, so it has no state left for this condition to be about
+`TimesOut` refused: d: Delivery.is_overdue — `d` was removed in this step, by `Cleanup`, so it has no state left for this condition to be about
 ```
 
 That holds whatever the second rule calls the instance. `Lapse` reading `l:
@@ -1083,20 +1094,25 @@ If it was due — the delivery was still `sending` — the two rules raced over 
 delivery, and the specification does not say which runs first. The walk runs
 them in an order of its own — by module, then rule name — so a verdict either way would be
 that order's and would flip if a rule were renamed. It is undecided instead,
-and says which two rules raced:
+whichever of the two the walk reaches first, and says which two rules raced:
 
 ```text
-while the clock moved, what it set off: `TimesOut` could not be decided: `TimesOut` was due on `Delivery#1` when this step began, and `Cleanup` removed it earlier in the same step; the specification does not say which of the two runs first — in `d: Delivery.is_overdue`
+while the clock moved, what it set off: `TimesOut` could not be decided: `TimesOut` was due on `d` when this step began, and `Cleanup` removed it in the same step; the specification does not say which of the two runs first — in `d: Delivery.is_overdue`
 ```
+
+A rule that removes the instance itself is not racing anybody over it, and is
+read as usual. A deadline that is not there — `d.stopped_at + config.keep <=
+now` with no `stopped_at` — was never due, so a rule waiting on one is refused
+beside the removal, not raced.
 
 The same holds a round wider. Everything due is listed before anything fires,
 so an instance one firing removes can still be waiting for its own event. That
-event is not fired about something that is gone, and the rules it would have
-woken are not dropped either — they were due, so they are undecided the same
-way:
+event is not fired about an instance another firing of the round removes —
+whichever of the two events comes first — and the rules it would have woken
+are not dropped either: they were due, so they are undecided the same way:
 
 ```text
-`GiveUp` could not be decided: `GiveUp` was due on `Parcel#1` in the same round, and `Close` removed it before it ran; the specification does not say which of the two runs first
+`GiveUp` could not be decided: `GiveUp` was due on `p` in the same round, and `Close` removed it; the specification does not say which of the two runs first
 ```
 
 A race leaves the step undecided, and every `then` about the world after it
@@ -1140,6 +1156,8 @@ then r.ne = true
   r.ne is unknown — `r` has no `other` set
 ```
 
+`stipulate` is how a journey gets past that deliberately.
+
 A **stored** field a rule wrote with a value it could not settle says so, and
 what the write could not settle comes with it — kept with the field until
 something settles it, so the `then` a step later can still give it:
@@ -1159,8 +1177,7 @@ field that nothing set and nothing computes says that instead:
 ``b.done is unknown — `b` has no `done` set``.
 
 The reason names the cast member the way the journey did, not by the
-simulator's id for it. `stipulate` is how a journey gets past that
-deliberately. And an assertion about a path nothing has set is `undecided`
+simulator's id for it. And an assertion about a path nothing has set is `undecided`
 **both ways round**: `exists` does not refuse it and `does not
 exist` does not hold, because neither is something the world said.
 
@@ -1377,6 +1394,9 @@ As many `where` lines as there are calls to answer, each `where <call> =
 - **Nothing made, nothing listed.** An act that makes nothing of the kind, or
   that its surface refuses, answered no call, and the ledger does not claim it
   did.
+- **An answer with no value is refused**, as in `given`: `where audience(issue)
+  = repo.name` with no `name` set is undecided on the act's line, and not
+  listed.
 
 Written as a `stipulate` after the act instead, the answer still lands — a later
 act may ask the same question — but the step stays undecided, and when what the

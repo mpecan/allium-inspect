@@ -164,6 +164,12 @@ pub struct Env<'a> {
     /// to say so. Read off `this` alone, an unset `status` passed for a word,
     /// and `status = active` came out a definite `false`.
     element: Option<EntityId>,
+    /// The elements of the filters this one is inside, outermost first.
+    ///
+    /// In `docs where (tags where name = draft).count > 0` an unset field of
+    /// the outer doc is still a field of something in scope, not a word: read
+    /// off the innermost element alone, it passed for the state it spells.
+    enclosing: Vec<EntityId>,
 }
 
 /// The empty set of definitions, for an environment given none.
@@ -183,6 +189,7 @@ impl<'a> Env<'a> {
             resolving: BTreeSet::new(),
             parameters: BTreeSet::new(),
             element: None,
+            enclosing: Vec::new(),
         }
     }
 
@@ -242,6 +249,7 @@ impl<'a> Env<'a> {
             resolving: self.resolving.clone(),
             parameters: self.parameters.clone(),
             element: self.element.clone(),
+            enclosing: self.enclosing.clone(),
         }
     }
 
@@ -274,6 +282,7 @@ impl<'a> Env<'a> {
             // A definition belongs to its entity, not to the rule reading it.
             parameters: BTreeSet::new(),
             element: None,
+            enclosing: Vec::new(),
         };
         // Bare, and each undecided one saying why: `shown: out + "!"` over an
         // `out` a rule could not settle names what it could not settle.
@@ -422,7 +431,7 @@ pub fn field_of(instance: &Instance, field: &str, env: &Env<'_>) -> Evaluation {
     // (issue #27) — unanchored, because only the reader knows where it read.
     if instance.fields.contains_key(field) {
         let value = instance.field(field);
-        let unresolved = if value.is_unknown() {
+        let unresolved = if told::undecided(instance, field, &value) {
             vec![told::stored_unknown(instance, field)]
         } else {
             Vec::new()
@@ -443,7 +452,7 @@ fn ident(ident: &Ident, env: &Env<'_>) -> Evaluation {
     let name = &ident.name;
     if let Some(bound) = env.bindings.get(name) {
         let span = Span::new(ident.span.start, ident.span.end);
-        let unresolved = if bound.is_unknown() { env.told_of(name, span) } else { Vec::new() };
+        let unresolved = if bound.holds_unknown() { env.told_of(name, span) } else { Vec::new() };
         return Evaluation { value: bound.clone(), unresolved };
     }
     if let Some(collection) = collection_named(name, env) {

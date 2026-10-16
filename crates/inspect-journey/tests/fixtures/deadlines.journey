@@ -116,3 +116,14 @@ journey TwoUnansweredRulesAreBothNamed {
     1. a day passes over a task nobody started and an offer with no opening
         after 1.day
 }
+
+journey AChoreWhoseRuleBindsNothingIsNotAnswered {
+    cast:
+        c: Chore
+    given:
+        c.due_at = now
+        c.late = false
+    1. a day passes over a chore that came due
+        after 1.day
+        then Overdue does not fire
+}

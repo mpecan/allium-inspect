@@ -13,6 +13,10 @@
 -- and a deadline built from two offsets with a strict `<` (`Escalate`). `Offer` asks the opposite
 -- question — is the opening still ahead — which a `null` does not answer
 -- either way, so `Withdraw` stays undecided on an offer with no `opens_at`.
+--
+-- `Overdue` reads a chore's deadline without binding the chore it is about.
+-- `allium check` takes it as temporal, and the clock's listing never reads it,
+-- so the listing's silence about it is not a *no*.
 
 config {
     ttl: Duration = 1.hour
@@ -75,4 +79,14 @@ rule Withdraw {
     when: offer: Offer.opens_at > now
     requires: not offer.withdrawn
     ensures: offer.withdrawn = true
+}
+
+entity Chore {
+    due_at: Timestamp
+    late: Boolean
+}
+
+rule Overdue {
+    when: Chore.due_at <= now
+    ensures: Chore.late = true
 }
