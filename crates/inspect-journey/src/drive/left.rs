@@ -67,7 +67,8 @@ impl Walker<'_> {
                      before it ran; the specification does not say which of the two runs first",
                     node.name
                 ),
-                turn: self.firings,
+                // No `turn`: it orders the calls a rule asked against a `where`
+                // that landed, and a rule that never ran asked nothing.
                 ..Undecided::default()
             });
         }
