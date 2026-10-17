@@ -237,3 +237,61 @@ fn a_given_naming_another_module_says_so() {
         "{text}"
     );
 }
+
+/// A type qualifier is read as a call's is: `tally/Tag` is `tally`'s `Tag`,
+/// and `tally` declares none. The line is refused and catches nothing — not
+/// `parcels`' tag, which the qualifier ruled out — and a read through the
+/// name says why rather than coming back a bare unknown.
+#[test]
+fn a_type_qualified_by_a_module_that_does_not_declare_it_catches_nothing() {
+    let walk = walked("WrongModuleForTheType");
+    let text = text(&walk);
+    assert!(text.contains("no entity or actor called `tally/Tag`"), "{text}");
+    assert!(
+        walk.cast.iter().filter(|member| member.name == "tag").all(|it| it.entity.is_none()),
+        "{:?}",
+        walk.cast
+    );
+    assert!(text.contains("tag.box.label is unknown — `tag` "), "{text}");
+}
+
+/// A call `parcels` wrote in `Crate`'s definition, read by `tally`'s `Ship`
+/// before anything answered it, is still `parcels`'s: the simulator says so
+/// in its reason, and an answer naming `parcels` said after the act is too
+/// late for it — not one about another module's call. Told only by the
+/// reason that an answer was already in force, the walk took the reading
+/// rule's module and said nothing.
+#[test]
+fn a_call_asked_in_another_modules_definition_is_known_as_that_modules_unanswered() {
+    let walk = walked("LateWhereWritten");
+    let text = text(&walk);
+    assert!(text.contains("this one is `parcels`'s, read in its definition"), "{text}");
+    assert!(
+        text.contains(
+            "said after the act that made `c`, so nothing the act set off could read it — to \
+             answer `parcels/is_open(c)` for what it set off"
+        ),
+        "{text}"
+    );
+}
+
+/// A bare answer a qualified one shadows is said about wherever it is
+/// written — in `given` and under `creating` as in `stipulate` — and neither
+/// is a failure: the line still answers every other module.
+#[test]
+fn a_shadowed_bare_answer_is_said_about_in_given_and_where_too() {
+    let shadowed = "`parcels/watchers` still answers this call in its own module";
+    let given = walked("BareAfterQualifiedGiven");
+    let note = given
+        .notes
+        .iter()
+        .find(|note| note.detail.as_deref().is_some_and(|it| it.contains(shadowed)))
+        .unwrap_or_else(|| panic!("{}", text(&given)));
+    assert_eq!(note.verdict, Verdict::Remark);
+    assert_eq!(note.about, "given watchers(ada)");
+
+    let under = walked("BareAfterQualifiedWhere");
+    let text = text(&under);
+    assert!(text.contains(&format!("`where watchers(tag) = {{ada}}`: {shadowed}")), "{text}");
+    assert_eq!(under.steps[0].verdict(), Verdict::Specified, "{text}");
+}

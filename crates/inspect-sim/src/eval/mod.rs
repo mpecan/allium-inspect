@@ -49,7 +49,7 @@ use allium_parser::ast::{CondBranch, Expr, Ident, QualifiedName};
 // postcondition changes.
 pub use ast::{bare_name, span_of};
 use ast::{literal_text, truth_value};
-pub use calls::answers_only;
+pub use calls::{answers_only, asked_in, split_module, whose_call};
 pub(crate) use collections::element_scope;
 use inspect_model::{Derivations, Function, Span};
 use removed::NOTHING_REMOVED;
@@ -186,6 +186,13 @@ pub struct Env<'a> {
     /// What the rule whose `ensures` this reads removes: see
     /// [`Env::removing`]. Empty everywhere but there.
     removed_here: &'a BTreeMap<EntityId, Removal>,
+    /// The names bound beside the rule's `when` that still mean what they
+    /// meant there: see [`Env::holding`]. Empty everywhere but an `ensures`.
+    held: &'a BTreeSet<String>,
+    /// The module of the rule doing the reading. Apart from `module` while
+    /// a definition another module wrote is computed: a call asked there is
+    /// that module's, and the reason says so (issue #32).
+    asking: &'a str,
 }
 
 /// The empty set of definitions, for an environment given none.
@@ -211,6 +218,8 @@ impl<'a> Env<'a> {
             element: None,
             enclosing: Vec::new(),
             removed_here: &NOTHING_REMOVED,
+            held: &removed::NOTHING_HELD,
+            asking: module,
         }
     }
 
@@ -281,6 +290,8 @@ impl<'a> Env<'a> {
             element: self.element.clone(),
             enclosing: self.enclosing.clone(),
             removed_here: self.removed_here,
+            held: self.held,
+            asking: self.asking,
         }
     }
 
@@ -331,6 +342,9 @@ impl<'a> Env<'a> {
             // Still the state the rule leaves: a definition read from an
             // `ensures` reads the world that clause describes.
             removed_here: self.removed_here,
+            // The definition's names are its own, never the rule's.
+            held: &removed::NOTHING_HELD,
+            asking: self.asking,
         };
         // Bare, and each undecided one saying why: `shown: out + "!"` over an
         // `out` a rule could not settle names what it could not settle.

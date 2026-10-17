@@ -627,3 +627,84 @@ fn a_definition_reading_what_the_rule_removes_says_which_rule_removed_it() {
     );
     assert!(!reasons(recall).iter().any(|it| it.contains("is not in this world")), "{recall:#?}");
 }
+
+/// A chain of four links, each the `next` of the one before it.
+fn chain(world: &mut World) -> Vec<EntityId> {
+    let links: Vec<EntityId> = (0..4).map(|_| world.create("Link", "uploads")).collect();
+    for pair in links.windows(2) {
+        world.set_field(&pair[0], "next", Value::Ref(pair[1].clone()));
+    }
+    world.set_field(&links[3], "next", Value::Null);
+    links
+}
+
+/// A chain four deep goes whole, top first or bottom first, and neither
+/// order is said to unsettle anything. A line reaching what it removes
+/// through what a line above it removes reads that as the rule found it in
+/// the same reading of the rule, so the whole chain is found at once: found
+/// a level per reading, a chain deeper than the readings allowed was
+/// reported as a removal that never settles, and the verdict turned on line
+/// order again.
+#[test]
+fn a_chain_removed_through_itself_goes_whole_in_either_order() {
+    for trigger in ["Fell", "FellFromTheBottom"] {
+        let (graph, program, sources) = recorded();
+        let mut world = seed(&graph);
+        let links = chain(&mut world);
+        let event = Event::new(trigger, "uploads").with("link", Value::Ref(links[0].clone()));
+        let outcome = step(&graph, &program, &sources, &world, &event);
+        let fell = rule(&outcome, trigger);
+        assert_eq!(fell.disposition, Disposition::Fired, "{fell:#?}");
+        assert!(
+            !reasons(fell).iter().any(|it| it.contains("unsettles")),
+            "{trigger}: {:#?}",
+            reasons(fell)
+        );
+        assert!(fell.unapplied.is_empty(), "{trigger}: {fell:#?}");
+        for link in &links {
+            assert!(outcome.world.instance(link).is_none(), "{trigger} kept {link}: {outcome:#?}");
+        }
+    }
+}
+
+/// What decides reads what the rule's own lines wrote to what it removes,
+/// as it reads what they wrote to anything else: `upload.big = false` above
+/// `if upload.big:` decides the `if` from `false` whether or not a third
+/// line removes the upload. Read from the upload as the trigger found it,
+/// the removal alone turned the same `if` true and made a blob.
+#[test]
+fn what_decides_reads_the_rules_own_writes_to_what_it_removes() {
+    for trigger in ["Shrink", "ShrinkRemoving"] {
+        let (outcome, upload, _) = fired(trigger, true);
+        let shrink = rule(&outcome, trigger);
+        assert_eq!(shrink.disposition, Disposition::Fired, "{shrink:#?}");
+        assert!(!skipped(shrink), "{trigger}: {shrink:#?}");
+        let blobs = outcome.world.entities.values().filter(|it| it.entity == "Blob").count();
+        assert_eq!(blobs, 0, "{trigger}: {outcome:#?}");
+        assert_eq!(
+            outcome.world.instance(&upload).is_none(),
+            trigger == "ShrinkRemoving",
+            "{outcome:#?}"
+        );
+    }
+}
+
+/// A loop's member removed in the loop that reads it has no name beside
+/// the `when`, so the reason does not tell the author to bind one there:
+/// it says which name a `let` there would have to start from, and that
+/// `t` is not one.
+#[test]
+fn a_read_of_a_removed_loop_member_does_not_advise_a_let_nobody_can_write() {
+    let (outcome, _, _) = fired_with_thumbs("PurgeRecording", &["a"]);
+    let purge = rule(&outcome, "PurgeRecording");
+    let note = removal_note(purge);
+    assert!(
+        note.reason.contains("rule `PurgeRecording` removes `t`")
+            && note.reason.contains("so `t.name` has nothing to read")
+            && note.reason.contains("`t` is not a name bound there")
+            && !note.reason.contains("bind `let"),
+        "{}",
+        note.reason
+    );
+    assert!(purge.unapplied.contains(note), "{purge:#?}");
+}

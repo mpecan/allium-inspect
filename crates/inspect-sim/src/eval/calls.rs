@@ -114,14 +114,37 @@ pub(super) fn answered(
 /// ledger lists it. Saying no more than "no stipulation answers this call"
 /// beside that line reads as the tool contradicting itself (issue #32), so the
 /// reason names which module asked and which the answer was about.
+///
+/// A call asked inside a definition another module wrote says whose it is
+/// whether or not anything answered elsewhere yet: a qualified answer that
+/// comes too late for it is otherwise read as one naming the wrong module.
 fn unanswered(name: &str, env: &Env<'_>) -> String {
     let nothing = format!("nothing defines `{name}`, and no stipulation answers this call");
     let elsewhere = env.world.answered_elsewhere(env.module, name);
     if elsewhere.is_empty() {
-        return nothing;
+        if env.module == env.asking {
+            return nothing;
+        }
+        return format!("{nothing}; {}, read in its definition", asked_in(env.module));
     }
     let answers: Vec<String> = elsewhere.iter().map(|call| answers_only(call)).collect();
-    format!("{nothing}; {}, and this one is `{}`'s", answers.join("; "), env.module)
+    format!("{nothing}; {}, and {}", answers.join("; "), asked_in(env.module))
+}
+
+/// "this one is `b`'s": whose an unanswered call is, in the words a reason
+/// uses for it — see [`whose_call`], which reads it back.
+#[must_use]
+pub fn asked_in(module: &str) -> String {
+    format!("this one is `{module}`'s")
+}
+
+/// The module a reason says its call is, when it says: the inverse of
+/// [`asked_in`], so the journey walk never copies the wording.
+#[must_use]
+pub fn whose_call(reason: &str) -> Option<&str> {
+    let (_, after) = reason.split_once("this one is `")?;
+    let (module, _) = after.split_once("`'s")?;
+    Some(module)
 }
 
 /// "`b/watchers` answers `b`'s `watchers`": what a qualified answer is about,
@@ -131,9 +154,18 @@ fn unanswered(name: &str, env: &Env<'_>) -> String {
 /// call answered in the wrong module from one answered too late, and a copy
 /// of the wording there would drift from this one without a sound.
 #[must_use]
-pub fn answers_only(qualified: &str) -> String {
-    let (module, bare) = qualified.rsplit_once('/').unwrap_or(("", qualified));
-    format!("`{qualified}` answers `{module}`'s `{bare}`")
+pub fn answers_only(call: &str) -> String {
+    let (module, bare) = split_module(call);
+    format!("`{call}` answers `{}`'s `{bare}`", module.unwrap_or_default())
+}
+
+/// The module a name is qualified by and the name in it: `tally/watchers` is
+/// `tally`'s `watchers`, and `watchers` names no module. One reading of the
+/// `module/name` convention — for a call, an answer and a type alike — so no
+/// two places can split it differently.
+#[must_use]
+pub fn split_module(name: &str) -> (Option<&str>, &str) {
+    name.rsplit_once('/').map_or((None, name), |(module, bare)| (Some(module), bare))
 }
 
 /// `can(repo, code)` answered by a stipulation that names the same word.

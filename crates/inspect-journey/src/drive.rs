@@ -120,6 +120,7 @@ impl Walker<'_> {
         self.removed.clear();
         self.landed.clear();
         self.unheard.clear();
+        self.remarks.clear();
         self.cut_off = None;
         self.listed = None;
         self.firings = 0;
@@ -160,7 +161,17 @@ impl Walker<'_> {
             }
             for effect in &rule.effects {
                 match effect {
-                    inspect_sim::Effect::Created { id, .. } => self.created.push(id.clone()),
+                    inspect_sim::Effect::Created { id, entity } => {
+                        // Where it lives, for a `creating` line that names a
+                        // module: from the world the turn left, or — made and
+                        // removed in one turn — where the rule that made it
+                        // would have put it.
+                        let home = outcome.world.instance(id).map_or_else(
+                            || crate::world::home_of(self.spec, &rule.module, entity),
+                            |instance| instance.module.clone(),
+                        );
+                        self.created.push((id.clone(), home));
+                    }
                     inspect_sim::Effect::Removed { id, .. } => {
                         self.removed.entry(id.clone()).or_insert_with(|| rule.name.clone());
                     }

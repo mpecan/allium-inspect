@@ -80,9 +80,11 @@ pub fn walk(
         refused: Vec::new(),
         created: Vec::new(),
         removed: BTreeMap::new(),
+        gone: BTreeMap::new(),
         awaiting: None,
         landed: Vec::new(),
         unheard: Vec::new(),
+        remarks: Vec::new(),
         answered: Vec::new(),
         refused_in_the_world: Vec::new(),
         cut_off: None,
@@ -142,9 +144,10 @@ pub(crate) struct Undecided {
     /// The calls nothing answered when it ran, as the spec wrote them:
     /// `audience(issue)`. What a remark about an answer matches against.
     pub(crate) asked: Vec<String>,
-    /// Every reason the simulator gave, as it gave it: what tells a call
-    /// read from another module's definition from one the rule wrote.
-    pub(crate) reasons: Vec<String>,
+    /// Every reason the simulator gave, as it gave it, beside the
+    /// sub-expression it is about: what tells a call read from another
+    /// module's definition from one the rule wrote.
+    pub(crate) reasons: Vec<(Option<String>, String)>,
     /// The engine turn of its act it ran in.
     pub(crate) turn: usize,
 }
@@ -178,9 +181,13 @@ pub(crate) struct Walker<'a> {
     pub(crate) refused: Vec<Undecided>,
     /// Every instance made since it, in the order it was made — the act's own
     /// first, then whatever it set off.
-    pub(crate) created: Vec<EntityId>,
+    pub(crate) created: Vec<(EntityId, String)>,
     /// Every instance removed since it, and the rule that removed it first.
     pub(crate) removed: BTreeMap<EntityId, String>,
+    /// A `creating` name whose instance was made and then removed during
+    /// the act, and what that says: `` `first` caught `Tag#1`, which
+    /// `Dedup` removed ``. Until the name is bound again.
+    pub(crate) gone: BTreeMap<String, String>,
     /// An act's `where` answers, until what they are about is made.
     pub(crate) awaiting: Option<crate::answers::Awaiting>,
     /// The `where` answers that landed since the last clause, and on what.
@@ -188,6 +195,9 @@ pub(crate) struct Walker<'a> {
     /// Why a `where` answer was refused once its instance landed, for the
     /// act's line to say.
     pub(crate) unheard: Vec<String>,
+    /// What a `where` answer that landed has to say beside the act, and is
+    /// no reason the step fails: a qualified answer it leaves in force.
+    pub(crate) remarks: Vec<String>,
     /// Every answer `given` or a file's world put in force, and the line that
     /// said it — so a later one about the same call can say what it replaced.
     pub(crate) answered: Vec<crate::answers::FromTheStart>,
@@ -292,7 +302,9 @@ impl Walker<'_> {
             // act held would read "holds" over an answer it never gave.
             let mut unheard = Vec::new();
             if matches!(clause, Clause::Does { .. }) {
-                asides.extend(self.unanswered().into_iter().map(|detail| Outcome {
+                let mut remarks = std::mem::take(&mut self.remarks);
+                remarks.extend(self.unanswered());
+                asides.extend(remarks.into_iter().map(|detail| Outcome {
                     verdict: Verdict::Remark,
                     detail: Some(detail),
                     ..outcome.clone()
@@ -405,8 +417,11 @@ impl Walker<'_> {
         // Each line catches its own instance, and one that caught nothing is
         // said about by name: the others caught what they caught.
         let made = self.made_for(creating);
+        let first_caught = self.caught_by(creating);
         let mut missing: Vec<String> = Vec::new();
-        for ((caught, id), before) in creating.iter().zip(made).zip(named) {
+        for (((caught, id), before), first) in
+            creating.iter().zip(made).zip(named).zip(first_caught)
+        {
             let caught = &caught.cast;
             if let Some(id) = id {
                 self.bind(caught, Some(id), Origin::Caught);
@@ -428,10 +443,26 @@ impl Walker<'_> {
             // nothing, and reporting only the empty hands sent a reader
             // looking at their own journey for a mistake that was three lines
             // up in the specification.
-            missing.push(format!(
-                "nothing of kind `{}` was created for `{}`",
-                caught.type_expr, caught.name
-            ));
+            //
+            // Made and then removed is not "nothing was created": that sent
+            // the reader looking for a rule that failed to make it, when one
+            // made it and another took it away.
+            missing.push(match first {
+                Some(id) => {
+                    let gone = match self.removed.get(&id) {
+                        Some(rule) => {
+                            format!("`{}` caught `{id}`, which `{rule}` removed", caught.name)
+                        }
+                        None => format!("`{}` caught `{id}`, which was removed", caught.name),
+                    };
+                    self.gone.insert(caught.name.clone(), gone.clone());
+                    gone
+                }
+                None => format!(
+                    "nothing of kind `{}` was created for `{}`",
+                    caught.type_expr, caught.name
+                ),
+            });
         }
         let missing = (!missing.is_empty()).then(|| missing.join("; "));
 

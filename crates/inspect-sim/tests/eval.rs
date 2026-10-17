@@ -3505,6 +3505,45 @@ fn a_definition_is_quoted_from_its_own_module_s_text_and_no_other() {
     assert_eq!(inner(&elsewhere).expression, None);
 }
 
+/// A call asked inside a definition another module wrote says whose it is
+/// even with nothing answered anywhere, and `whose_call` reads it back: a
+/// qualified answer said too late for it is otherwise taken for one naming
+/// the wrong module. Asked in the module whose rule reads it, it says no more.
+#[test]
+fn a_call_in_another_modules_definition_says_whose_it_is_unanswered() {
+    let source = "quiet: nobody()";
+    let world = library();
+    let derived = quiet_reads_nobody(source);
+    let sources = std::collections::BTreeMap::from([("lending".to_owned(), source.to_owned())]);
+    let member = Value::Ref(EntityId::new("Member", 1));
+    let read = field(ident("hub"), "quiet");
+    let note = |env: &Env<'_>| {
+        eval(&read, env)
+            .unresolved
+            .into_iter()
+            .find(|note| note.reason.starts_with("nothing defines `nobody`"))
+            .expect("the definition's own note")
+            .reason
+    };
+
+    let elsewhere = Env::new(&world, "catalogue", "")
+        .deriving(&derived)
+        .quoting(&sources)
+        .bind("hub", member.clone());
+    let said = note(&elsewhere);
+    assert_eq!(
+        said,
+        "nothing defines `nobody`, and no stipulation answers this call; this one is \
+         `lending`'s, read in its definition"
+    );
+    assert_eq!(inspect_sim::eval::whose_call(&said), Some("lending"));
+
+    let own = Env::new(&world, "lending", source).deriving(&derived).bind("hub", member);
+    let said = note(&own);
+    assert_eq!(said, "nothing defines `nobody`, and no stipulation answers this call");
+    assert_eq!(inspect_sim::eval::whose_call(&said), None);
+}
+
 // --- what a rule's `ensures` removes (issue #33) ---------------------------
 
 /// A value read from an instance the rule removes is undecided whether the
@@ -3542,9 +3581,11 @@ fn an_instance_the_rule_removes_is_undecided_wherever_the_world_holds_it() {
         field: Ident { span: AstSpan { start: at + 7, end: at + 11 }, name: "name".to_owned() },
     };
 
+    let beside_the_when = std::collections::BTreeSet::from(["member".to_owned()]);
     for world in [&held, &gone] {
         let scope = Env::new(world, "lending", &source)
             .removing(&removed)
+            .holding(&beside_the_when)
             .bind("member", Value::Ref(member.clone()));
         let evaluated = eval(&node, &scope);
         assert_eq!(evaluated.value, Value::Unknown);
@@ -3562,6 +3603,20 @@ fn an_instance_the_rule_removes_is_undecided_wherever_the_world_holds_it() {
         assert_eq!(note.expression.as_deref(), Some("member.name"));
         assert_eq!(note.span, Some(inspect_model::Span::new(at, at + 11)));
     }
+
+    // `member` bound by something other than the rule's `when` — a loop, a
+    // `let` inside `ensures` — has no `let` beside the `when` to keep it, and
+    // the reason does not advise one.
+    let scope = Env::new(&gone, "lending", &source)
+        .removing(&removed)
+        .bind("member", Value::Ref(member.clone()));
+    let note = &eval(&node, &scope).unresolved[0];
+    assert!(
+        note.reason.contains("`member` is not a name bound there")
+            && !note.reason.contains("bind `let"),
+        "{}",
+        note.reason
+    );
 
     // Told nothing, the world answers as it always did.
     let told_nothing =

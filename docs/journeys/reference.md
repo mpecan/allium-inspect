@@ -806,9 +806,12 @@ module imported `as memo`. Another module's `Order` being made does not wake it.
 A creation written through another module's name — `ensures: memo/Note.created(…)`
 — is a creation like any other, placed in the module the `use … as memo` names.
 An unqualified `Order.created(…)` goes in the creating module when that module
-declares an `Order`. `creating` catches by the entity's name, so
-`creating n: notes/Note` and `creating n: Note` name the same thing, and a
-reaction written `when: n: memo/Note.created` reacts to it.
+declares an `Order`, and a reaction written `when: n: memo/Note.created`
+reacts to it. `creating n: Note` catches a `Note` from whichever module made
+it; `creating n: notes/Note` catches only one `notes` declares — the module's
+own name, as a qualified answer uses, not the alias a `use` gives it. A type
+qualified by a module that declares no such entity is refused: ``no entity or
+actor called `tally/Tag` ``, even when another module has a `Tag`.
 
 #### Which instance `creating` catches
 
@@ -832,6 +835,9 @@ says why it is nobody: `` `second` caught nothing, on line 12``.
 A line keeps the instance it caught. If something the act set off removes it,
 that line names nothing afterwards, as a single `creating` would, and the lines
 below it of the same kind keep theirs — they are not moved up to fill the gap.
+The act says what happened rather than that nothing was made — `` `first`
+caught `Tag#1`, which `Dedup` removed `` — and so does a later line reading
+the name.
 
 ### How a trigger's arguments reach a rule
 
@@ -1059,13 +1065,30 @@ rule Complete {
 A `let` written **inside** `ensures` does not do that. It is a name for a
 read, and it reads what the read would wherever the name is used: in the state
 the rule leaves where a value is left behind, and as below where something is
-decided.
+decided. Earlier versions kept the value whenever it was written above the
+removal; a spec that relied on that now reads undecided there, and the reason
+names the `let` to move beside the `when`.
+
+The advice is given only when the read starts from a name bound beside the
+`when`. A loop's member is not one: `for t in upload.thumbs:
+Blob.created(name: t.name); not exists t` records and removes each thumb, and
+no `let` beside the `when` names each `t`. This is deliberate — each
+`Blob.created` is still a postcondition about the state the rule leaves, where
+`t` is gone — so the read is undecided, and the reason says `` `t` is not a
+name bound there `` rather than advising a `let` nobody can write. An
+emission from the loop does not help: its argument is read in the same state.
+Nothing beside the `when` can name each member's value, so a rule that
+records and removes each member in one loop stays undecided, and says so.
 
 What **decides** which postconditions apply reads the world the rule found —
 with what it removes as it was before any of its lines ran: an `if`'s
 condition, a `for`'s collection and filter, and what a `not exists` or an
 assignment is about. `if upload.big: not exists upload` asks whether to remove
 it, and asked of the state the removal produces the question has no answer.
+What the rule's own lines wrote to the instance it removes is part of that
+world, as it would be if nothing removed it: `upload.big = false` above `if
+upload.big:` decides the `if` from `false` with or without `not exists upload`
+below it.
 So a small upload stays and its name is read; a big one goes, decided, and its
 name is not there to read. `not exists upload` and `not exists upload.thumb`
 remove both, in either order, and `for t in upload.thumbs: not exists t`
@@ -1077,7 +1100,9 @@ empty, written above the loop or below it. `exists upload` is false there.
 
 Which instances a rule removes is found before any of its lines is applied,
 by reading them through until two readings agree — a removal decided from an
-instance another line removes is found too. A rule written so that the answer
+instance another line removes is found too, however deep the chain: `not exists
+link`, `not exists link.next`, `not exists link.next.next` and so on remove the
+whole chain, top line first or bottom line first. A rule written so that the answer
 never settles — a value left behind, read from what it removes, deciding
 whether it is removed — is not answered by whichever reading came last.
 Everything any reading removed reads as gone, and the act is undecided,
@@ -1470,13 +1495,16 @@ refusal names the module it stands for. Where a bare and a qualified answer are
 both about the same arguments, a rule in the named module reads the qualified
 one and every other module reads the bare one; neither replaces the other in
 the ledger, because they are not about the same call. A bare answer said while
-a qualified one stands says so on its line, since it does not reach that
-module.
+a qualified one stands says so — beside a `stipulate`, as a remark on a `given`
+line, and beside the act for a `where` — since it does not reach that module.
 
 A call is the module's that **wrote** it. One inside an entity's definition —
 `open: is_open(this)` in `parcels` — is `parcels`'s wherever the field is read
 from, so a rule in `tally` reading `crate.open` is answered by
 `parcels/is_open(crate)`, and `tally/is_open(crate)` answers nothing there.
+The reason for such a call says whose it is even when nothing answered it yet
+— "this one is `parcels`'s, read in its definition" — so an answer naming
+`parcels` that came after the act is called too late, not the wrong module.
 
 A rule in another module that asks a call of that name is not answered, and
 when the act set it off the walk says so beside the act rather than leaving the

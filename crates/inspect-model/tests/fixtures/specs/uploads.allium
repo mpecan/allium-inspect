@@ -29,6 +29,10 @@ entity Blob {
     name: String
 }
 
+entity Link {
+    next: Link?
+}
+
 entity Shelf {
     last: String
     latest: Upload?
@@ -294,6 +298,60 @@ rule Heard {
     ensures: Blob.created(name: name)
 }
 
+-- A chain four deep, removed top first and bottom first: each line below the
+-- first reaches what it removes through what a line above it removes.
+rule Fell {
+    when: Fell(link)
+    ensures: not exists link
+    ensures: not exists link.next
+    ensures: not exists link.next.next
+    ensures: not exists link.next.next.next
+}
+
+rule FellFromTheBottom {
+    when: FellFromTheBottom(link)
+    ensures: not exists link.next.next.next
+    ensures: not exists link.next.next
+    ensures: not exists link.next
+    ensures: not exists link
+}
+
+-- What decides reads what the rule's own lines wrote, removed or not: the
+-- `if` reads `big` as `false` in both, and neither makes a blob.
+rule Shrink {
+    when: Shrink(upload)
+    ensures:
+        upload.big = false
+        if upload.big:
+            Blob.created(name: "big")
+}
+
+rule ShrinkRemoving {
+    when: ShrinkRemoving(upload)
+    ensures:
+        upload.big = false
+        if upload.big:
+            Blob.created(name: "big")
+        not exists upload
+}
+
+-- Each thumb recorded and removed in one loop: no name beside the `when`
+-- reaches each `t`, so no `let` there can keep what it held.
+rule PurgeRecording {
+    when: PurgeRecording(upload)
+    ensures:
+        for t in upload.thumbs:
+            Blob.created(name: t.name)
+            not exists t
+}
+
+surface LinkDesk {
+    facing l: Link
+    provides:
+        Fell(l)
+        FellFromTheBottom(l)
+}
+
 surface Desk {
     facing u: Upload
     provides:
@@ -322,6 +380,9 @@ surface Desk {
         Announce(u)
         ShadowedByLoop(u)
         FinishRemovingFirst(u)
+        Shrink(u)
+        ShrinkRemoving(u)
+        PurgeRecording(u)
 }
 
 surface ShelfDesk {

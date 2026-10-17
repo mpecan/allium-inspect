@@ -8,20 +8,19 @@
 //!
 //! The walk reads that from two places. A rule's own module covers the common
 //! case. A call written in another module's definition is caught by the
-//! simulator, which knows where it read the call and says so in its reason —
-//! see [`inspect_sim::eval::answers_only`] — so the walk reads it back rather
-//! than guessing.
+//! simulator, which knows where it read the call and says so in its reason
+//! whether or not anything was answered yet — see
+//! [`inspect_sim::eval::asked_in`] — so the walk reads it back with
+//! [`inspect_sim::eval::whose_call`] rather than guessing.
 
 use inspect_model::SpecGraph;
-use inspect_sim::{Value, eval::answers_only, world::World};
+use inspect_sim::{Value, eval::whose_call, world::World};
 
 use crate::run::Undecided;
 
 /// The module an answer names and the call it answers there: `tally/watchers`
 /// is `tally`'s `watchers`, and `watchers` is every module's.
-pub(crate) fn qualified(call: &str) -> (Option<&str>, &str) {
-    call.rsplit_once('/').map_or((None, call), |(module, bare)| (Some(module), bare))
-}
+pub(crate) use inspect_sim::eval::split_module as qualified;
 
 /// Whether `expression` is a call to `call`: `reach(issue)` is one to `reach`,
 /// and `outreach(issue)` is not.
@@ -36,17 +35,24 @@ pub(crate) fn asked_of<'a>(rule: &'a Undecided, call: &str) -> Option<&'a str> {
     rule.asked.iter().find(|expression| calls(expression, bare)).map(String::as_str)
 }
 
-/// Whether an answer to `call` is one `rule` could read: an unqualified one
-/// in every module, a qualified one only in the module that wrote the call.
+/// Whether an answer to `call` is one `rule` could read where it asked
+/// `expression`: an unqualified one in every module, a qualified one only in
+/// the module that wrote the call.
 ///
-/// The rule's module is that module unless the simulator said otherwise: a
-/// call inside another module's definition, unanswered with this answer in
-/// force, is reported as `` `b/watchers` answers `b`'s `watchers` ``.
-pub(crate) fn reaches(call: &str, rule: &Undecided) -> bool {
-    let module = qualified(call).0;
-    module.is_none_or(|module| module == rule.module)
-        && !(module.is_some()
-            && rule.reasons.iter().any(|reason| reason.contains(&answers_only(call))))
+/// The rule's module is that module unless the simulator said otherwise
+/// about this very call: one inside another module's definition is reported
+/// as `` this one is `b`'s ``, answered or not. Asked of the expression and
+/// not of the rule, since a rule may ask its own `watchers` and read another
+/// module's definition that asks that module's.
+pub(crate) fn reaches(call: &str, rule: &Undecided, expression: &str) -> bool {
+    let Some(module) = qualified(call).0 else { return true };
+    let asking = rule
+        .reasons
+        .iter()
+        .filter(|(about, _)| about.as_deref() == Some(expression))
+        .find_map(|(_, reason)| whose_call(reason))
+        .unwrap_or(&rule.module);
+    module == asking
 }
 
 /// The remark for an answer naming another module than the one asking.
@@ -138,23 +144,36 @@ mod tests {
         assert_eq!(asked_of(&tally, "tally/watchers"), Some("watchers(t)"));
         assert_eq!(asked_of(&parcels, "tally/watchers"), Some("watchers(t)"));
         assert_eq!(asked_of(&tally, "tally/viewers"), None);
-        assert!(reaches("tally/watchers", &tally));
-        assert!(!reaches("tally/watchers", &parcels));
-        assert!(reaches("watchers", &parcels));
+        assert!(reaches("tally/watchers", &tally, "watchers(t)"));
+        assert!(!reaches("tally/watchers", &parcels, "watchers(t)"));
+        assert!(reaches("watchers", &parcels, "watchers(t)"));
     }
 
     /// A rule in `tally` that read `parcels`' definition asked `parcels`'
-    /// call, and the simulator said so: `tally/watchers` did not reach it.
+    /// call, and the simulator said so — answered elsewhere or not yet: a
+    /// `tally/watchers` did not reach it, and a `parcels/watchers` did.
     #[test]
     fn a_call_read_from_another_modules_definition_is_that_modules() {
-        let mut tally = asked_in("tally");
-        tally.reasons = vec![format!(
-            "nothing defines `watchers`, and no stipulation answers this call; {}, and this \
-             one is `parcels`'s",
-            answers_only("tally/watchers")
-        )];
-        assert!(!reaches("tally/watchers", &tally));
-        // An unqualified answer is not what the reason is about.
-        assert!(reaches("watchers", &tally));
+        for said in [
+            format!(
+                "nothing defines `watchers`, and no stipulation answers this call; {}, and {}",
+                inspect_sim::eval::answers_only("tally/watchers"),
+                inspect_sim::eval::asked_in("parcels")
+            ),
+            format!(
+                "nothing defines `watchers`, and no stipulation answers this call; {}, read in \
+                 its definition",
+                inspect_sim::eval::asked_in("parcels")
+            ),
+        ] {
+            let mut tally = asked_in("tally");
+            tally.reasons = vec![(Some("watchers(this)".to_owned()), said)];
+            assert!(!reaches("tally/watchers", &tally, "watchers(this)"));
+            assert!(reaches("parcels/watchers", &tally, "watchers(this)"));
+            // An unqualified answer is not what the reason is about.
+            assert!(reaches("watchers", &tally, "watchers(this)"));
+            // Nor is the rule's own call of the same name, asked elsewhere in it.
+            assert!(reaches("tally/watchers", &tally, "watchers(t)"));
+        }
     }
 }

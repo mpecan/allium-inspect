@@ -637,10 +637,13 @@ fn declares(graph: &SpecGraph, kind: NodeKind, name: &str) -> bool {
 
 /// The construct a cast member's type names, if the spec has one.
 fn missing_type(member: &Cast, graph: &SpecGraph) -> Option<Note> {
-    // Qualified names carry their module: `catalogue/Copy` is `Copy` over there.
-    let bare = member.type_expr.rsplit('/').next().unwrap_or(&member.type_expr);
+    // Qualified names carry their module: `catalogue/Copy` is `Copy` over
+    // there, and only there — `tally/Tag` names nothing when `tally` declares
+    // no `Tag`, whoever else does.
+    let (module, bare) = inspect_sim::eval::split_module(&member.type_expr);
     let found = graph.nodes.iter().any(|node| {
         node.name == bare
+            && module.is_none_or(|module| module == node.module)
             && matches!(
                 node.detail,
                 NodeDetail::Entity(_) | NodeDetail::Actor(_) | NodeDetail::None

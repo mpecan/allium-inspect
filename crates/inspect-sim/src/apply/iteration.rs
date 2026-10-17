@@ -137,9 +137,13 @@ impl Application<'_> {
             // names the same member in the world the rule found.
             self.told.remove(&binding);
             self.decided.remove(&binding);
+            let held = self.held.remove(&binding);
             let restore = self.bindings.insert(binding.clone(), item);
             let step = self.apply(&body);
             applied.merge(step);
+            if held {
+                self.held.insert(binding.clone());
+            }
             match restore {
                 Some(previous) => self.bindings.insert(binding.clone(), previous),
                 None => self.bindings.remove(&binding),

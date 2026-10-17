@@ -15,7 +15,7 @@
 //! application's to build (`Application::decide`); here an environment is
 //! told only what to refuse.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use allium_parser::ast::Expr;
 
@@ -24,6 +24,9 @@ use crate::value::{EntityId, Instance};
 
 /// Nothing removed, for an environment not reading a rule's `ensures`.
 pub(super) static NOTHING_REMOVED: BTreeMap<EntityId, Removal> = BTreeMap::new();
+
+/// No names held, for an environment not reading a rule's `ensures`.
+pub(super) static NOTHING_HELD: BTreeSet<String> = BTreeSet::new();
 
 /// An instance a rule's `ensures` removes, as [`Env::removing`] is told it.
 #[derive(Debug, Clone, PartialEq)]
@@ -49,6 +52,15 @@ impl<'a> Env<'a> {
         self
     }
 
+    /// The same environment, knowing which of its names were bound beside the
+    /// rule's `when` and still mean that here: the only names a `let` there
+    /// can keep a removed instance's value through.
+    #[must_use]
+    pub fn holding(mut self, held: &'a BTreeSet<String>) -> Self {
+        self.held = held;
+        self
+    }
+
     /// The instance `id`, as this read sees it: `Err` with how it was removed
     /// when the rule whose `ensures` this reads removes it, otherwise as the
     /// world holds it, or `Ok(None)` when it holds none.
@@ -67,6 +79,13 @@ impl<'a> Env<'a> {
 /// that: a `let` beside the rule's `when`, read before anything changes. A
 /// `let` inside `ensures` is not that — it is a name for a read of the state
 /// the rule leaves — so the advice says where, not only what.
+///
+/// Only when the read starts from a name bound there. A loop's member, a name
+/// a `let` inside `ensures` bound, and a definition's own fields cannot be
+/// reached from beside the `when`: `for t in upload.thumbs: …; not exists t`
+/// has no name there for each `t`. Advice to bind `let name = t.name` beside
+/// the `when` would be advice nobody can follow, so the reason says what a
+/// `let` there would have to start from instead.
 pub(super) fn removed_here(
     id: &EntityId,
     removal: &Removal,
@@ -75,10 +94,6 @@ pub(super) fn removed_here(
 ) -> Evaluation {
     let written = span_of(whole).and_then(|span| span.slice(env.source));
     let read = written.map_or_else(|| "this read".to_owned(), |text| format!("`{text}`"));
-    let keep = match (written, whole) {
-        (Some(text), Expr::MemberAccess { field, .. }) => format!("`let {} = {text}`", field.name),
-        _ => "it in a `let`".to_owned(),
-    };
     let rule = if removal.rule.is_empty() {
         "this rule".to_owned()
     } else {
@@ -86,14 +101,41 @@ pub(super) fn removed_here(
     };
     let Removal { subject, clause, .. } = removal;
     let named = if subject == id.as_str() { String::new() } else { format!(" (`{id}`)") };
+    let keep = match root(whole) {
+        Some(name) if !env.held.contains(name) => format!(
+            "what it held can be kept only through a `let` beside the `when`, which reads \
+             before the rule changes anything, and `{name}` is not a name bound there"
+        ),
+        _ => {
+            let keep = match (written, whole) {
+                (Some(text), Expr::MemberAccess { field, .. }) => {
+                    format!("`let {} = {text}`", field.name)
+                }
+                _ => "it in a `let`".to_owned(),
+            };
+            format!(
+                "to keep what it held, bind {keep} beside the `when` — a `let` inside \
+                 `ensures` reads the state the rule leaves too"
+            )
+        }
+    };
     Evaluation::unknown(
         format!(
             "{rule} removes `{subject}`{named} with `{clause}`, so {read} has nothing to read \
-             in the state it leaves, whichever line comes first; to keep what it held, bind \
-             {keep} beside the `when` — a `let` inside `ensures` reads the state the rule \
-             leaves too"
+             in the state it leaves, whichever line comes first; {keep}"
         ),
         whole,
         env.source,
     )
+}
+
+/// The name a read starts from: `upload` in `upload.thumb.name` and in
+/// `upload.is_named("x")`.
+fn root(node: &Expr) -> Option<&str> {
+    match node {
+        Expr::Ident(ident) => Some(&ident.name),
+        Expr::MemberAccess { object, .. } => root(object),
+        Expr::Call { function, .. } => root(function),
+        _ => None,
+    }
 }

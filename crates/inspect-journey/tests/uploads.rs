@@ -185,3 +185,15 @@ fn a_relationship_read_after_its_members_go_gets_the_same_verdict_in_either_orde
         assert_eq!(line(&walk, "then th does not exist").verdict, Verdict::Specified);
     }
 }
+
+/// An existence line read off a world that is not settled says what it read
+/// before saying why that is not an answer: "up does not exist, but …", not
+/// a sentence starting at "but" with nothing before it.
+#[test]
+fn an_existence_line_in_an_unsettled_world_says_what_it_read() {
+    let walk = walked("ReadAfterRemove");
+    let gone = line(&walk, "then up does not exist");
+    assert_eq!(gone.verdict, Verdict::Undecided, "{gone:#?}");
+    let detail = gone.detail.as_deref().unwrap_or_default();
+    assert!(detail.starts_with("up does not exist, but this world is not settled — "), "{detail}");
+}

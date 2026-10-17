@@ -171,9 +171,10 @@ pub struct Application<'a> {
     removed_here: BTreeMap<EntityId, Removal>,
     /// What this application removed, by the clause that removed it.
     removed: BTreeMap<EntityId, Removal>,
-    /// A `let` inside `ensures` whose read differs in the world the rule
-    /// found: what it names there, for what decides (see `removals.rs`).
+    /// An `ensures` `let` read otherwise in the world the rule found: see `removals.rs`.
     decided: BTreeMap<String, (Value, Vec<Unresolved>)>,
+    /// Names bound beside the `when` still meaning that: see `Env::holding`.
+    held: std::collections::BTreeSet<String>,
 }
 
 impl<'a> Application<'a> {
@@ -186,6 +187,7 @@ impl<'a> Application<'a> {
         Self {
             against,
             world,
+            held: bindings.keys().cloned().collect(),
             bindings,
             told: BTreeMap::new(),
             removed_here: BTreeMap::new(),
@@ -206,6 +208,7 @@ impl<'a> Application<'a> {
     /// clause reading the name can say what the binding could not settle.
     fn bind(&mut self, name: &str, value: Value, why: Vec<Unresolved>) {
         self.decided.remove(name);
+        self.held.remove(name);
         remember(&mut self.told, name, &value, why);
         self.bindings.insert(name.to_owned(), value);
     }
@@ -328,7 +331,7 @@ impl<'a> Application<'a> {
             return Applied { effects: vec![refusal], unresolved, unapplied: Vec::new() };
         }
 
-        self.world.set_field_explained(&id, &field, evaluated.value.clone(), unresolved.clone());
+        self.write(&id, &field, evaluated.value.clone(), unresolved.clone());
         let mut applied = Applied {
             effects: vec![Effect::Assigned { id, field, from: previous, to: evaluated.value }],
             unresolved,
@@ -425,7 +428,7 @@ impl<'a> Application<'a> {
     /// The environment a clause is read in: this world, this module, and
     /// every name the rule has bound so far.
     fn scope(&self) -> Env<'_> {
-        self.scope_in(self.world).removing(&self.removed_here)
+        self.scope_in(self.world).removing(&self.removed_here).holding(&self.held)
     }
 
     /// [`Application::scope`] over `world`, told nothing about removals.

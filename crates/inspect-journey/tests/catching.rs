@@ -247,9 +247,14 @@ fn a_removed_instance_does_not_move_its_sibling_up() {
     assert_eq!(said(&walk), ["watchers(second) = {}"]);
     assert_eq!(line(&walk, "then second.label = \"second\"").0, Verdict::Specified);
     assert_eq!(line(&walk, "then second.seen = false").0, Verdict::Specified);
+    // Made and then removed, said as that — not as nothing being created,
+    // which sends the reader after a rule that failed to make it.
+    let (_, act) = line(&walk, "ada does Pair(ada) on Desk");
+    assert!(act.contains("`first` caught `Tag#1`, which `Dedup` removed"), "{act}");
+    assert!(!act.contains("was created for `first`"), "{act}");
     let (verdict, detail) = line(&walk, "then first.label = \"first\"");
     assert_eq!(verdict, Verdict::Undecided, "{detail}");
-    assert!(detail.contains("`first` caught nothing, on line "), "{detail}");
+    assert!(detail.contains("`first` caught `Tag#1`, which `Dedup` removed, on line "), "{detail}");
 }
 
 /// A journey continuing from one whose act caught two names knows both.
@@ -298,4 +303,23 @@ fn every_line_left_over_is_named() {
         ),
         "{detail}"
     );
+}
+
+/// An answer that read another line's name waited for that line's instance,
+/// and what the first creation set off asked in the meantime. The remark says
+/// the answer waited, and for what — not that the reaction made the note and
+/// asked as it did, which blamed the wrong rule for the wrong reason.
+#[test]
+fn an_answer_that_waited_for_its_sibling_says_so_when_it_came_too_late() {
+    let walk = followed("MentionsWaitForTheDraft");
+    let text = render(std::slice::from_ref(&walk));
+    assert!(
+        text.contains(
+            "`Mention` asked `mentions(note)` before `where mentions(note) = {draft}` was in \
+             force — the answer reads `draft`, so it waited until `draft` was made, and \
+             `Mention` asked no later than that"
+        ),
+        "{text}"
+    );
+    assert!(!text.contains("as it made `note`"), "{text}");
 }

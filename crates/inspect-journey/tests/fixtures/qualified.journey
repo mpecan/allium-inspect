@@ -130,3 +130,46 @@ journey BareAfterQualified {
     1. stipulate
         stipulate watchers(ada) = {ada}
 }
+
+-- A type qualified by a module that does not declare it: `tally` has no `Tag`,
+-- so this catches nothing — not `parcels`' tag, which the qualifier ruled out.
+journey WrongModuleForTheType {
+    cast:
+        ada: parcels/Person
+    1. pack
+        ada does Pack("x") on Desk
+            creating tag: tally/Tag
+        then tag.box.label = "x"
+}
+
+-- Said after the act, about the call `parcels` wrote in `Crate`'s definition,
+-- which `tally`'s `Ship` read: too late, though nothing was answered when
+-- `Ship` asked — the call is `parcels`'s, not the reading rule's module's.
+journey LateWhereWritten {
+    cast:
+        ada: parcels/Person
+    1. seal
+        ada does Seal("x") on Desk
+            creating c: parcels/Crate
+    2. later
+        stipulate parcels/is_open(c) = true
+}
+
+-- The same pair in one `given`, and under one `creating`: said there too.
+journey BareAfterQualifiedGiven {
+    cast:
+        ada: parcels/Person
+    given:
+        parcels/watchers(ada) = {}
+        watchers(ada) = {ada}
+}
+
+journey BareAfterQualifiedWhere {
+    cast:
+        ada: parcels/Person
+    1. pack
+        ada does Pack("x") on Desk
+            creating tag: parcels/Tag
+            where parcels/watchers(tag) = {}
+            where watchers(tag) = {ada}
+}

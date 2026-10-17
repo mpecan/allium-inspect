@@ -257,8 +257,8 @@ impl World {
             .answers
             .iter()
             .filter_map(|answer| {
-                let (named, bare) = answer.call.rsplit_once('/')?;
-                (bare == call && named != module).then_some(answer.call.as_str())
+                let (named, bare) = crate::eval::split_module(&answer.call);
+                (bare == call && named? != module).then_some(answer.call.as_str())
             })
             .collect();
         found.sort_unstable();

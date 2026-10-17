@@ -64,6 +64,22 @@ journey TheOtherNeverComes {
             creating draft: Draft
 }
 
+-- The note's answer reads the draft, so it waits for the draft — and `Mention`,
+-- which the note's creation sets off, asks in the turn that makes the draft,
+-- before the answer is in force. Said as that, not as `Mention` making the note.
+journey MentionsWaitForTheDraft {
+    cast:
+        ada: Author
+    given:
+        ada.active = true
+    1. a note mentioning the draft a reaction makes for it
+        ada does Post(ada, "hello") on Desk
+            creating note: Note
+                where mentions(note) = {draft}
+            creating draft: Draft
+                where watchers(draft) = {}
+}
+
 -- Two tags, the first removed by what the act set off: `first` caught it and
 -- names nothing afterwards, and `second` keeps the tag its answer landed on.
 journey OneOfThePairIsRemoved {

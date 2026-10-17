@@ -89,14 +89,25 @@ impl<'a> Application<'a> {
     }
 
     /// `read` in the world the rule found: this one, with every instance the
-    /// rule removes as it was before any clause ran, and every `let` inside
-    /// `ensures` naming what it reads there.
+    /// rule removes put back as its own lines left it before removing it, and
+    /// every `let` inside `ensures` naming what it reads there.
+    ///
+    /// Put back is what the search for the removals found (`removed_here`)
+    /// and what this pass has removed so far (`removed`). Without the second,
+    /// `not exists root.trunk.branch` written below `not exists root.trunk`
+    /// could not reach the branch until a later pass, so a pass found one
+    /// more level of a chain than the one before it, and a chain deeper than
+    /// the passes allowed was reported as never settling.
+    ///
+    /// As its own lines left it, because that is what the same rule without
+    /// the removal reads: `upload.big = false` above `if upload.big:` decides
+    /// the `if` from `false` whether or not a third line removes the upload.
     pub(super) fn decide<R>(&self, read: impl FnOnce(Env<'_>) -> R) -> R {
-        if self.removed_here.is_empty() && self.decided.is_empty() {
+        if self.removed_here.is_empty() && self.removed.is_empty() && self.decided.is_empty() {
             return read(self.scope_in(self.world));
         }
         let mut found = self.world.clone();
-        for (id, removal) in &self.removed_here {
+        for (id, removal) in self.removed.iter().chain(&self.removed_here) {
             if found.instance(id).is_none() {
                 found.insert(removal.found.clone());
             }
@@ -114,6 +125,22 @@ impl<'a> Application<'a> {
     /// removes it: what an assignment to it is checked against.
     pub(super) fn held(&self, id: &EntityId) -> Option<&Instance> {
         self.world.instance(id).or_else(|| self.removed_here.get(id).map(|it| &it.found))
+    }
+
+    /// Write `field` of `id`: into the world, or — when the rule removes
+    /// `id` and it is already gone from the world it applies to — into the
+    /// instance as what decides reads it (both records of it, when this pass
+    /// has removed it too), so a line deciding below the write
+    /// reads what the same rule without the removal would.
+    pub(super) fn write(&mut self, id: &EntityId, field: &str, value: Value, why: Vec<Unresolved>) {
+        if self.world.set_field_explained(id, field, value.clone(), why.clone()).is_some() {
+            return;
+        }
+        for removal in
+            [self.removed_here.get_mut(id), self.removed.get_mut(id)].into_iter().flatten()
+        {
+            removal.found.set_explained(field, value.clone(), why.clone());
+        }
     }
 
     /// `let name = value` inside `ensures`, over something that is not a call.

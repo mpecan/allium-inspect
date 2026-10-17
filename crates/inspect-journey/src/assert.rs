@@ -94,7 +94,16 @@ impl Walker<'_> {
             | (Truth::True | Truth::False, Assertion::Within { .. })
             | (Truth::True | Truth::False, Assertion::Exists { .. }) => match self.unsettled() {
                 Some(why) if self.moved => {
-                    let read = detail.map_or_else(String::new, |it| format!("{it}, "));
+                    // What was read, so an existence line has a subject.
+                    let read = detail.or_else(|| match assertion {
+                        Assertion::Exists { path, negated } => {
+                            let found = (truth == Truth::True) != *negated;
+                            let verb = if found { "exists" } else { "does not exist" };
+                            Some(format!("{} {verb}", path.as_written()))
+                        }
+                        _ => None,
+                    });
+                    let read = read.map_or_else(String::new, |it| format!("{it}, "));
                     (Truth::Unknown, Some(format!("{read}but this world is not settled — {why}")))
                 }
                 _ => (truth, detail),
