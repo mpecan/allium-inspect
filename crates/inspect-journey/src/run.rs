@@ -80,9 +80,11 @@ pub fn walk(
         refused: Vec::new(),
         created: Vec::new(),
         removed: BTreeMap::new(),
+        gone: BTreeMap::new(),
         awaiting: None,
         landed: Vec::new(),
         unheard: Vec::new(),
+        remarks: Vec::new(),
         answered: Vec::new(),
         refused_in_the_world: Vec::new(),
         cut_off: None,
@@ -136,10 +138,16 @@ pub fn walk(
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Undecided {
     pub(crate) rule: String,
+    /// The module the rule is in: whose call a qualified answer is about.
+    pub(crate) module: String,
     pub(crate) why: String,
     /// The calls nothing answered when it ran, as the spec wrote them:
     /// `audience(issue)`. What a remark about an answer matches against.
     pub(crate) asked: Vec<String>,
+    /// Every reason the simulator gave, as it gave it, beside the
+    /// sub-expression it is about: what tells a call read from another
+    /// module's definition from one the rule wrote.
+    pub(crate) reasons: Vec<(Option<String>, String)>,
     /// The engine turn of its act it ran in.
     pub(crate) turn: usize,
 }
@@ -173,9 +181,13 @@ pub(crate) struct Walker<'a> {
     pub(crate) refused: Vec<Undecided>,
     /// Every instance made since it, in the order it was made — the act's own
     /// first, then whatever it set off.
-    pub(crate) created: Vec<EntityId>,
+    pub(crate) created: Vec<(EntityId, String)>,
     /// Every instance removed since it, and the rule that removed it first.
     pub(crate) removed: BTreeMap<EntityId, String>,
+    /// A `creating` name whose instance was made and then removed during
+    /// the act, and what that says: `` `first` caught `Tag#1`, which
+    /// `Dedup` removed ``. Until the name is bound again.
+    pub(crate) gone: BTreeMap<String, String>,
     /// An act's `where` answers, until what they are about is made.
     pub(crate) awaiting: Option<crate::answers::Awaiting>,
     /// The `where` answers that landed since the last clause, and on what.
@@ -183,6 +195,9 @@ pub(crate) struct Walker<'a> {
     /// Why a `where` answer was refused once its instance landed, for the
     /// act's line to say.
     pub(crate) unheard: Vec<String>,
+    /// What a `where` answer that landed has to say beside the act, and is
+    /// no reason the step fails: a qualified answer it leaves in force.
+    pub(crate) remarks: Vec<String>,
     /// Every answer `given` or a file's world put in force, and the line that
     /// said it — so a later one about the same call can say what it replaced.
     pub(crate) answered: Vec<crate::answers::FromTheStart>,
@@ -287,7 +302,9 @@ impl Walker<'_> {
             // act held would read "holds" over an answer it never gave.
             let mut unheard = Vec::new();
             if matches!(clause, Clause::Does { .. }) {
-                asides.extend(self.unanswered().into_iter().map(|detail| Outcome {
+                let mut remarks = std::mem::take(&mut self.remarks);
+                remarks.extend(self.unanswered());
+                asides.extend(remarks.into_iter().map(|detail| Outcome {
                     verdict: Verdict::Remark,
                     detail: Some(detail),
                     ..outcome.clone()
@@ -335,28 +352,12 @@ impl Walker<'_> {
     fn walk_clause(&mut self, clause: &Clause) -> Outcome {
         let about = about(clause);
         match clause {
-            Clause::Does {
-                actor,
-                trigger,
-                arguments,
-                surface,
-                creating,
-                answering,
-                negated,
-                line,
-            } => self.act(
-                &Act {
-                    actor,
-                    trigger,
-                    arguments,
-                    surface,
-                    creating: creating.as_ref(),
-                    answering,
-                    negated: *negated,
-                },
-                *line,
-                about,
-            ),
+            Clause::Does { actor, trigger, arguments, surface, creating, negated, line } => self
+                .act(
+                    &Act { actor, trigger, arguments, surface, creating, negated: *negated },
+                    *line,
+                    about,
+                ),
             Clause::After { duration, line, .. } => self.advance(duration, *line, about),
             Clause::Then { assertion, line } => self.assert(assertion, *line, about),
             Clause::Sees { actor, subject, surface, contexts, negated, line } => self.observe(
@@ -392,10 +393,13 @@ impl Walker<'_> {
 
         // A `where` under `creating` is in force from the moment what it is
         // about is made, so the cascade that follows reads it.
-        self.awaiting = crate::answers::Awaiting::of(creating, act.answering);
-        let named = creating.and_then(|caught| self.bound.get(&caught.name).cloned());
+        self.awaiting = crate::answers::Awaiting::of(creating);
+        let named: Vec<Option<EntityId>> =
+            creating.iter().map(|caught| self.bound.get(&caught.cast.name).cloned()).collect();
         let outcome = self.fire(&event);
-        self.awaiting = None;
+        // An answer still waiting on another line's instance once the act is
+        // over is refused, never weighed against what that name meant before.
+        self.refuse_what_still_waits();
 
         // `bruno cannot do MemberAsksToChat(…)`: the journey asserting a
         // refusal it *wants*, which without this reads as `refused` — the
@@ -410,36 +414,57 @@ impl Walker<'_> {
             return self.blocked(&outcome, line, about);
         }
 
-        let mut missing = None;
-        if let Some(caught) = creating {
-            match self.first_made(caught) {
-                Some(id) => {
-                    self.bind(caught, Some(id), Origin::Caught);
-                }
-                None => {
-                    // A `where` bound the name early, to an instance the act
-                    // then removed: what it named before is what it names.
-                    match named {
-                        Some(id) => self.bound.insert(caught.name.clone(), id),
-                        None => self.bound.remove(&caught.name),
-                    };
-                    // Listed anyway, with nothing behind it. A name the journey
-                    // uses from here on that resolves to no instance is exactly
-                    // what the reader is trying to understand, and leaving it
-                    // out of the cast hides the cause of every later line.
-                    self.bind(caught, None, Origin::Caught);
-                    // The symptom, and then the cause. Nothing being created is
-                    // almost never the fault: a rule that could not be decided
-                    // creates nothing, and reporting only the empty hands sent
-                    // a reader looking at their own journey for a mistake that
-                    // was three lines up in the specification.
-                    missing = Some(format!(
-                        "nothing of kind `{}` was created for `{}`",
-                        caught.type_expr, caught.name
-                    ));
-                }
+        // Each line catches its own instance, and one that caught nothing is
+        // said about by name: the others caught what they caught.
+        let made = self.made_for(creating);
+        let first_caught = self.caught_by(creating);
+        let mut missing: Vec<String> = Vec::new();
+        for (((caught, id), before), first) in
+            creating.iter().zip(made).zip(named).zip(first_caught)
+        {
+            let caught = &caught.cast;
+            if let Some(id) = id {
+                self.bind(caught, Some(id), Origin::Caught);
+                continue;
             }
+            // A `where` bound the name early, to an instance the act then
+            // removed: what it named before is what it names.
+            match before {
+                Some(id) => self.bound.insert(caught.name.clone(), id),
+                None => self.bound.remove(&caught.name),
+            };
+            // Listed anyway, with nothing behind it. A name the journey uses
+            // from here on that resolves to no instance is exactly what the
+            // reader is trying to understand, and leaving it out of the cast
+            // hides the cause of every later line.
+            self.bind(caught, None, Origin::Caught);
+            // The symptom, and then the cause. Nothing being created is almost
+            // never the fault: a rule that could not be decided creates
+            // nothing, and reporting only the empty hands sent a reader
+            // looking at their own journey for a mistake that was three lines
+            // up in the specification.
+            //
+            // Made and then removed is not "nothing was created": that sent
+            // the reader looking for a rule that failed to make it, when one
+            // made it and another took it away.
+            missing.push(match first {
+                Some(id) => {
+                    let gone = match self.removed.get(&id) {
+                        Some(rule) => {
+                            format!("`{}` caught `{id}`, which `{rule}` removed", caught.name)
+                        }
+                        None => format!("`{}` caught `{id}`, which was removed", caught.name),
+                    };
+                    self.gone.insert(caught.name.clone(), gone.clone());
+                    gone
+                }
+                None => format!(
+                    "nothing of kind `{}` was created for `{}`",
+                    caught.type_expr, caught.name
+                ),
+            });
         }
+        let missing = (!missing.is_empty()).then(|| missing.join("; "));
 
         let verdict = verdict_of(&outcome);
         // The act's own rule fired, and something it set off could not be
@@ -549,9 +574,9 @@ pub(crate) struct Act<'a> {
     pub(crate) trigger: &'a str,
     pub(crate) arguments: &'a [Term],
     pub(crate) surface: &'a str,
-    pub(crate) creating: Option<&'a crate::journey::Cast>,
-    /// What the act's `where` lines say calls answer for what it makes.
-    pub(crate) answering: &'a [crate::journey::Where],
+    /// One per `creating` line, each with what its `where` lines say calls
+    /// answer for the instance it names.
+    pub(crate) creating: &'a [crate::journey::Caught],
     /// Whether the journey said this *cannot* happen.
     pub(crate) negated: bool,
 }

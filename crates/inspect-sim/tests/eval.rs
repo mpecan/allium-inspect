@@ -3426,3 +3426,202 @@ fn arithmetic_over_an_operand_undecided_in_silence_still_says_why() {
     assert_eq!(value_of(&node, &env), Value::Unknown);
     assert!(!reasons(&node, &env).is_empty());
 }
+
+// --- whose call: a module before the name (issue #32) ----------------------
+
+/// A call answered only for another module is unanswered here, and the reason
+/// says so in exactly these words: the journey walk reads them back to tell an
+/// answer in the wrong module from one given too late, so a change to the
+/// wording that is not a change to the reader has to be seen here first.
+#[test]
+fn an_answer_for_another_module_is_named_in_the_reason_word_for_word() {
+    let mut world = library();
+    world.tell(inspect_sim::world::Answer {
+        call: "catalogue/watchers".to_owned(),
+        arguments: vec![Value::Int(1)],
+        value: Value::Set(Vec::new()),
+    });
+    let asked = call(ident("watchers"), vec![number("1")]);
+
+    let lending = env(&world, "lending");
+    assert_eq!(truth_of(&asked, &lending), Truth::Unknown);
+    assert_eq!(
+        reasons(&asked, &lending),
+        vec![
+            "nothing defines `watchers`, and no stipulation answers this call; \
+             `catalogue/watchers` answers `catalogue`'s `watchers`, and this one is \
+             `lending`'s"
+        ]
+    );
+    assert_eq!(
+        inspect_sim::eval::answers_only("catalogue/watchers"),
+        "`catalogue/watchers` answers `catalogue`'s `watchers`"
+    );
+
+    // In the module it names it is simply the answer.
+    assert_eq!(value_of(&asked, &env(&world, "catalogue")), Value::Set(Vec::new()));
+}
+
+/// `quiet: nobody()` on `lending`'s `Member`, the call spanning `nobody()`
+/// in `source`.
+fn quiet_reads_nobody(source: &str) -> inspect_model::Derivations {
+    let start = source.find("nobody()").expect("present");
+    let mut derived = inspect_model::Derivations::default();
+    derived.fields.insert(
+        inspect_model::derived_key("lending", "Member", "quiet"),
+        Expr::Call {
+            span: AstSpan { start, end: start + 8 },
+            function: Box::new(ident("nobody")),
+            args: Vec::new(),
+        },
+    );
+    derived
+}
+
+/// A definition read from the module that wrote it is quoted from the text the
+/// environment already holds, with no map of every module's text needed; read
+/// from another module with no such map, it quotes nothing rather than a
+/// slice of the wrong file at the right offsets.
+#[test]
+fn a_definition_is_quoted_from_its_own_module_s_text_and_no_other() {
+    let source = "quiet: nobody()";
+    let world = library();
+    let derived = quiet_reads_nobody(source);
+    let member = Value::Ref(EntityId::new("Member", 1));
+    let read = field(ident("hub"), "quiet");
+
+    let own = Env::new(&world, "lending", source).deriving(&derived).bind("hub", member.clone());
+    let inner = |env: &Env<'_>| {
+        eval(&read, env)
+            .unresolved
+            .into_iter()
+            .find(|note| note.reason.starts_with("nothing defines `nobody`"))
+            .expect("the definition's own note")
+    };
+    assert_eq!(inner(&own).expression.as_deref(), Some("nobody()"));
+
+    let other = "zzzzzzzzzzzzzzzzzzzzzz";
+    let elsewhere = Env::new(&world, "catalogue", other).deriving(&derived).bind("hub", member);
+    assert_eq!(inner(&elsewhere).expression, None);
+}
+
+/// A call asked inside a definition another module wrote says whose it is
+/// even with nothing answered anywhere, and `whose_call` reads it back: a
+/// qualified answer said too late for it is otherwise taken for one naming
+/// the wrong module. Asked in the module whose rule reads it, it says no more.
+#[test]
+fn a_call_in_another_modules_definition_says_whose_it_is_unanswered() {
+    let source = "quiet: nobody()";
+    let world = library();
+    let derived = quiet_reads_nobody(source);
+    let sources = std::collections::BTreeMap::from([("lending".to_owned(), source.to_owned())]);
+    let member = Value::Ref(EntityId::new("Member", 1));
+    let read = field(ident("hub"), "quiet");
+    let note = |env: &Env<'_>| {
+        eval(&read, env)
+            .unresolved
+            .into_iter()
+            .find(|note| note.reason.starts_with("nothing defines `nobody`"))
+            .expect("the definition's own note")
+            .reason
+    };
+
+    let elsewhere = Env::new(&world, "catalogue", "")
+        .deriving(&derived)
+        .quoting(&sources)
+        .bind("hub", member.clone());
+    let said = note(&elsewhere);
+    assert_eq!(
+        said,
+        "nothing defines `nobody`, and no stipulation answers this call; this one is \
+         `lending`'s, read in its definition"
+    );
+    assert_eq!(inspect_sim::eval::whose_call(&said), Some("lending"));
+
+    let own = Env::new(&world, "lending", source).deriving(&derived).bind("hub", member);
+    let said = note(&own);
+    assert_eq!(said, "nothing defines `nobody`, and no stipulation answers this call");
+    assert_eq!(inspect_sim::eval::whose_call(&said), None);
+}
+
+// --- what a rule's `ensures` removes (issue #33) ---------------------------
+
+/// A value read from an instance the rule removes is undecided whether the
+/// world still holds it or not — the order of `ensures` lines decides only
+/// that — and says which rule removed it, by which clause, and the `let` that
+/// keeps the value. The read is quoted by byte offset, past a multi-byte
+/// character, as the parser counts.
+#[test]
+fn an_instance_the_rule_removes_is_undecided_wherever_the_world_holds_it() {
+    use inspect_sim::eval::Removal;
+
+    let prefix = "— ";
+    let source = format!("{prefix}member.name");
+    let at = prefix.len();
+    let held = library();
+    let member = EntityId::new("Member", 1);
+    let found = held.instance(&member).cloned().expect("the member");
+    let mut gone = held.clone();
+    gone.remove(&member);
+    let removed = std::collections::BTreeMap::from([(
+        member.clone(),
+        Removal {
+            rule: "Leave".to_owned(),
+            subject: "member".to_owned(),
+            clause: "not exists member".to_owned(),
+            found,
+        },
+    )]);
+    let node = Expr::MemberAccess {
+        span: AstSpan { start: at, end: at + 11 },
+        object: Box::new(Expr::Ident(Ident {
+            span: AstSpan { start: at, end: at + 6 },
+            name: "member".to_owned(),
+        })),
+        field: Ident { span: AstSpan { start: at + 7, end: at + 11 }, name: "name".to_owned() },
+    };
+
+    let beside_the_when = std::collections::BTreeSet::from(["member".to_owned()]);
+    for world in [&held, &gone] {
+        let scope = Env::new(world, "lending", &source)
+            .removing(&removed)
+            .holding(&beside_the_when)
+            .bind("member", Value::Ref(member.clone()));
+        let evaluated = eval(&node, &scope);
+        assert_eq!(evaluated.value, Value::Unknown);
+        assert_eq!(evaluated.unresolved.len(), 1, "{evaluated:#?}");
+        let note = &evaluated.unresolved[0];
+        assert!(
+            note.reason.contains(
+                "rule `Leave` removes `member` (`Member#1`) with `not exists member`, so \
+                 `member.name` has nothing to read"
+            ) && note.reason.contains("whichever line comes first")
+                && note.reason.contains("`let name = member.name`"),
+            "{}",
+            note.reason
+        );
+        assert_eq!(note.expression.as_deref(), Some("member.name"));
+        assert_eq!(note.span, Some(inspect_model::Span::new(at, at + 11)));
+    }
+
+    // `member` bound by something other than the rule's `when` — a loop, a
+    // `let` inside `ensures` — has no `let` beside the `when` to keep it, and
+    // the reason does not advise one.
+    let scope = Env::new(&gone, "lending", &source)
+        .removing(&removed)
+        .bind("member", Value::Ref(member.clone()));
+    let note = &eval(&node, &scope).unresolved[0];
+    assert!(
+        note.reason.contains("`member` is not a name bound there")
+            && !note.reason.contains("bind `let"),
+        "{}",
+        note.reason
+    );
+
+    // Told nothing, the world answers as it always did.
+    let told_nothing =
+        Env::new(&held, "lending", &source).bind("member", Value::Ref(member.clone()));
+    assert_eq!(value_of(&node, &told_nothing), Value::Str("Ada".to_owned()));
+    let plain = env(&gone, "lending").bind("member", Value::Ref(member));
+    assert!(reasons(&node, &plain).iter().any(|it| it.contains("is not in this world")));
+}

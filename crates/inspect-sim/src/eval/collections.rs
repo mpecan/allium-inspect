@@ -40,6 +40,8 @@ pub(super) fn existence(operand: &Expr, env: &Env<'_>, negated: bool) -> Evaluat
         }
         Value::Null => Truth::False,
         Value::Unknown => Truth::Unknown,
+        // Gone in the state the rule whose `ensures` asks leaves.
+        Value::Ref(id) if env.instance(id).is_err() => Truth::False,
         _ => Truth::True,
     };
     let truth = if negated { present.not() } else { present };

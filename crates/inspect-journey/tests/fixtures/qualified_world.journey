@@ -1,0 +1,23 @@
+-- Issue #32: a file's shared world refuses a module the specification does
+-- not have, as `given` does, and every journey inheriting it is told so
+-- rather than listing it.
+world {
+    cast:
+        ada: parcels/Person
+    given:
+        ghost/watchers(ada) = {}
+}
+
+journey SharedGhost {
+    1. pack
+        ada does Pack("x") on Desk
+            creating tag: parcels/Tag where watchers(tag) = {}
+        then tag.box.label = "x"
+}
+
+journey AliasNotModule {
+    1. pack
+        ada does Pack("x") on Desk
+            creating tag: parcels/Tag where p/watchers(tag) = {}
+        then tag.box.label = "x"
+}

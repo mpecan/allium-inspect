@@ -180,10 +180,12 @@ RECEIPT_SEARCH_DEPTH="${INSPECT_RECEIPT_SEARCH_DEPTH:-100}"
 # ancestry check: present, it is used exactly as before; missing, it fails as it
 # always did. No match fails too. Neither ever passes silently.
 #
-# On the in-history path a NOTE says when HEAD's Rust differs from the
-# receipt's. That is the branch-side warning for a squash-merge: on main only an
-# exact fingerprint match survives, so the drift budget a branch is spending
-# does not carry across the merge.
+# On either path a NOTE says when HEAD's Rust differs from the receipt's. That
+# is the warning for a squash-merge: on main only an exact fingerprint match
+# survives, so the drift budget a branch is spending does not carry across the
+# merge. Said on the fingerprint-match path too, because a branch made from
+# another branch finds its receipt's commit outside its own history, and the
+# warning was silent exactly where the receipt was stalest.
 resolve_measured_commit() {
     local sha="$1" fp="$2" what="$3" rerun="$4" c f actual head_fp why match=""
     measured_from=""
@@ -235,6 +237,11 @@ resolve_measured_commit() {
        Run '$rerun' to measure these sources, or raise INSPECT_RECEIPT_SEARCH_DEPTH if they are further back."
     measured_from="$match"
     measured_note=" (not in this history; same Rust sources as ${match:0:12})"
+    head_fp="$(rust_fingerprint HEAD)" || fail "could not read the Rust sources at HEAD"
+    if [ "$head_fp" != "$fp" ]; then
+        echo "NOTE:  HEAD's Rust is not the Rust $what measured, so it will not survive a squash-merge."
+        echo "       Run '$rerun' after the last Rust change, before merging."
+    fi
 }
 
 # Added + modified Rust lines between a receipt's commit and the working tree.

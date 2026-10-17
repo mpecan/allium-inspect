@@ -544,6 +544,18 @@ ada does MemberBorrows(ada, copy) on MemberShelf
 `loan` is then a name like any cast member, usable by every clause after it —
 including as the actor of a later step.
 
+An act that makes more than one thing catches each with a line of its own:
+
+```
+ada does MemberBorrows(ada, copy) on MemberShelf
+    creating loan: Loan
+    creating notice: Notice
+```
+
+Each `creating` line is a name, and a name may be caught once per act. Lines of
+one kind catch instances of it in the order they were made — see [which
+instance `creating` catches](#which-instance-creating-catches).
+
 What a call the spec never defines answers for the instance being made is said
 under the same act, with [`where`](#stipulate--say-it-rather-than-show-it):
 `creating issue: Issue` then `where audience(issue) = {}`.
@@ -794,13 +806,38 @@ module imported `as memo`. Another module's `Order` being made does not wake it.
 A creation written through another module's name — `ensures: memo/Note.created(…)`
 — is a creation like any other, placed in the module the `use … as memo` names.
 An unqualified `Order.created(…)` goes in the creating module when that module
-declares an `Order`. `creating` catches by the entity's name, so
-`creating n: notes/Note` and `creating n: Note` name the same thing, and a
-reaction written `when: n: memo/Note.created` reacts to it.
+declares an `Order`, and a reaction written `when: n: memo/Note.created`
+reacts to it. `creating n: Note` catches a `Note` from whichever module made
+it; `creating n: notes/Note` catches only one `notes` declares — the module's
+own name, as a qualified answer uses, not the alias a `use` gives it. A type
+qualified by a module that declares no such entity is refused: ``no entity or
+actor called `tally/Tag` ``, even when another module has a `Tag`.
+
+#### Which instance `creating` catches
 
 `creating` catches the first instance of that kind made since the act began,
 in the order they were made. That is the act's own creation when it made one,
 even if a reaction to it made another of the same kind afterwards.
+
+With several `creating` lines under one act, each catches the first instance of
+its kind that no line above it caught. Two lines of one kind therefore name two
+instances, in the order they were made — `creating first: Comment` then
+`creating second: Comment` under an act whose rule makes two comments names the
+first `first` and the second `second`, not the first one twice. The order the
+lines are written in decides nothing else: lines of different kinds do not
+compete. A line left with nothing of its kind to catch is listed with nothing
+behind it, and the act's outcome says so by name — ``nothing of kind `Comment`
+was created for `second` `` — beside the lines that did catch. That note is on
+the act's line in the browser and the JSON report; the text report prints an
+act's detail only when its step does not hold. A later line reading the name
+says why it is nobody: `` `second` caught nothing, on line 12``.
+
+A line keeps the instance it caught. If something the act set off removes it,
+that line names nothing afterwards, as a single `creating` would, and the lines
+below it of the same kind keep theirs — they are not moved up to fill the gap.
+The act says what happened rather than that nothing was made — `` `first`
+caught `Tag#1`, which `Dedup` removed `` — and so does a later line reading
+the name.
 
 ### How a trigger's arguments reach a rule
 
@@ -981,6 +1018,100 @@ as the trigger found it. Settle a clash in the spec — a
 A rule that **should** see another's work is a rule that listens for what the
 other emits, not for the same trigger: `ensures: Boxed(box)` and `when:
 Boxed(box)`.
+
+### What a rule removes has nothing left to read
+
+A rule's `ensures` clauses are a set of postconditions about the state the
+rule leaves, not a sequence, so the order they are written in does not change
+a verdict. That matters most for a rule that removes something and, in another
+line, says something about it:
+
+```allium
+rule Complete {
+    when: Complete(upload)
+    ensures: not exists upload
+    ensures: Blob.created(name: upload.name)
+}
+```
+
+A creation's parameters, an emission's arguments and an assigned value are
+all read **in the state the rule leaves**, where the upload is gone. So
+`upload.name` is undecided — written above the removal or below it, the same
+verdict in the same words — and the act says so too, because the rule fired
+and part of what it ensures is not in the world:
+
+```text
+up does Complete(up) on Desk
+  `Complete` fired, but part of what it ensures was not applied: rule `Complete` removes `upload` (`up`) with `not exists upload`, so `upload.name` has nothing to read in the state it leaves, whichever line comes first; to keep what it held, bind `let name = upload.name` beside the `when` — a `let` inside `ensures` reads the state the rule leaves too
+```
+
+That is said on the act even when no line of the journey reads the value: an
+emission's argument reaches its listener as nothing settled, and the listener
+cannot say why. It used to depend on the order: removed first, the read was
+undecided ("`up` is not in this world"); read first, it took the name and the
+step held. The fix the reason names is the one to write — a `let` beside the
+`when` is read before the rule changes anything, so it keeps the value the
+upload had:
+
+```allium
+rule Complete {
+    when: Complete(upload)
+    let name = upload.name
+    ensures: not exists upload
+    ensures: Blob.created(name: name)
+}
+```
+
+A `let` written **inside** `ensures` does not do that. It is a name for a
+read, and it reads what the read would wherever the name is used: in the state
+the rule leaves where a value is left behind, and as below where something is
+decided. Earlier versions kept the value whenever it was written above the
+removal; a spec that relied on that now reads undecided there, and the reason
+names the `let` to move beside the `when`.
+
+The advice is given only when the read starts from a name bound beside the
+`when`. A loop's member is not one: `for t in upload.thumbs:
+Blob.created(name: t.name); not exists t` records and removes each thumb, and
+no `let` beside the `when` names each `t`. This is deliberate — each
+`Blob.created` is still a postcondition about the state the rule leaves, where
+`t` is gone — so the read is undecided, and the reason says `` `t` is not a
+name bound there `` rather than advising a `let` nobody can write. An
+emission from the loop does not help: its argument is read in the same state.
+Nothing beside the `when` can name each member's value, so a rule that
+records and removes each member in one loop stays undecided, and says so.
+
+What **decides** which postconditions apply reads the world the rule found —
+with what it removes as it was before any of its lines ran: an `if`'s
+condition, a `for`'s collection and filter, and what a `not exists` or an
+assignment is about. `if upload.big: not exists upload` asks whether to remove
+it, and asked of the state the removal produces the question has no answer.
+What the rule's own lines wrote to the instance it removes is part of that
+world, as it would be if nothing removed it: `upload.big = false` above `if
+upload.big:` decides the `if` from `false` with or without `not exists upload`
+below it.
+So a small upload stays and its name is read; a big one goes, decided, and its
+name is not there to read. `not exists upload` and `not exists upload.thumb`
+remove both, in either order, and `for t in upload.thumbs: not exists t`
+removes every thumb the upload had.
+
+A relationship read in the state the rule leaves has none of what the rule
+removes: after `for t in upload.thumbs: not exists t`, `upload.thumbs.name` is
+empty, written above the loop or below it. `exists upload` is false there.
+
+Which instances a rule removes is found before any of its lines is applied,
+by reading them through until two readings agree — a removal decided from an
+instance another line removes is found too, however deep the chain: `not exists
+link`, `not exists link.next`, `not exists link.next.next` and so on remove the
+whole chain, top line first or bottom line first. A rule written so that the answer
+never settles — a value left behind, read from what it removes, deciding
+whether it is removed — is not answered by whichever reading came last.
+Everything any reading removed reads as gone, and the act is undecided,
+saying whether the rule removes it is undecided and where to bind what
+decides it.
+
+Only what the rule itself removes. An instance a **sibling** woken by the same
+firing removes is the race described above, and an instance the world never
+held is still "not in this world".
 
 ### `cannot do` — the spec refuses, and that is the point
 
@@ -1344,6 +1475,59 @@ then the call is about a value nobody knows rather than about a word:
   reads `level` as the repo's field, and a field nobody set is not bound — so
   inside an entity no word is read, and the call stays undecided.
 
+**Whose call: a module before the name.** Two modules may each name a black
+box the same — `parcels` and `tally` each asking `watchers(t)` of a new tag —
+and those are two questions. Written bare, an answer is every module's:
+`watchers(tag) = {}` answers both. Written with a module, it is that module's
+alone, wherever it is said — `given`, a file's `world`, `stipulate`, or a
+`where`:
+
+```no-check
+ada does Pack("x") on Desk
+    creating tag: parcels/Tag
+    where tally/watchers(tag) = {}
+    where parcels/watchers(tag) = {ada}
+```
+
+The module is the one a journey names a type by — the spec file's name, as in
+`parcels/Tag` — not the alias a `use` gives it; an alias is refused, and the
+refusal names the module it stands for. Where a bare and a qualified answer are
+both about the same arguments, a rule in the named module reads the qualified
+one and every other module reads the bare one; neither replaces the other in
+the ledger, because they are not about the same call. A bare answer said while
+a qualified one stands says so — beside a `stipulate`, as a remark on a `given`
+line, and beside the act for a `where` — since it does not reach that module.
+
+A call is the module's that **wrote** it. One inside an entity's definition —
+`open: is_open(this)` in `parcels` — is `parcels`'s wherever the field is read
+from, so a rule in `tally` reading `crate.open` is answered by
+`parcels/is_open(crate)`, and `tally/is_open(crate)` answers nothing there.
+The reason for such a call says whose it is even when nothing answered it yet
+— "this one is `parcels`'s, read in its definition" — so an answer naming
+`parcels` that came after the act is called too late, not the wrong module.
+
+A rule in another module that asks a call of that name is not answered, and
+when the act set it off the walk says so beside the act rather than leaving the
+ledger line to read as if it should have been:
+
+```text
+        remark  ada does Pack("x") on Desk
+          `Stamp` asked `watchers(t)`, which `where tally/watchers(tag)` does not answer — it answers `tally`'s `watchers` and no other module's
+```
+
+The rule's own reason says the same of every answer — `given` and `stipulate`
+too — that named another module than the one asking: "nothing defines
+`watchers`, and no stipulation answers this call; `tally/watchers` answers
+`tally`'s `watchers`, and this one is `parcels`'s".
+
+A module the specification does not have is **undecided** on the line and not
+listed, since no rule could ever ask it:
+
+```text
+        stipulate ghost/watchers(ada) = {}
+          the specification has no module `ghost`, so this answers no call the specification can ask
+```
+
 **About what the act makes: `where`.** A reaction to a creation often asks a
 black box about the new instance — who hears about an issue, `audience(issue)`,
 the moment it is opened. `stipulate` cannot answer that: before the act there is
@@ -1371,6 +1555,18 @@ As many `where` lines as there are calls to answer, each `where <call> =
 <value>`, and each held to what it is for:
 
 - **It needs a `creating`**, because without one there is nothing to wait for.
+  Under an act with more than one, each `where` belongs to the `creating` line
+  above it, and must name that line's instance — `creating review: Review` with
+  `where watchers(review) = {}`, then `creating comment: Comment` with `where
+  mentions(comment) = {}`. A `where` naming only another line's instance is
+  refused with the line it belongs under.
+
+  An answer may also read another line's instance, whichever line is written
+  first: `where mentions(comment) = {review}`. It is weighed once both the
+  comment and the review this act makes exist — a turn later, if a reaction
+  makes the review — and never against whatever `review` named before the act.
+  If the act never makes a review, the answer is refused on the act's line
+  rather than given about something else.
 - **It is a call, never a field.** What the act writes into what it makes is
   what the specification says, and overruling it mid-act would be a `then` that
   cannot fail. `stipulate` it after the act if that is really what you mean.

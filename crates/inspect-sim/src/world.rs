@@ -216,11 +216,6 @@ impl World {
         Some(previous)
     }
 
-    /// The configuration parameter `name`, looked up for `module`.
-    ///
-    /// Tried qualified first, then bare. A rule in `messaging` writing
-    /// `config.max_attachment_bytes` means its own module's parameter, but a
-    /// world seeded by hand may name it either way and both readings are what
     /// What somebody said this call comes back as, if anybody said.
     ///
     /// An argument nothing settled matches nothing: a stipulation about a value
@@ -235,6 +230,40 @@ impl World {
             .iter()
             .find(|answer| answer.call == call && same_arguments(&answer.arguments, arguments))
             .map(|answer| &answer.value)
+    }
+
+    /// What somebody said this call comes back as when a rule in `module`
+    /// asks it.
+    ///
+    /// Tried qualified first, then bare, as [`World::config`] is: two modules
+    /// may each name a black box `watchers`, and `tally/watchers(t)` is how a
+    /// journey says which one it answers (issue #32). An unqualified answer
+    /// answers every module's call; a qualified one only its own module's, and
+    /// there it is the one in force.
+    #[must_use]
+    pub fn answer_in(&self, module: &str, call: &str, arguments: &[Value]) -> Option<&Value> {
+        self.answer(&format!("{module}/{call}"), arguments).or_else(|| self.answer(call, arguments))
+    }
+
+    /// Every qualified call answering `call` in a module other than `module`:
+    /// `b/watchers`, when a rule in `a` asks `watchers` (issue #32).
+    ///
+    /// About any arguments, because the question it serves is "did somebody
+    /// mean this call and name the wrong module", and the reader is better
+    /// told of an answer about other arguments than of nothing.
+    #[must_use]
+    pub fn answered_elsewhere(&self, module: &str, call: &str) -> Vec<&str> {
+        let mut found: Vec<&str> = self
+            .answers
+            .iter()
+            .filter_map(|answer| {
+                let (named, bare) = crate::eval::split_module(&answer.call);
+                (bare == call && named? != module).then_some(answer.call.as_str())
+            })
+            .collect();
+        found.sort_unstable();
+        found.dedup();
+        found
     }
 
     /// The configuration parameter `name`, looked up for `module`.
@@ -363,6 +392,65 @@ mod answer_tests {
     fn an_argument_nothing_settled_matches_nothing() {
         assert_eq!(world().answer("may_invite", &[Value::Int(1), Value::Unknown]), None);
         assert_eq!(world().answer("may_invite", &[Value::Unknown, Value::Unknown]), None);
+    }
+
+    fn told(call: &str, value: bool) -> Answer {
+        Answer { call: call.to_owned(), arguments: vec![Value::Int(1)], value: Value::Bool(value) }
+    }
+
+    /// `tally/watchers` is `tally`'s call (issue #32): asked there it answers,
+    /// asked anywhere else it is another module's question and does not.
+    #[test]
+    fn a_qualified_answer_answers_the_module_it_names_and_no_other() {
+        let mut world = World::new();
+        world.tell(told("tally/watchers", true));
+        assert_eq!(
+            world.answer_in("tally", "watchers", &[Value::Int(1)]),
+            Some(&Value::Bool(true))
+        );
+        assert_eq!(world.answer_in("parcels", "watchers", &[Value::Int(1)]), None);
+        // About other arguments, as for an unqualified answer.
+        assert_eq!(world.answer_in("tally", "watchers", &[Value::Int(2)]), None);
+        assert_eq!(world.answer_in("tally", "watchers", &[Value::Unknown]), None);
+    }
+
+    /// Unqualified answers every module; qualified wins in its own.
+    #[test]
+    fn an_unqualified_answer_answers_every_module_but_yields_to_a_qualified_one() {
+        let mut world = World::new();
+        world.tell(told("watchers", false));
+        assert_eq!(
+            world.answer_in("parcels", "watchers", &[Value::Int(1)]),
+            Some(&Value::Bool(false))
+        );
+        world.tell(told("parcels/watchers", true));
+        assert_eq!(
+            world.answer_in("parcels", "watchers", &[Value::Int(1)]),
+            Some(&Value::Bool(true))
+        );
+        assert_eq!(
+            world.answer_in("tally", "watchers", &[Value::Int(1)]),
+            Some(&Value::Bool(false))
+        );
+        // Two answers, not one replacing the other: they are about different calls.
+        assert_eq!(world.answers.len(), 2);
+    }
+
+    /// Which modules' answers a call of the same name was given, other than
+    /// the one asking: what an unanswered call's reason names.
+    #[test]
+    fn answers_in_other_modules_are_found_by_the_bare_name() {
+        let mut world = World::new();
+        world.tell(told("tally/watchers", true));
+        world.tell(told("parcels/watchers", true));
+        world.tell(told("watchers", true));
+        world.tell(told("tally/viewers", true));
+        assert_eq!(world.answered_elsewhere("parcels", "watchers"), ["tally/watchers"]);
+        assert_eq!(
+            world.answered_elsewhere("", "watchers"),
+            ["parcels/watchers", "tally/watchers"]
+        );
+        assert!(world.answered_elsewhere("tally", "viewers").is_empty());
     }
 
     /// The later of two answers about one call is the one in force, and the

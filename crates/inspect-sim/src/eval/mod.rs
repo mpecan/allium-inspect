@@ -35,6 +35,7 @@ mod lambdas;
 mod literals;
 mod member;
 mod ops;
+mod removed;
 mod told;
 mod words;
 
@@ -48,8 +49,11 @@ use allium_parser::ast::{CondBranch, Expr, Ident, QualifiedName};
 // postcondition changes.
 pub use ast::{bare_name, span_of};
 use ast::{literal_text, truth_value};
+pub use calls::{answers_only, asked_in, split_module, whose_call};
 pub(crate) use collections::element_scope;
 use inspect_model::{Derivations, Function, Span};
+use removed::NOTHING_REMOVED;
+pub use removed::Removal;
 use serde::{Deserialize, Serialize};
 use std::ops::Not;
 pub(crate) use told::remember;
@@ -137,6 +141,15 @@ pub struct Env<'a> {
     pub told: Told,
     /// The module's spec text, so an undecided note can quote the source.
     pub source: &'a str,
+    /// Every module's spec text, by module name.
+    ///
+    /// What a definition is quoted from when it is computed: `quiet:
+    /// watchers(this).count = 0` is written in the module that declares the
+    /// entity, and its spans are offsets into *that* file, not into the one
+    /// whose rule happened to read it. Empty by default, and then a definition
+    /// from another module is quoted as nothing rather than as a slice of the
+    /// wrong file.
+    sources: &'a BTreeMap<String, String>,
     /// What the spec computes rather than stores, by `inspect_model::derived_key`.
     ///
     /// Empty by default, which is the honest default: an environment nobody
@@ -170,10 +183,23 @@ pub struct Env<'a> {
     /// the outer doc is still a field of something in scope, not a word: read
     /// off the innermost element alone, it passed for the state it spells.
     enclosing: Vec<EntityId>,
+    /// What the rule whose `ensures` this reads removes: see
+    /// [`Env::removing`]. Empty everywhere but there.
+    removed_here: &'a BTreeMap<EntityId, Removal>,
+    /// The names bound beside the rule's `when` that still mean what they
+    /// meant there: see [`Env::holding`]. Empty everywhere but an `ensures`.
+    held: &'a BTreeSet<String>,
+    /// The module of the rule doing the reading. Apart from `module` while
+    /// a definition another module wrote is computed: a call asked there is
+    /// that module's, and the reason says so (issue #32).
+    asking: &'a str,
 }
 
 /// The empty set of definitions, for an environment given none.
 static NOTHING_DERIVED: LazyLock<Derivations> = LazyLock::new(Derivations::default);
+
+/// No module's text, for an environment given none.
+static NO_SOURCES: BTreeMap<String, String> = BTreeMap::new();
 
 impl<'a> Env<'a> {
     /// An environment over `world` with nothing bound.
@@ -185,11 +211,15 @@ impl<'a> Env<'a> {
             bindings: BTreeMap::new(),
             told: BTreeMap::new(),
             source,
+            sources: &NO_SOURCES,
             derived: &NOTHING_DERIVED,
             resolving: BTreeSet::new(),
             parameters: BTreeSet::new(),
             element: None,
             enclosing: Vec::new(),
+            removed_here: &NOTHING_REMOVED,
+            held: &removed::NOTHING_HELD,
+            asking: module,
         }
     }
 
@@ -204,6 +234,14 @@ impl<'a> Env<'a> {
     #[must_use]
     pub fn deriving(mut self, derived: &'a Derivations) -> Self {
         self.derived = derived;
+        self
+    }
+
+    /// The same environment, able to quote every module's text, so a
+    /// definition another module wrote is quoted from that module's file.
+    #[must_use]
+    pub fn quoting(mut self, sources: &'a BTreeMap<String, String>) -> Self {
+        self.sources = sources;
         self
     }
 
@@ -245,11 +283,15 @@ impl<'a> Env<'a> {
             bindings,
             told,
             source: self.source,
+            sources: self.sources,
             derived: self.derived,
             resolving: self.resolving.clone(),
             parameters: self.parameters.clone(),
             element: self.element.clone(),
             enclosing: self.enclosing.clone(),
+            removed_here: self.removed_here,
+            held: self.held,
+            asking: self.asking,
         }
     }
 
@@ -266,23 +308,43 @@ impl<'a> Env<'a> {
     /// whose parameter is also called `box`, take that parameter for an item's
     /// unset `box` — so an item nobody placed was counted in the box, and the
     /// verdict turned on what the rule's parameter was called.
-    fn computing(&self, instance: &Instance, key: String) -> Env<'_> {
+    ///
+    /// For the same reason it is read **in the module that wrote it**, not
+    /// the one reading it: `quiet: watchers(this).count = 0` declared in `a`
+    /// asks `a`'s `watchers`, so `where a/watchers(tag)` answers it and `where
+    /// b/watchers(tag)` does not, whichever module's rule reads `tag.quiet`
+    /// (issue #32). Its `config` is `a`'s, and its undecided notes quote `a`'s
+    /// text, at offsets that are `a`'s.
+    fn computing<'s>(&'s self, instance: &'s Instance, key: String) -> Env<'s> {
         let mut bindings = BTreeMap::new();
         bindings.insert("this".to_owned(), Value::Ref(instance.id.clone()));
         let mut resolving = self.resolving.clone();
         resolving.insert(key);
+        let module = instance.module.as_str();
+        let source = if module == self.module {
+            self.source
+        } else {
+            self.sources.get(module).map_or("", String::as_str)
+        };
         let mut scope = Env {
             world: self.world,
-            module: self.module,
+            module,
             bindings,
             told: BTreeMap::new(),
-            source: self.source,
+            source,
+            sources: self.sources,
             derived: self.derived,
             resolving,
             // A definition belongs to its entity, not to the rule reading it.
             parameters: BTreeSet::new(),
             element: None,
             enclosing: Vec::new(),
+            // Still the state the rule leaves: a definition read from an
+            // `ensures` reads the world that clause describes.
+            removed_here: self.removed_here,
+            // The definition's names are its own, never the rule's.
+            held: &removed::NOTHING_HELD,
+            asking: self.asking,
         };
         // Bare, and each undecided one saying why: `shown: out + "!"` over an
         // `out` a rule could not settle names what it could not settle.

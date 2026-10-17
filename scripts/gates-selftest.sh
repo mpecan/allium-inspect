@@ -374,6 +374,15 @@ expect_pass_saying "freshness after a squash-merge" \
 expect_pass_saying "mutation debt after a squash-merge" \
     "not in this history; same Rust sources as ${sq_squash:0:12}" \
     in_sq bash "$here/check-mutation-debt.sh"
+checks=$((checks + 1))
+noted="$(in_sq bash "$here/check-coverage-freshness.sh" 2>&1)" && status=0 || status=$?
+if [ "$status" -eq 0 ] && ! printf '%s' "$noted" | grep -q "will not survive"; then
+    echo "ok:   no squash-merge warning when the fingerprint found is HEAD's Rust"
+else
+    echo "FAIL: squash-merge warning (or failure, exit $status) by fingerprint, HEAD's Rust unchanged"
+    echo "$noted" | sed 's/^/      /'
+    failures=$((failures + 1))
+fi
 
 # A receipt at a commit whose Rust is HEAD's survives a squash-merge, and the
 # gate does not warn that it would not. The warning's other direction is below,
@@ -408,6 +417,12 @@ expect_fail "freshness with the match past the search depth" "raise INSPECT_RECE
     in_sq env INSPECT_RECEIPT_SEARCH_DEPTH=1 bash "$here/check-coverage-freshness.sh"
 expect_pass_saying "freshness with the match just inside the search depth" \
     "same Rust sources as ${sq_squash:0:12}" \
+    in_sq env INSPECT_RECEIPT_SEARCH_DEPTH=2 bash "$here/check-coverage-freshness.sh"
+# Found by fingerprint, with HEAD's Rust changed since: the squash-merge
+# warning is said here too. Its silent direction is the check after a
+# squash-merge above, where HEAD's Rust is still the receipt's.
+expect_pass_saying "freshness by fingerprint with Rust changed after the receipt" \
+    "will not survive a squash-merge" \
     in_sq env INSPECT_RECEIPT_SEARCH_DEPTH=2 bash "$here/check-coverage-freshness.sh"
 
 # The branch-side warning. A receipt whose commit is here but whose Rust is not

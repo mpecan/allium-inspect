@@ -154,10 +154,11 @@ impl Walker<'_> {
         }
     }
 
-    /// An instance of `type_expr`, in the module that declares it.
+    /// An instance of `type_expr`, in the module that declares it — the one
+    /// it names, when it names one.
     pub(crate) fn create(&mut self, type_expr: &str) -> EntityId {
-        let bare = type_expr.rsplit('/').next().unwrap_or(type_expr);
-        let module = declaring_module(self.spec, bare);
+        let (module, bare) = inspect_sim::eval::split_module(type_expr);
+        let module = module.map_or_else(|| declaring_module(self.spec, bare), str::to_owned);
         self.world.create(bare, &module)
     }
 
@@ -170,6 +171,7 @@ impl Walker<'_> {
     pub(crate) fn bind(&mut self, who: &Cast, id: Option<EntityId>, origin: Origin) {
         if let Some(id) = &id {
             self.bound.insert(who.name.clone(), id.clone());
+            self.gone.remove(&who.name);
         }
         self.cast.push(CastMember {
             name: who.name.clone(),
@@ -178,6 +180,22 @@ impl Walker<'_> {
             origin,
             line: who.line,
         });
+    }
+
+    /// Why `name` names no instance, when it is a `creating` line that caught
+    /// nothing: the cause of every read through it, which an unknown with no
+    /// reason would leave looking like a bug.
+    ///
+    /// Only a `creating` line is ever listed with nothing behind it — a cast
+    /// member and a given instance are made as they are named — so a listed
+    /// name with no instance is one, and asking its origin as well would be a
+    /// second test of the same fact.
+    fn caught_nothing(&self, name: &str) -> Option<String> {
+        let member = self.cast.iter().rev().find(|member| member.name == name)?;
+        member.entity.is_none().then(|| match self.gone.get(name) {
+            Some(gone) => format!("{gone}, on line {}", member.line),
+            None => format!("`{name}` caught nothing, on line {}", member.line),
+        })
     }
 
     /// The type `name` was bound under, as the journey wrote it.
@@ -360,7 +378,11 @@ impl Walker<'_> {
         }
         let Some(id) = self.bound.get(&path.root) else {
             if !path.segments.is_empty() {
-                return (Value::Unknown, None);
+                // Never a bare unknown: a name nothing bound says so.
+                let why = self.caught_nothing(&path.root).unwrap_or_else(|| {
+                    format!("`{}` names nothing this journey has bound", path.root)
+                });
+                return (Value::Unknown, Some(why));
             }
             // Capitalised and unbound is a collection, which is the rule the
             // evaluator already follows: `Loans` is every loan in the world.
@@ -419,8 +441,9 @@ impl Walker<'_> {
     /// which reads as a bug in whichever the reader trusts less.
     fn field(&self, instance: &Instance, name: &str) -> Evaluation {
         let source = self.sources.get(&instance.module).map_or("", String::as_str);
-        let env =
-            Env::new(&self.world, &instance.module, source).deriving(self.program.derivations());
+        let env = Env::new(&self.world, &instance.module, source)
+            .deriving(self.program.derivations())
+            .quoting(self.sources);
         field_of(instance, name, &env)
     }
 }
@@ -457,6 +480,16 @@ fn collection(name: &str) -> Option<String> {
 /// trigger node called `Loan` in the graph beside the entity called `Loan` —
 /// so a search that took the first match would resolve a cast against the
 /// trigger and put the instance in whichever module that trigger came from.
+/// Where a rule in `module` creating `entity` puts it: its own module when
+/// that declares one, otherwise the module that does.
+pub(crate) fn home_of(spec: &SpecGraph, module: &str, entity: &str) -> String {
+    let own = spec
+        .nodes
+        .iter()
+        .any(|node| node.module == module && node.name == entity && node.kind == NodeKind::Entity);
+    if own { module.to_owned() } else { declaring_module(spec, entity) }
+}
+
 fn declaring_module(spec: &SpecGraph, bare: &str) -> String {
     spec.nodes
         .iter()

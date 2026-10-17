@@ -5,7 +5,10 @@
 
 use allium_parser::ast::{Expr, Ident};
 
-use super::{Env, Evaluation, Unresolved, ast::is_ident_named, eval, field_of, told, unset_field};
+use super::{
+    Env, Evaluation, Unresolved, ast::is_ident_named, eval, field_of, removed::removed_here, told,
+    unset_field,
+};
 use crate::value::Value;
 
 /// `object.field`, including `config.x` and `collection.count`.
@@ -64,8 +67,9 @@ pub(super) fn member(whole: &Expr, object: &Expr, field: &Ident, env: &Env<'_>) 
     }
 
     match &base.value {
-        Value::Ref(id) => match env.world.instance(id) {
-            Some(instance) => {
+        Value::Ref(id) => match env.instance(id) {
+            Err(removal) => removed_here(id, removal, whole, env).carrying(unresolved),
+            Ok(Some(instance)) => {
                 let read = field_of(instance, field, env);
                 // One *stored* undecided — two rules woken by one trigger
                 // disagreed about it, or a rule wrote something it could not
@@ -94,22 +98,26 @@ pub(super) fn member(whole: &Expr, object: &Expr, field: &Ident, env: &Env<'_>) 
                 }
                 Evaluation { value: read.value, unresolved }
             }
-            None => Evaluation::unknown(format!("`{id}` is not in this world"), whole, env.source)
-                .carrying(unresolved),
+            Ok(None) => {
+                Evaluation::unknown(format!("`{id}` is not in this world"), whole, env.source)
+                    .carrying(unresolved)
+            }
         },
         // A field read across a collection is a projection: `receipts.reporter`
         // is every reporter, not an error.
         Value::Set(items) => {
-            let projected = items
-                .iter()
-                .map(|item| match item {
-                    Value::Ref(id) => env
-                        .world
-                        .instance(id)
-                        .map_or(Value::Unknown, |instance| instance.field(field)),
+            let mut projected = Vec::with_capacity(items.len());
+            for item in items {
+                projected.push(match item {
+                    Value::Ref(id) => match env.instance(id) {
+                        Err(removal) => {
+                            return removed_here(id, removal, whole, env).carrying(unresolved);
+                        }
+                        Ok(found) => found.map_or(Value::Unknown, |instance| instance.field(field)),
+                    },
                     _ => Value::Unknown,
-                })
-                .collect();
+                });
+            }
             Evaluation { value: Value::Set(projected), unresolved }
         }
         // Undecided already, and usually saying why. When it said nothing —

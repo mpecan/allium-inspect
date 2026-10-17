@@ -25,6 +25,7 @@
 
 mod calls;
 mod iteration;
+mod removals;
 
 pub(crate) use iteration::{bound_name, destructured, header, keeps};
 
@@ -36,7 +37,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    eval::{Env, Evaluation, Told, Unresolved, bare_name, eval, remember, span_of},
+    eval::{Env, Evaluation, Removal, Told, Unresolved, bare_name, eval, remember, span_of},
     truth::Truth,
     value::{EntityId, Value},
     world::World,
@@ -150,6 +151,8 @@ pub struct Against<'a> {
     pub spec: &'a SpecGraph,
     pub module: &'a str,
     pub source: &'a str,
+    /// Every module's text, for quoting a definition another module wrote.
+    pub sources: &'a crate::step::Sources,
     /// What the spec computes, so a postcondition reading a derived value gets
     /// the same answer a precondition would.
     pub derived: &'a inspect_model::Derivations,
@@ -162,6 +165,16 @@ pub struct Application<'a> {
     /// Why a name in `bindings` is undecided, when what bound it said: see
     /// [`Env::told`].
     told: Told,
+    /// What the rule removes, known before any of its clauses is applied, so
+    /// a read of it is undecided wherever it is written (issue #33): see
+    /// [`Application::removing`].
+    removed_here: BTreeMap<EntityId, Removal>,
+    /// What this application removed, by the clause that removed it.
+    removed: BTreeMap<EntityId, Removal>,
+    /// An `ensures` `let` read otherwise in the world the rule found: see `removals.rs`.
+    decided: BTreeMap<String, (Value, Vec<Unresolved>)>,
+    /// Names bound beside the `when` still meaning that: see `Env::holding`.
+    held: std::collections::BTreeSet<String>,
 }
 
 impl<'a> Application<'a> {
@@ -171,7 +184,16 @@ impl<'a> Application<'a> {
         world: &'a mut World,
         bindings: BTreeMap<String, Value>,
     ) -> Self {
-        Self { against, world, bindings, told: BTreeMap::new() }
+        Self {
+            against,
+            world,
+            held: bindings.keys().cloned().collect(),
+            bindings,
+            told: BTreeMap::new(),
+            removed_here: BTreeMap::new(),
+            removed: BTreeMap::new(),
+            decided: BTreeMap::new(),
+        }
     }
 
     /// The same application, knowing why some of its bound names are
@@ -185,6 +207,8 @@ impl<'a> Application<'a> {
     /// Bind `name` to `value`, with `why` when that is undecided, so a later
     /// clause reading the name can say what the binding could not settle.
     fn bind(&mut self, name: &str, value: Value, why: Vec<Unresolved>) {
+        self.decided.remove(name);
+        self.held.remove(name);
         remember(&mut self.told, name, &value, why);
         self.bindings.insert(name.to_owned(), value);
     }
@@ -216,31 +240,6 @@ impl<'a> Application<'a> {
             Expr::NotExists { operand, .. } => self.removal(clause, operand),
             Expr::Exists { .. } => self.asserted(clause),
             _ => self.unmodelled(clause, "this postcondition is not a form the simulator applies"),
-        }
-    }
-
-    /// `ensures: not exists presence` — afterwards, it is gone.
-    ///
-    /// What the language says `not exists` means as an outcome: the entity is
-    /// removed. Only noting it left the instance standing after a rule that
-    /// said it was gone, so `then presence does not exist` was refused over a
-    /// removal that went through.
-    ///
-    /// One instance is removed, and `null` — a lookup that matched nothing —
-    /// already holds. A collection is noted, as before: `not exists Copy`
-    /// names a type where an instance was meant, and removing every copy in
-    /// the world on the strength of it would be a guess with side effects.
-    fn removal(&mut self, whole: &Expr, operand: &Expr) -> Applied {
-        let found = self.evaluate(operand);
-        match found.value {
-            Value::Ref(id) => match self.world.remove(&id) {
-                Some(instance) => Applied::effect(Effect::Removed { id, entity: instance.entity }),
-                // Already gone is the end state the clause asks for.
-                None => Applied::default(),
-            },
-            Value::Null => Applied::default(),
-            Value::Unknown => self.skipped(whole, found.unresolved),
-            _ => self.asserted(whole),
         }
     }
 
@@ -283,7 +282,7 @@ impl<'a> Application<'a> {
             return self.unmodelled(target, "this is not a field the simulator can assign to");
         };
         let field = field.name.clone();
-        let located = self.evaluate(object);
+        let located = self.deciding(object);
         let mut unresolved = located.unresolved;
         let Value::Ref(id) = located.value else {
             let mut applied = Applied::note(unresolved);
@@ -305,6 +304,7 @@ impl<'a> Application<'a> {
         };
 
         let mut evaluated = self.evaluate(value_node);
+        let lost = self.lost(value_node, &evaluated);
         // A bare name on the right of a status assignment is a state, the same
         // reading a comparison makes.
         //
@@ -315,18 +315,15 @@ impl<'a> Application<'a> {
         // inventing a state nothing declares.
         if evaluated.value.is_unknown()
             && let Some(name) = bare_name(value_node)
-            && let Some((home, entity)) = self
-                .world
-                .instance(&id)
-                .map(|instance| (instance.module.clone(), instance.entity.clone()))
+            && let Some((home, entity)) =
+                self.held(&id).map(|instance| (instance.module.clone(), instance.entity.clone()))
             && let Some(state) = self.declared_state(&home, &entity, &field, name)
         {
             evaluated = Evaluation { value: state, unresolved: Vec::new() };
         }
         unresolved.extend(evaluated.unresolved);
 
-        let previous =
-            self.world.instance(&id).map_or(Value::Unknown, |instance| instance.field(&field));
+        let previous = self.held(&id).map_or(Value::Unknown, |instance| instance.field(&field));
 
         if let (Value::Enum(from), Value::Enum(to)) = (&previous, &evaluated.value)
             && let Some(refusal) = self.forbidden_transition(&id, &field, from, to)
@@ -334,12 +331,14 @@ impl<'a> Application<'a> {
             return Applied { effects: vec![refusal], unresolved, unapplied: Vec::new() };
         }
 
-        self.world.set_field_explained(&id, &field, evaluated.value.clone(), unresolved.clone());
-        Applied {
+        self.write(&id, &field, evaluated.value.clone(), unresolved.clone());
+        let mut applied = Applied {
             effects: vec![Effect::Assigned { id, field, from: previous, to: evaluated.value }],
             unresolved,
             unapplied: Vec::new(),
-        }
+        };
+        applied.lose(lost);
+        applied
     }
 
     /// `if condition: …`.
@@ -351,7 +350,7 @@ impl<'a> Application<'a> {
     ) -> Applied {
         let mut unresolved = Vec::new();
         for branch in branches {
-            let verdict = self.evaluate(&branch.condition);
+            let verdict = self.deciding(&branch.condition);
             unresolved.extend(verdict.unresolved);
             match verdict.value.truth() {
                 Truth::True => {
@@ -421,6 +420,7 @@ impl<'a> Application<'a> {
 
     // --- helpers ---------------------------------------------------------
 
+    /// A value the rule leaves behind, read in the state it leaves.
     fn evaluate(&self, node: &Expr) -> Evaluation {
         eval(node, &self.scope())
     }
@@ -428,8 +428,14 @@ impl<'a> Application<'a> {
     /// The environment a clause is read in: this world, this module, and
     /// every name the rule has bound so far.
     fn scope(&self) -> Env<'_> {
-        let mut scope = Env::new(self.world, self.against.module, self.against.source)
-            .deriving(self.against.derived);
+        self.scope_in(self.world).removing(&self.removed_here).holding(&self.held)
+    }
+
+    /// [`Application::scope`] over `world`, told nothing about removals.
+    fn scope_in<'s>(&'s self, world: &'s World) -> Env<'s> {
+        let mut scope = Env::new(world, self.against.module, self.against.source)
+            .deriving(self.against.derived)
+            .quoting(self.against.sources);
         scope.bindings.clone_from(&self.bindings);
         scope.told.clone_from(&self.told);
         scope
@@ -441,7 +447,7 @@ impl<'a> Application<'a> {
         id: &EntityId,
         field: &str,
     ) -> Option<&'a inspect_model::graph::TransitionGraph> {
-        let instance = self.world.instance(id)?;
+        let instance = self.held(id)?;
         let node = self.against.spec.node(&NodeId::new(
             &instance.module,
             NodeKind::Entity,

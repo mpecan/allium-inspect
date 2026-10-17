@@ -1,0 +1,187 @@
+-- Issue #32: a `where` answer that names the module whose call it answers.
+-- `parcels` and `tally` each ask a black box called `watchers` about the tag
+-- `Pack` makes; the qualifier says which of the two an answer is about.
+
+-- As the issue was filed: qualified, answering `tally`'s call alone. `Stamp`
+-- in `parcels` asks its own `watchers`, which this does not answer.
+journey OneModuleIsAnswered {
+    cast:
+        ada: parcels/Person
+    1. pack
+        ada does Pack("x") on Desk
+            creating tag: parcels/Tag where tally/watchers(tag) = {}
+        then tag.box.label = "x"
+}
+
+journey EachModuleIsAnswered {
+    cast:
+        ada: parcels/Person
+    1. pack
+        ada does Pack("x") on Desk
+            creating tag: parcels/Tag
+            where tally/watchers(tag) = {}
+            where parcels/watchers(tag) = {ada}
+        then Count fires
+        then tag.box.label = "x"
+        then tag.stamped = true
+}
+
+-- Unqualified, as before: one answer for every module that asks.
+journey EveryModuleIsAnswered {
+    cast:
+        ada: parcels/Person
+    1. pack
+        ada does Pack("x") on Desk
+            creating tag: parcels/Tag where watchers(tag) = {}
+        then tag.box.label = "x"
+        then tag.stamped = false
+}
+
+-- The qualified answer wins in its own module over an unqualified one.
+journey TheModuleSaysWhich {
+    cast:
+        ada: parcels/Person
+    1. pack
+        ada does Pack("x") on Desk
+            creating tag: parcels/Tag
+            where watchers(tag) = {}
+            where parcels/watchers(tag) = {ada}
+        then tag.stamped = true
+}
+
+-- A module the specification does not have answers nothing, and is refused.
+journey NoSuchModule {
+    cast:
+        ada: parcels/Person
+    1. pack
+        ada does Pack("x") on Desk
+            creating tag: parcels/Tag
+            where watchers(tag) = {}
+            where ghost/watchers(tag) = {ada}
+        then tag.box.label = "x"
+}
+
+-- `given` and `stipulate` are read the same way.
+journey QualifiedFromTheStart {
+    cast:
+        ada: parcels/Person
+    given:
+        ghost/watchers(ada) = {}
+    1. stipulate
+        stipulate tally/watchers(ada) = {}
+        stipulate ghost/watchers(ada) = {}
+}
+
+-- `Crate` computes `open` and `ships_to` in `parcels`, and `tally`'s `Ship`
+-- reads them. The calls inside are `parcels`'s, wherever they are read from.
+journey AnsweredWhereWritten {
+    cast:
+        ada: parcels/Person
+    1. seal
+        ada does Seal("x") on Desk
+            creating c: parcels/Crate
+            where parcels/is_open(c) = true
+            where parcels/may_ship(c, "x") = true
+        then Ship fires
+}
+
+-- Named after the module that reads them, which is not whose they are.
+journey AnsweredWhereRead {
+    cast:
+        ada: parcels/Person
+    1. seal
+        ada does Seal("x") on Desk
+            creating c: parcels/Crate
+            where tally/is_open(c) = true
+            where tally/may_ship(c, "x") = true
+        then Ship fires
+}
+
+-- Said after the act, about `parcels`'s call: `tally`'s `Count` was left
+-- unsettled by the act, and this is not its answer, so it is not too late.
+journey LateOtherModule {
+    cast:
+        bob: parcels/Person
+    1. pack
+        bob does Pack("x") on Desk
+            creating tag: parcels/Tag where parcels/watchers(tag) = {}
+    2. later
+        stipulate parcels/watchers(tag) = {bob}
+}
+
+-- The same, about `tally`'s call: that one is too late.
+journey LateSameModule {
+    cast:
+        bob: parcels/Person
+    1. pack
+        bob does Pack("x") on Desk
+            creating tag: parcels/Tag where parcels/watchers(tag) = {}
+    2. later
+        stipulate tally/watchers(tag) = {bob}
+}
+
+-- A bare answer said after a qualified one about the same call: the qualified
+-- one still answers in `parcels`, and the line says so.
+journey BareAfterQualified {
+    cast:
+        ada: parcels/Person
+    given:
+        parcels/watchers(ada) = {}
+    1. stipulate
+        stipulate watchers(ada) = {ada}
+}
+
+-- A type qualified by a module that does not declare it: `tally` has no `Tag`,
+-- so this catches nothing — not `parcels`' tag, which the qualifier ruled out.
+journey WrongModuleForTheType {
+    cast:
+        ada: parcels/Person
+    1. pack
+        ada does Pack("x") on Desk
+            creating tag: tally/Tag
+        then tag.box.label = "x"
+}
+
+-- `tally`'s `Flash` makes a `parcels` tag and removes it in one turn. The tag
+-- is in no world afterwards, so where it lived is where `parcels` declares it,
+-- and a line naming `parcels` catches it — said as removed, not as nothing.
+journey MadeAndRemovedByAnotherModule {
+    cast:
+        ada: parcels/Person
+    1. flash
+        ada does Flash("x") on Counter
+            creating tag: parcels/Tag
+        then tag.stamped = false
+}
+
+-- Said after the act, about the call `parcels` wrote in `Crate`'s definition,
+-- which `tally`'s `Ship` read: too late, though nothing was answered when
+-- `Ship` asked — the call is `parcels`'s, not the reading rule's module's.
+journey LateWhereWritten {
+    cast:
+        ada: parcels/Person
+    1. seal
+        ada does Seal("x") on Desk
+            creating c: parcels/Crate
+    2. later
+        stipulate parcels/is_open(c) = true
+}
+
+-- The same pair in one `given`, and under one `creating`: said there too.
+journey BareAfterQualifiedGiven {
+    cast:
+        ada: parcels/Person
+    given:
+        parcels/watchers(ada) = {}
+        watchers(ada) = {ada}
+}
+
+journey BareAfterQualifiedWhere {
+    cast:
+        ada: parcels/Person
+    1. pack
+        ada does Pack("x") on Desk
+            creating tag: parcels/Tag
+            where parcels/watchers(tag) = {}
+            where watchers(tag) = {ada}
+}

@@ -73,7 +73,7 @@ pub(crate) struct Declared<'g> {
 /// fields, and `warehouse/Order` is the one the journey said.
 pub(crate) fn fields_of<'g>(graph: &'g SpecGraph, type_expr: &str) -> Option<Declared<'g>> {
     let written = type_expr.trim().trim_end_matches('?');
-    let (module, bare) = written.rsplit_once('/').map_or((None, written), |(m, b)| (Some(m), b));
+    let (module, bare) = inspect_sim::eval::split_module(written);
     let node = graph
         .nodes
         .iter()

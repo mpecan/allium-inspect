@@ -133,6 +133,25 @@ impl Where {
     }
 }
 
+/// `creating comment: pulls/Comment where mentions(comment) = {}`: one name
+/// an act catches, and what calls answer for the instance it names.
+///
+/// An act may make more than one thing, so it may carry more than one of
+/// these, one per `creating` line (issue #31). Each `where` belongs to the
+/// line it is written under, and names that line's instance.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Caught {
+    pub cast: Cast,
+    /// What a call the spec never defines answers for this instance.
+    ///
+    /// A `stipulate` cannot say it. Before the act the instance does not
+    /// exist to be named, and after it the reaction that asked has already
+    /// run and been left undecided. These are in force once the engine turn
+    /// that made the instance is over: for what that creation sets off, and
+    /// not for the rule that made it.
+    pub answering: Vec<Where>,
+}
+
 /// The world before anything happens.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Given {
@@ -185,17 +204,10 @@ pub enum Clause {
         trigger: String,
         arguments: Vec<Term>,
         surface: String,
-        /// What the step caught, named by the writer rather than numbered.
-        creating: Option<Cast>,
-        /// `where audience(issue) = {}` under `creating issue: Issue`: what a
-        /// call the spec never defines answers for the instance the act makes.
-        ///
-        /// A `stipulate` cannot say it. Before the act the instance does not
-        /// exist to be named, and after it the reaction that asked has already
-        /// run and been left undecided. These are in force once the engine
-        /// turn that made the instance is over: for what that creation sets
-        /// off, and not for the rule that made it.
-        answering: Vec<Where>,
+        /// What the step caught, named by the writer rather than numbered:
+        /// one per `creating` line, in the order they are written. Lines of
+        /// one kind catch instances of it in the order they were made.
+        creating: Vec<Caught>,
         /// `bruno cannot do MemberAsksToChat(…) on GroupMembers`.
         ///
         /// The journey asserting a refusal it *wants*. Without it a blocked

@@ -50,7 +50,7 @@ impl Application<'_> {
         let body = body.clone();
         let header = header(&binding, collection, self.against.source);
 
-        let evaluated = self.evaluate(collection);
+        let evaluated = self.deciding(collection);
         let items = match evaluated.value {
             Value::Set(items) => items,
             other => {
@@ -133,11 +133,17 @@ impl Application<'_> {
                     }
                 }
             }
-            // A loop variable says nothing a `let` of the same name said.
+            // A loop variable says nothing a `let` of the same name said, and
+            // names the same member in the world the rule found.
             self.told.remove(&binding);
+            self.decided.remove(&binding);
+            let held = self.held.remove(&binding);
             let restore = self.bindings.insert(binding.clone(), item);
             let step = self.apply(&body);
             applied.merge(step);
+            if held {
+                self.held.insert(binding.clone());
+            }
             match restore {
                 Some(previous) => self.bindings.insert(binding.clone(), previous),
                 None => self.bindings.remove(&binding),
@@ -148,7 +154,7 @@ impl Application<'_> {
 
     /// Whether `filter` keeps `item`; see [`keeps`].
     fn kept(&self, binding: &str, item: &Value, filter: &Expr) -> Evaluation {
-        keeps(self.scope(), self.against.spec, binding, item, filter)
+        self.decide(|scope| keeps(scope, self.against.spec, binding, item, filter))
     }
 }
 

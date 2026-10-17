@@ -109,6 +109,18 @@ pub const RUNS: &[&str] = &["runs"];
 /// box about the instance just made (issue #18).
 pub const AUDIENCE: &[&str] = &["audience"];
 
+/// Two modules that each ask a black box called `watchers` about one new tag:
+/// what a module-qualified answer answers (issue #32).
+pub const QUALIFIED: &[&str] = &["parcels", "tally"];
+
+/// `grants` beside a module that asks no `can`: a qualified answer to a call
+/// spelled with a bare word, naming the wrong module (issue #32).
+pub const GRANTS_AND_PARCELS: &[&str] = &["grants", "parcels"];
+
+/// The uploads fixture, alone: a rule that removes an instance and reads it
+/// in another `ensures`, in either order (issue #33).
+pub const UPLOADS: &[&str] = &["uploads"];
+
 /// The siblings fixture, alone: rules woken by one trigger, each reading the
 /// world as the trigger found it (issue #24).
 pub const SIBLINGS: &[&str] = &["siblings"];
@@ -124,6 +136,14 @@ pub const KINDS: &[&str] = &["kinds"];
 /// The operators fixture, alone: `??`, string `+`, and a field written with a
 /// value nothing settled (issue #27).
 pub const OPERATORS: &[&str] = &["operators"];
+
+/// The reviews fixture and the module that reacts to what it makes: one act
+/// that makes more than one thing, each asked about (issue #31).
+pub const REVIEWS: &[&str] = &["reviews", "mentions"];
+
+/// Acts whose instances are not all made at once: one a reaction makes a turn
+/// later, and one a reaction removes (issue #31).
+pub const FOLLOWUPS: &[&str] = &["followups"];
 
 /// `modules`, replayed from their recordings, with each module's source.
 pub fn library(modules: &[&str]) -> (SpecGraph, Program, Sources) {

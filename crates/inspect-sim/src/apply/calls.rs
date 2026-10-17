@@ -73,13 +73,17 @@ impl Application<'_> {
         let Some(home) = inspect_model::listening::emitted_from(spec, module, qualifier) else {
             return self.unmodelled(function, &self.nowhere(function, trigger, qualifier));
         };
-        let (arguments, positional) = self.emission_arguments(args);
-        Applied::effect(Effect::Emitted {
+        // Why an argument went undecided, said on the rule that emitted it:
+        // the listener is handed only the value.
+        let mut applied = Applied::default();
+        let (arguments, positional) = self.emission_arguments(args, &mut applied);
+        applied.effects.push(Effect::Emitted {
             trigger: trigger.to_owned(),
             module: home,
             arguments,
             positional,
-        })
+        });
+        applied
     }
 
     /// Why `alias/Trigger(…)` names nobody's trigger, as one of the two
@@ -116,15 +120,20 @@ impl Application<'_> {
     /// parameter. Naming a positional argument here — after whichever
     /// listener the graph happened to list first — handed it to that one and
     /// to no other listener that called it something else.
-    fn emission_arguments(&self, args: &[CallArg]) -> (BTreeMap<String, Value>, Vec<Value>) {
+    fn emission_arguments(
+        &self,
+        args: &[CallArg],
+        said: &mut Applied,
+    ) -> (BTreeMap<String, Value>, Vec<Value>) {
         let mut named = BTreeMap::new();
         let mut positional = Vec::new();
         for argument in args {
             match argument {
                 CallArg::Named(argument) => {
-                    named.insert(argument.name.name.clone(), self.carried(&argument.value));
+                    let carried = self.carried(&argument.value, said);
+                    named.insert(argument.name.name.clone(), carried);
                 }
-                CallArg::Positional(value) => positional.push(self.carried(value)),
+                CallArg::Positional(value) => positional.push(self.carried(value, said)),
             }
         }
         (named, positional)
@@ -151,17 +160,29 @@ impl Application<'_> {
     /// model. It stays undecided, and the rule that reads it says so.
     ///
     /// [`SpecGraph::declared_states`]: inspect_model::SpecGraph::declared_states
-    fn carried(&self, value: &Expr) -> Value {
-        let evaluated = self.evaluate(value).value;
+    ///
+    /// Why an argument is undecided goes into `said` — only when it is
+    /// undecided, and never for a word read as a state — and, when it is
+    /// undecided only because the rule removes what it reads, as something
+    /// the rule did not apply, so the act that fired it says so.
+    fn carried(&self, value: &Expr, said: &mut Applied) -> Value {
+        let evaluated = self.evaluate(value);
         match bare_name(value) {
             Some(word)
-                if evaluated.is_unknown()
+                if evaluated.value.is_unknown()
                     && !self.bindings.contains_key(word)
                     && self.against.spec.declared_states().contains(word) =>
             {
                 Value::Enum(word.to_owned())
             }
-            _ => evaluated,
+            _ => {
+                let lost = self.lost(value, &evaluated);
+                if evaluated.value.holds_unknown() {
+                    said.unresolved.extend(evaluated.unresolved);
+                }
+                said.lose(lost);
+                evaluated.value
+            }
         }
     }
 
@@ -186,9 +207,7 @@ impl Application<'_> {
         // inside a rule's `for` — is a value, and applying it would note it as
         // a postcondition the simulator does not model, which it is not.
         if !matches!(value, Expr::Call { .. }) {
-            let evaluated = self.evaluate(value);
-            self.bind(name, evaluated.value, evaluated.unresolved.clone());
-            return Applied::note(evaluated.unresolved);
+            return self.named(name, value);
         }
         let applied = self.apply(value);
 
@@ -231,6 +250,7 @@ impl Application<'_> {
             let value_node = &named.value;
 
             let mut evaluated = self.evaluate(value_node);
+            let lost = self.lost(value_node, &evaluated);
             // `Loan.created(status: open)` — `open` is a state, and at creation
             // there is no previous value to say so. The entity's declared states
             // are what settle it, and they come from the spec rather than from
@@ -249,6 +269,7 @@ impl Application<'_> {
                 evaluated.unresolved.clone(),
             );
             applied.unresolved.extend(evaluated.unresolved);
+            applied.lose(lost);
         }
 
         // The instance binds its own name, so the next clause can refer to it.

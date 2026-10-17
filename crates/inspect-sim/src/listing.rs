@@ -44,7 +44,9 @@ pub fn enabled(
 
         for instance in world.instances_of(entity) {
             let scope = about(
-                Env::new(world, &node.module, source).deriving(program.derivations()),
+                Env::new(world, &node.module, source)
+                    .deriving(program.derivations())
+                    .quoting(sources),
                 entity,
                 binding,
                 &instance.id,

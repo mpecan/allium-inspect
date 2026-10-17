@@ -217,7 +217,7 @@ pub fn step(
         Some(run_rule(
             (node.id.as_str(), &node.name, &node.module),
             detail,
-            (program, spec, source),
+            (program, spec, (source, sources)),
             (world, next),
             (event, removed),
         ))
@@ -284,7 +284,7 @@ pub fn step(
 fn run_rule(
     (id, name, module): (&str, &str, &str),
     detail: &inspect_model::graph::RuleDetail,
-    (program, spec, source): (&Program, &SpecGraph, &str),
+    (program, spec, (source, sources)): (&Program, &SpecGraph, (&str, &Sources)),
     // Read in the world the trigger found; written into the one the step is
     // building. One firing's rules are not a sequence (issue #24).
     (world, next): (&World, &mut World),
@@ -318,8 +318,12 @@ fn run_rule(
     let mut told = Told::new();
     for (name, value) in &ast.lets {
         let evaluated = {
-            let scope =
-                rule_scope(Env::new(world, module, source), program, &declared, (&bindings, &told));
+            let scope = rule_scope(
+                Env::new(world, module, source).quoting(sources),
+                program,
+                &declared,
+                (&bindings, &told),
+            );
             eval(value, &scope)
         };
         remember(&mut told, name, &evaluated.value, evaluated.unresolved);
@@ -396,7 +400,9 @@ fn run_rule(
             (name, bindings.get(binding)),
             (&when_text, ast.when.as_ref()),
             |before, id| {
-                let scope = Env::new(before, module, source).deriving(program.derivations());
+                let scope = Env::new(before, module, source)
+                    .deriving(program.derivations())
+                    .quoting(sources);
                 due::trigger(condition, &about(scope, &detail.trigger, binding, id))
             },
         ) {
@@ -406,7 +412,9 @@ fn run_rule(
             Some(Value::Ref(id)) => due::trigger(
                 condition,
                 &about(
-                    Env::new(world, module, source).deriving(program.derivations()),
+                    Env::new(world, module, source)
+                        .deriving(program.derivations())
+                        .quoting(sources),
                     &detail.trigger,
                     binding,
                     id,
@@ -438,8 +446,14 @@ fn run_rule(
     // alone; a per-member clause is sliced from the source by its own span,
     // and read once for each member its loop keeps.
     let mut top_level = detail.clauses_of("requires");
-    let scope =
-        || rule_scope(Env::new(world, module, source), program, &declared, (&bindings, &told));
+    let scope = || {
+        rule_scope(
+            Env::new(world, module, source).quoting(sources),
+            program,
+            &declared,
+            (&bindings, &told),
+        )
+    };
     for (index, clause) in ast.requires.iter().enumerate() {
         let (text, read) = match ast.per_member.get(&index) {
             Some(within) => (
@@ -475,7 +489,7 @@ fn run_rule(
 
     let applied = if disposition == Disposition::Fired {
         crate::siblings::apply(
-            Against { spec, module, source, derived: program.derivations() },
+            (Against { spec, module, source, sources, derived: program.derivations() }, name),
             (world, next),
             (bindings, told),
             &ast.ensures,
@@ -509,7 +523,9 @@ fn check_invariants(
         .filter_map(|node| {
             let condition = program.invariant(node.id.as_str())?;
             let source = sources.get(&node.module).map(String::as_str).unwrap_or_default();
-            let scope = Env::new(world, &node.module, source).deriving(program.derivations());
+            let scope = Env::new(world, &node.module, source)
+                .deriving(program.derivations())
+                .quoting(sources);
             let evaluated = eval(condition, &scope);
             Some(InvariantVerdict {
                 id: node.id.as_str().to_owned(),

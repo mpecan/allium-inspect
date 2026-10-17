@@ -1,0 +1,136 @@
+-- Issue #31, one turn apart: what an act catches is not all made at once.
+-- `Post` makes the note and a reaction makes its draft, so the lines' answers
+-- land at different moments; `Pair` makes two tags and a reaction removes the
+-- first, so one of two names is left with nothing behind it.
+
+-- The draft is made a turn after the note. The note's own answer is in force
+-- before what its creation sets off; the one naming the draft waits for it;
+-- and the draft's is in force once the draft exists.
+journey TheOtherComesLater {
+    cast:
+        ada: Author
+    given:
+        ada.active = true
+    1. a note, and the draft a reaction makes for it
+        ada does Post(ada, "hello") on Desk
+            creating note: Note
+                where mentions(note) = {ada}
+                where cites(note) = {draft}
+            creating draft: Draft
+                where watchers(draft) = {}
+        then note.mentioned = true
+        then draft.note = note
+        then draft.announced = true
+        then draft.watched = false
+}
+
+-- The same twice. In the second act `draft` names the draft *this* act makes,
+-- not the one the first act caught under the same name.
+journey TheOtherComesLaterAgain {
+    cast:
+        ada: Author
+    given:
+        ada.active = true
+    1. the first note
+        ada does Post(ada, "one") on Desk
+            creating note: Note
+                where mentions(note) = {}
+                where cites(note) = {draft}
+            creating draft: Draft
+                where watchers(draft) = {}
+    2. a second, catching both names anew
+        ada does Post(ada, "two") on Desk
+            creating note: Note
+                where mentions(note) = {}
+                where cites(note) = {draft}
+            creating draft: Draft
+                where watchers(draft) = {}
+        then draft.note = note
+        then draft.announced = true
+}
+
+-- A quiet note makes no draft, so an answer naming the draft has nothing to
+-- name, and is refused rather than read as something else.
+journey TheOtherNeverComes {
+    cast:
+        ada: Author
+    given:
+        ada.active = true
+    1. a quiet note
+        ada does Post(ada, "quiet") on Desk
+            creating note: Note
+                where mentions(note) = {}
+                where cites(note) = {draft}
+            creating draft: Draft
+}
+
+-- The note's answer reads the draft, so it waits for the draft — and `Mention`,
+-- which the note's creation sets off, asks in the turn that makes the draft,
+-- before the answer is in force. Said as that, not as `Mention` making the note.
+journey MentionsWaitForTheDraft {
+    cast:
+        ada: Author
+    given:
+        ada.active = true
+    1. a note mentioning the draft a reaction makes for it
+        ada does Post(ada, "hello") on Desk
+            creating note: Note
+                where mentions(note) = {draft}
+            creating draft: Draft
+                where watchers(draft) = {}
+}
+
+-- `Jot` asks about the note in the turn it makes it, and the note's answer
+-- reads the draft, so it waits a turn. Two lines catch in that turn — the tag
+-- `Tick` makes and the draft — and the answer waited for the one it reads.
+journey JotWaitsForTheDraft {
+    cast:
+        ada: Author
+    given:
+        ada.active = true
+    1. a jotted note, and the tag and draft it sets off
+        ada does Jot(ada, "jot") on Desk
+            creating note: Note
+                where mentions(note) = {draft}
+                where cites(note) = {}
+            creating tag: Tag
+            creating draft: Draft
+                where watchers(draft) = {}
+}
+
+-- Two tags, the first removed by what the act set off: `first` caught it and
+-- names nothing afterwards, and `second` keeps the tag its answer landed on.
+journey OneOfThePairIsRemoved {
+    cast:
+        ada: Author
+    given:
+        ada.active = true
+    1. a pair, the first discarded
+        ada does Pair(ada) on Desk
+            creating first: Tag
+            creating second: Tag
+                where watchers(second) = {}
+        then second.label = "second"
+        then second.seen = false
+        then first.label = "first"
+}
+
+-- Continuing from a journey whose act caught two names: both are names here.
+journey AfterTheDraft {
+    after: TheOtherComesLater
+    1. the draft is still the draft
+        then draft.watched = false
+}
+
+-- A surface that does not face the actor: the act makes nothing, and every
+-- line it would have caught is listed with nothing behind it.
+journey NotFacedAtTheDesk {
+    cast:
+        bob: Author
+    given:
+        bob.active = false
+    1. an inactive author posts
+        bob does Post(bob, "hello") on Desk
+            creating note: Note
+            creating draft: Draft
+}

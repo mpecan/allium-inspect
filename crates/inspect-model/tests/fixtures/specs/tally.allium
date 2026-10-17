@@ -1,0 +1,41 @@
+-- allium: 3
+-- tally.allium
+--
+-- Beside `parcels.allium` (issue #32): a reaction in another module to the
+-- same creation, asking a black box of the same name as `parcels` does.
+
+use "./parcels.allium" as p
+
+entity Mark { tag: p/Tag }
+
+entity Shipment { crate: p/Crate }
+
+rule Count {
+    when: t: p/Tag.created
+    ensures:
+        for w in watchers(t):
+            Mark.created(tag: t)
+}
+
+-- Reads what `parcels` computes, and so asks `parcels`'s black boxes.
+rule Ship {
+    when: c: p/Crate.created
+    requires: c.open
+    requires: c.ships_to(c.label)
+    ensures: Shipment.created(crate: c)
+}
+
+-- Makes a `parcels` tag and removes it in the same turn: the tag is in no
+-- world afterwards, and still lives in `parcels`, which declares it.
+rule Flash {
+    when: Flash(label)
+    ensures:
+        let b = p/Box.created(label: label)
+        let t = p/Tag.created(box: b, stamped: false)
+        not exists t
+}
+
+surface Counter {
+    provides:
+        Flash(label)
+}

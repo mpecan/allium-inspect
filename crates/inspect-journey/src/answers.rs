@@ -21,7 +21,13 @@
 //! the act makes nothing of that kind, nothing was answered and nothing is
 //! listed: a receipt for an answer no call could have read is a false one.
 
+mod awaiting;
+mod whose;
+
+pub(crate) use awaiting::Awaiting;
+
 use inspect_sim::{Value, step::RuleOutcome, value::EntityId, world::Answer};
+use whose::{asked_of, no_module, reaches, shadowed};
 
 use crate::{
     Outcome,
@@ -56,11 +62,19 @@ pub(crate) struct Landed {
     call: String,
     /// `audience(issue) = {}`, as the ledger lists it.
     said: String,
+    /// `audience(issue)`: the call alone, as the journey wrote it.
+    written: String,
     /// The name `creating` caught, and the instance it named when it landed.
     name: String,
     id: EntityId,
-    /// The engine turn that made it: a rule in that turn asked before it.
+    /// The engine turn it landed in: a rule in that turn asked before it.
     turn: usize,
+    /// The engine turn its own line's instance was made in — earlier than
+    /// `turn` when the answer read another line's name and waited for it.
+    made: usize,
+    /// The line the answer reads that was caught in `turn`: the one it
+    /// waited for when `made` is earlier, and meaningless when it is not.
+    waited: Option<String>,
 }
 
 /// The calls a rule asked that nothing answered, as the spec wrote them.
@@ -109,101 +123,72 @@ pub(crate) fn unsettled<'a>(
 
 /// A rule left unsettled in engine turn `turn`, with the calls it asked.
 pub(crate) fn noted(rule: &RuleOutcome, why: String, turn: usize) -> Undecided {
-    Undecided { rule: rule.name.clone(), why, asked: asked(rule), turn }
-}
-
-/// Whether `expression` is a call to `call`: `reach(issue)` is one to `reach`,
-/// and `outreach(issue)` is not.
-fn calls(expression: &str, call: &str) -> bool {
-    expression.split_once('(').is_some_and(|(name, _)| name.trim() == call)
-}
-
-/// The first call `rule` left unanswered that is a call to `call`.
-fn asked_of<'a>(rule: &'a Undecided, call: &str) -> Option<&'a str> {
-    rule.asked.iter().find(|expression| calls(expression, call)).map(String::as_str)
-}
-
-/// The answers an act in progress will give once the instance they are about
-/// exists.
-#[derive(Debug, Clone)]
-pub(crate) struct Awaiting {
-    caught: Cast,
-    answering: Vec<Where>,
-}
-
-impl Awaiting {
-    /// `None` when there is nothing to wait for: no `creating`, or no `where`.
-    pub(crate) fn of(caught: Option<&Cast>, answering: &[Where]) -> Option<Self> {
-        let caught = caught?;
-        if answering.is_empty() {
-            return None;
-        }
-        Some(Self { caught: caught.clone(), answering: answering.to_vec() })
+    Undecided {
+        rule: rule.name.clone(),
+        module: rule.module.clone(),
+        why,
+        asked: asked(rule),
+        reasons: rule
+            .unresolved
+            .iter()
+            .map(|note| (note.expression.clone(), note.reason.clone()))
+            .collect(),
+        turn,
     }
 }
 
 impl Walker<'_> {
-    /// The instance `creating` catches, if the act has made it yet.
-    ///
-    /// The first made, not the first in the world's order: ids sort as text,
-    /// so `Order#10` comes before `Order#9`, and a reaction that made another
-    /// order would be caught instead of the act's own whenever the count
-    /// crossed a digit.
-    pub(crate) fn first_made(&self, caught: &Cast) -> Option<EntityId> {
-        let bare = caught.type_expr.rsplit('/').next().unwrap_or(&caught.type_expr);
-        self.created
-            .iter()
-            .find(|id| id.entity() == bare && self.world.instance(id).is_some())
-            .cloned()
-    }
-
-    /// Put the act's `where` answers in force, if what they are about has
-    /// just been made. Called after every turn of the engine during an act;
-    /// once they land they are not waited for again.
-    pub(crate) fn answer_what_was_made(&mut self) {
-        let Some(awaiting) = &self.awaiting else {
+    /// One line's `where` answer, now that `id` is the instance it caught —
+    /// made in engine turn `made`, and `waited` for another line when that
+    /// line's instance came later.
+    fn answer_for(
+        &mut self,
+        caught: &Cast,
+        id: &EntityId,
+        answer: Where,
+        (made, waited): (usize, Option<String>),
+    ) {
+        if let Some(why) = self.no_module(&answer.call) {
+            self.unheard.push(format!(
+                "{why}, so `where {}` answers no call the specification can ask",
+                answer.as_written()
+            ));
             return;
-        };
-        let Some(id) = self.first_made(&awaiting.caught) else {
-            return;
-        };
-        let Some(Awaiting { caught, answering }) = self.awaiting.take() else {
-            return;
-        };
-        // Bound now rather than once the act is over, so the answer's
-        // arguments read as the instance. The cast entry is still made by the
-        // act, once, when it catches the same instance.
-        self.bound.insert(caught.name.clone(), id.clone());
-        for answer in answering {
-            let arguments: Vec<Value> =
-                answer.arguments.iter().map(|term| self.value_of(term)).collect();
-            let value = self.value_of(&answer.value);
-            // Refused, as `given` refuses it, and said on the act's line: the
-            // answer could only be weighed once the instance landed.
-            if let Some((term, consequence)) =
-                unsettled((&answer.arguments, &arguments), (&answer.value, &value))
-            {
-                self.unheard.push(format!(
-                    "`{}` has no value once `{}` is made, so `where {}` {consequence}",
-                    term.as_written(),
-                    caught.name,
-                    answer.as_written()
-                ));
-                continue;
-            }
-            // In the journey's words, as `given` and `stipulate` list a call:
-            // `{repo}`, not the world's `{Repo#1}`.
-            let said = format!("{} = {}", answer.as_written(), answer.value.as_written());
-            self.world.tell(Answer { call: answer.call.clone(), arguments, value });
-            self.landed.push(Landed {
-                call: answer.call.clone(),
-                said: said.clone(),
-                name: caught.name.clone(),
-                id: id.clone(),
-                turn: self.firings,
-            });
-            self.stipulated.push(Stipulation { said, through: self.standing_on.clone() });
         }
+        let arguments: Vec<Value> =
+            answer.arguments.iter().map(|term| self.value_of(term)).collect();
+        let value = self.value_of(&answer.value);
+        // Refused, as `given` refuses it, and said on the act's line: the
+        // answer could only be weighed once the instance landed.
+        if let Some((term, consequence)) =
+            unsettled((&answer.arguments, &arguments), (&answer.value, &value))
+        {
+            self.unheard.push(format!(
+                "`{}` has no value once `{}` is made, so `where {}` {consequence}",
+                term.as_written(),
+                caught.name,
+                answer.as_written()
+            ));
+            return;
+        }
+        // In the journey's words, as `given` and `stipulate` list a call:
+        // `{repo}`, not the world's `{Repo#1}`.
+        let said = format!("{} = {}", answer.as_written(), answer.value.as_written());
+        if let Some(why) = shadowed(&self.world, &answer.call, &arguments) {
+            self.remarks.push(format!("`where {said}`: {why}"));
+        }
+        self.world.tell(Answer { call: answer.call.clone(), arguments, value });
+        self.landed.push(Landed {
+            call: answer.call.clone(),
+            said: said.clone(),
+            written: answer.as_written(),
+            name: caught.name.clone(),
+            id: id.clone(),
+            turn: self.firings,
+            made,
+            waited,
+        });
+        self.stipulated.push(Stipulation { said, through: self.standing_on.clone() });
     }
 
     /// Put a `given` answer in force, or say why it could not be.
@@ -221,6 +206,18 @@ impl Walker<'_> {
     /// `given` takes its place in the ledger. Decided by what was replaced,
     /// not by the words, which may read the same and be about another value.
     pub(crate) fn answer_from_the_start(&mut self, answer: &Where, line: usize, listed: bool) {
+        if let Some(why) = self.no_module(&answer.call) {
+            self.notes.push(Outcome {
+                line,
+                verdict: Verdict::Undecided,
+                about: format!("given {}", answer.as_written()),
+                detail: Some(format!("{why}, so this answers no call the specification can ask")),
+            });
+            if !listed {
+                self.refused_in_the_world.push(line);
+            }
+            return;
+        }
         let arguments: Vec<Value> =
             answer.arguments.iter().map(|term| self.value_of(term)).collect();
         let value = self.value_of(&answer.value);
@@ -242,6 +239,16 @@ impl Walker<'_> {
             return;
         }
         let said = format!("{} = {}", answer.as_written(), answer.value.as_written());
+        // Said of the journey's own lines, as `stipulate` says it: a file's
+        // world is not this journey's to be told about.
+        if listed && let Some(why) = shadowed(&self.world, &answer.call, &arguments) {
+            self.notes.push(Outcome {
+                line,
+                verdict: Verdict::Remark,
+                about: format!("given {}", answer.as_written()),
+                detail: Some(why),
+            });
+        }
         self.world.tell(Answer { call: answer.call.clone(), arguments: arguments.clone(), value });
         let replaced: Vec<FromTheStart> = self
             .answered
@@ -314,6 +321,16 @@ impl Walker<'_> {
             // the whole reason it needs saying. It is remembered and
             // answered from when the specification asks.
             Subject::Call { name, arguments: terms } => {
+                if let Some(why) = self.no_module(name) {
+                    return Outcome {
+                        line,
+                        verdict: Verdict::Undecided,
+                        about,
+                        detail: Some(format!(
+                            "{why}, so this answers no call the specification can ask"
+                        )),
+                    };
+                }
                 let arguments: Vec<Value> = terms.iter().map(|term| self.value_of(term)).collect();
                 // Refused, as `given` refuses it, and not listed.
                 if let Some((term, consequence)) =
@@ -329,7 +346,10 @@ impl Walker<'_> {
                         )),
                     };
                 }
-                let detail = self.too_late(name, terms);
+                let detail = [self.too_late(name, terms), shadowed(&self.world, name, &arguments)]
+                    .into_iter()
+                    .flatten()
+                    .reduce(|first, then| format!("{first}; {then}"));
                 self.world.tell(Answer { call: name.clone(), arguments, value });
                 // In the journey's words, as every answer to a call is
                 // listed, wherever it is said.
@@ -338,6 +358,11 @@ impl Walker<'_> {
                 Outcome { line, verdict: Verdict::Specified, about, detail }
             }
         }
+    }
+
+    /// See [`whose::no_module`].
+    fn no_module(&self, call: &str) -> Option<String> {
+        no_module(self.spec, call)
     }
 
     /// Why a call a `where` answered was still left unanswered by this act.
@@ -355,7 +380,24 @@ impl Walker<'_> {
                 let Some(expression) = asked_of(rule, &landed.call) else {
                     continue;
                 };
-                let remark = if rule.turn <= landed.turn {
+                let remark = if !reaches(&landed.call, rule, expression) {
+                    // Another module's call of the same name: the qualifier
+                    // said this answer was not about it, and the reader who
+                    // sees it unsettled should be told that is why.
+                    whose::elsewhere(rule, expression, &landed.written, &landed.call)
+                } else if rule.turn <= landed.turn
+                    && rule.turn > landed.made
+                    && let Some(sibling) = &landed.waited
+                {
+                    // Held back for another line's instance, and asked in
+                    // the meantime: what it set off asked, not the maker.
+                    format!(
+                        "`{}` asked `{expression}` before `where {}` was in force — the answer \
+                         reads `{sibling}`, so it waited until `{sibling}` was made, and `{}` \
+                         asked no later than that",
+                        rule.rule, landed.said, rule.rule
+                    )
+                } else if rule.turn <= landed.made {
                     format!(
                         "`{}` asked `{expression}` as it made `{}`, before `where {}` was in \
                          force — a `where` answers what that creation sets off, not the rule \
@@ -390,7 +432,11 @@ impl Walker<'_> {
     /// answers. Something else left unsettled is not this line's doing, and
     /// pointing at it would send the reader to a fix that changes nothing.
     pub(crate) fn too_late(&self, call: &str, arguments: &[Term]) -> Option<String> {
-        if !self.undecided.iter().chain(&self.unapplied).any(|rule| asked_of(rule, call).is_some())
+        if !self
+            .undecided
+            .iter()
+            .chain(&self.unapplied)
+            .any(|rule| asked_of(rule, call).is_some_and(|asked| reaches(call, rule, asked)))
         {
             return None;
         }
@@ -398,7 +444,7 @@ impl Walker<'_> {
             Term::Path(path) => self
                 .bound
                 .get(&path.root)
-                .filter(|id| self.created.contains(id))
+                .filter(|id| self.created.iter().any(|(made, _)| made == *id))
                 .map(|_| path.root.as_str()),
             _ => None,
         })?;
@@ -419,7 +465,8 @@ impl Walker<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{awaiting::catch, *};
+    use crate::journey::Caught;
     use crate::journey::Path;
 
     fn caught() -> Cast {
@@ -438,13 +485,101 @@ mod tests {
         }
     }
 
+    fn line(name: &str, type_expr: &str, answering: Vec<Where>) -> Caught {
+        Caught {
+            cast: Cast { name: name.to_owned(), type_expr: type_expr.to_owned(), line: 1 },
+            answering,
+        }
+    }
+
     #[test]
     fn nothing_is_awaited_without_a_catch_or_an_answer() {
-        assert!(Awaiting::of(None, &[audience()]).is_none());
-        assert!(Awaiting::of(Some(&caught()), &[]).is_none());
-        let awaiting = Awaiting::of(Some(&caught()), &[audience()]).expect("both");
-        assert_eq!(awaiting.caught, caught());
-        assert_eq!(awaiting.answering, [audience()]);
+        assert!(Awaiting::of(&[]).is_none());
+        assert!(Awaiting::of(&[line("issue", "Issue", vec![])]).is_none());
+        let both = [line("issue", "Issue", vec![audience()])];
+        let awaiting = Awaiting::of(&both).expect("both");
+        assert_eq!(awaiting.lines, both);
+    }
+
+    /// One line answering is enough to wait, and every line is kept: which
+    /// instance the answered one catches depends on the lines above it.
+    #[test]
+    fn every_line_is_kept_while_any_of_them_answers() {
+        let lines = [line("review", "Review", vec![]), line("issue", "Issue", vec![audience()])];
+        let awaiting = Awaiting::of(&lines).expect("the second line answers");
+        assert_eq!(awaiting.lines, lines);
+        // Once its answer has landed there is nothing left to wait for.
+        let mut landed = awaiting;
+        landed.lines[1].answering.clear();
+        assert!(landed.waiting().is_none());
+    }
+
+    /// Made in `home`, as the walk records what an act made.
+    fn made_in(home: &str, made: &[EntityId]) -> Vec<(EntityId, String)> {
+        made.iter().map(|id| (id.clone(), home.to_owned())).collect()
+    }
+
+    #[test]
+    fn each_line_catches_the_first_of_its_kind_no_line_above_caught() {
+        let made = made_in(
+            "pulls",
+            &[EntityId::new("Review", 1), EntityId::new("Comment", 1), EntityId::new("Comment", 2)],
+        );
+        let first = caught_as("first", "pulls/Comment");
+        let review = caught_as("review", "Review");
+        let second = caught_as("second", "Comment");
+        let third = caught_as("third", "Comment");
+        assert_eq!(
+            catch(&made, &[&first, &review, &second, &third]),
+            [
+                Some(EntityId::new("Comment", 1)),
+                Some(EntityId::new("Review", 1)),
+                Some(EntityId::new("Comment", 2)),
+                None,
+            ]
+        );
+    }
+
+    /// A line naming a module catches only what that module declares: of two
+    /// modules' `Order`s, `warehouse/Order` is the warehouse's whichever was
+    /// made first, and a bare `Order` takes whatever is left.
+    #[test]
+    fn a_qualified_line_catches_only_its_own_module_s_instance() {
+        let made = [
+            (EntityId::new("Order", 1), "shop".to_owned()),
+            (EntityId::new("Order", 2), "warehouse".to_owned()),
+        ];
+        let w = caught_as("w", "warehouse/Order");
+        let s = caught_as("s", "shop/Order");
+        assert_eq!(
+            catch(&made, &[&w, &s]),
+            [Some(EntityId::new("Order", 2)), Some(EntityId::new("Order", 1))]
+        );
+        let tally = caught_as("t", "tally/Order");
+        let bare = caught_as("o", "Order");
+        assert_eq!(catch(&made, &[&tally, &bare]), [None, Some(EntityId::new("Order", 1))]);
+    }
+
+    /// In the order made, not the order ids sort in as text.
+    #[test]
+    fn the_first_made_is_caught_before_one_that_sorts_first() {
+        let made = made_in("shop", &[EntityId::new("Order", 9), EntityId::new("Order", 10)]);
+        let one = caught_as("one", "Order");
+        let two = caught_as("two", "Order");
+        assert_eq!(
+            catch(&made, &[&one, &two]),
+            [Some(EntityId::new("Order", 9)), Some(EntityId::new("Order", 10))]
+        );
+    }
+
+    #[test]
+    fn nothing_of_a_kind_made_is_nothing_caught() {
+        assert_eq!(catch(&[], &[&caught()]), [None]);
+        assert_eq!(catch(&made_in("repos", &[EntityId::new("Repo", 1)]), &[&caught()]), [None]);
+    }
+
+    fn caught_as(name: &str, type_expr: &str) -> Cast {
+        Cast { name: name.to_owned(), type_expr: type_expr.to_owned(), line: 1 }
     }
 
     #[test]

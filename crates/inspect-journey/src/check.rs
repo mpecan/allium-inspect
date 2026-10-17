@@ -185,8 +185,10 @@ impl Names {
             // And what a step of it caught, which is a name like any other.
             for step in &earlier.steps {
                 for clause in &step.clauses {
-                    if let Clause::Does { creating: Some(caught), .. } = clause {
-                        types.insert(caught.name.clone(), caught.type_expr.clone());
+                    if let Clause::Does { creating, .. } = clause {
+                        for caught in creating {
+                            types.insert(caught.cast.name.clone(), caught.cast.type_expr.clone());
+                        }
                     }
                 }
             }
@@ -244,11 +246,11 @@ fn check_step(
                     program,
                     notes,
                 );
-                if let Some(caught) = creating {
-                    if let Some(note) = missing_type(caught, graph) {
+                for caught in creating {
+                    if let Some(note) = missing_type(&caught.cast, graph) {
                         notes.push(note);
                     }
-                    known.bind(caught);
+                    known.bind(&caught.cast);
                 }
             }
             Clause::Sees { actor, subject, surface, contexts, negated, line } => {
@@ -635,10 +637,13 @@ fn declares(graph: &SpecGraph, kind: NodeKind, name: &str) -> bool {
 
 /// The construct a cast member's type names, if the spec has one.
 fn missing_type(member: &Cast, graph: &SpecGraph) -> Option<Note> {
-    // Qualified names carry their module: `catalogue/Copy` is `Copy` over there.
-    let bare = member.type_expr.rsplit('/').next().unwrap_or(&member.type_expr);
+    // Qualified names carry their module: `catalogue/Copy` is `Copy` over
+    // there, and only there — `tally/Tag` names nothing when `tally` declares
+    // no `Tag`, whoever else does.
+    let (module, bare) = inspect_sim::eval::split_module(&member.type_expr);
     let found = graph.nodes.iter().any(|node| {
         node.name == bare
+            && module.is_none_or(|module| module == node.module)
             && matches!(
                 node.detail,
                 NodeDetail::Entity(_) | NodeDetail::Actor(_) | NodeDetail::None
