@@ -708,3 +708,21 @@ fn a_read_of_a_removed_loop_member_does_not_advise_a_let_nobody_can_write() {
     );
     assert!(purge.unapplied.contains(note), "{purge:#?}");
 }
+
+/// The same through a call: `t.is_called("a")` starts from `t` as surely as
+/// `t.name` does, and the reason says `t` is not bound beside the `when`
+/// rather than advising a `let` there nobody can write.
+#[test]
+fn a_call_on_a_removed_loop_member_does_not_advise_a_let_nobody_can_write() {
+    let (outcome, _, _) = fired_with_thumbs("PurgeAsking", &["a"]);
+    let purge = rule(&outcome, "PurgeAsking");
+    let note = removal_note(purge);
+    assert!(
+        note.reason.contains("rule `PurgeAsking` removes `t`")
+            && note.reason.contains("so `t.is_called(\"a\")` has nothing to read")
+            && note.reason.contains("`t` is not a name bound there")
+            && !note.reason.contains("bind it in a `let`"),
+        "{}",
+        note.reason
+    );
+}

@@ -19,6 +19,7 @@ entity Upload {
 entity Thumb {
     name: String
     upload: Upload?
+    is_called(who): name = who
 }
 
 entity Flag {
@@ -345,6 +346,16 @@ rule PurgeRecording {
             not exists t
 }
 
+-- The same, asking each thumb a function it defines: the read starts from `t`
+-- through a call, and `t` is no more bound beside the `when` than before.
+rule PurgeAsking {
+    when: PurgeAsking(upload)
+    ensures:
+        for t in upload.thumbs:
+            Flag.created(had: t.is_called("a"))
+            not exists t
+}
+
 surface LinkDesk {
     facing l: Link
     provides:
@@ -383,6 +394,7 @@ surface Desk {
         Shrink(u)
         ShrinkRemoving(u)
         PurgeRecording(u)
+        PurgeAsking(u)
 }
 
 surface ShelfDesk {
