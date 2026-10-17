@@ -323,3 +323,27 @@ fn an_answer_that_waited_for_its_sibling_says_so_when_it_came_too_late() {
     );
     assert!(!text.contains("as it made `note`"), "{text}");
 }
+
+/// The rule that makes the note asks about it in that turn, and is told so;
+/// what the note set off asked a turn later, while the answer waited for the
+/// draft — the line it reads, not the tag caught in the same turn beside it.
+#[test]
+fn the_maker_asked_too_soon_and_the_reaction_asked_while_the_answer_waited() {
+    let walk = followed("JotWaitsForTheDraft");
+    let text = render(std::slice::from_ref(&walk));
+    assert_eq!(caught(&walk, "tag").as_deref(), Some("Tag#1"), "{text}");
+    assert_eq!(caught(&walk, "draft").as_deref(), Some("Draft#1"), "{text}");
+    assert!(
+        text.contains("`Jot` asked `mentions(note)` as it made `note`, before `where mentions(note) = {draft}` was in force"),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "`Mention` asked `mentions(note)` before `where mentions(note) = {draft}` was in \
+             force — the answer reads `draft`, so it waited until `draft` was made"
+        ),
+        "{text}"
+    );
+    assert!(!text.contains("reads `tag`"), "{text}");
+    assert!(!text.contains("`Jot` asked `mentions(note)` before"), "{text}");
+}

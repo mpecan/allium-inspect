@@ -295,3 +295,14 @@ fn a_shadowed_bare_answer_is_said_about_in_given_and_where_too() {
     assert!(text.contains(&format!("`where watchers(tag) = {{ada}}`: {shadowed}")), "{text}");
     assert_eq!(under.steps[0].verdict(), Verdict::Specified, "{text}");
 }
+
+/// Made and removed in one turn by another module's rule: the tag lives where
+/// `parcels` declares it, so `parcels/Tag` catches it, and the read after says
+/// it was removed rather than that nothing was caught.
+#[test]
+fn an_instance_another_module_made_and_removed_lives_where_its_type_is_declared() {
+    let walk = walked("MadeAndRemovedByAnotherModule");
+    let text = text(&walk);
+    assert!(text.contains("`tag` caught `Tag#1`, which `Flash` removed"), "{text}");
+    assert!(!text.contains("caught nothing"), "{text}");
+}

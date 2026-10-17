@@ -64,6 +64,22 @@ rule Watch {
             draft.watched = true
 }
 
+-- `Post` again, but asking about the note as it makes it; and a note called
+-- "jot" sets off a tag beside its draft, so two things are made a turn later.
+rule Jot {
+    when: Jot(author, body)
+    ensures:
+        let note = Note.created(body: body, mentioned: false)
+        if mentions(note) = {}:
+            note.mentioned = true
+}
+
+rule Tick {
+    when: note: Note.created
+    requires: note.body = "jot"
+    ensures: Tag.created(label: "jot", seen: false)
+}
+
 rule Pair {
     when: Pair(author)
     ensures:
@@ -90,4 +106,5 @@ surface Desk {
     provides:
         Post(author, body)
         Pair(author)
+        Jot(author, body)
 }

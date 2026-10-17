@@ -142,6 +142,18 @@ journey WrongModuleForTheType {
         then tag.box.label = "x"
 }
 
+-- `tally`'s `Flash` makes a `parcels` tag and removes it in one turn. The tag
+-- is in no world afterwards, so where it lived is where `parcels` declares it,
+-- and a line naming `parcels` catches it — said as removed, not as nothing.
+journey MadeAndRemovedByAnotherModule {
+    cast:
+        ada: parcels/Person
+    1. flash
+        ada does Flash("x") on Counter
+            creating tag: parcels/Tag
+        then tag.stamped = false
+}
+
 -- Said after the act, about the call `parcels` wrote in `Crate`'s definition,
 -- which `tally`'s `Ship` read: too late, though nothing was answered when
 -- `Ship` asked — the call is `parcels`'s, not the reading rule's module's.
