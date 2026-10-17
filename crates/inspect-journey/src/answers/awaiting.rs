@@ -155,16 +155,14 @@ impl Walker<'_> {
                 .partition(|answer| uncaught(answer, (&names, &made)).is_none());
             line.answering = waiting;
             for answer in ready {
-                // Waited, when its own instance was made in an earlier turn:
-                // for the line it reads that was caught last.
-                let waited = (*at < self.firings)
-                    .then(|| {
-                        names.iter().zip(&seen).find_map(|(name, turn)| {
-                            (*turn == Some(self.firings) && reads(&answer, name))
-                                .then(|| name.clone())
-                        })
-                    })
-                    .flatten();
+                // The line it reads that was caught this turn, which it waited
+                // for when its own instance was made in an earlier one. Named
+                // even when its own was made now — the remark that says it
+                // waited is given only to a rule that asked after `at`, which
+                // no rule in this same turn did.
+                let waited = names.iter().zip(&seen).find_map(|(name, turn)| {
+                    (*turn == Some(self.firings) && reads(&answer, name)).then(|| name.clone())
+                });
                 self.answer_for(&line.cast, id, answer, (*at, waited));
             }
         }

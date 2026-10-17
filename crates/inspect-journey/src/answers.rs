@@ -72,7 +72,8 @@ pub(crate) struct Landed {
     /// The engine turn its own line's instance was made in — earlier than
     /// `turn` when the answer read another line's name and waited for it.
     made: usize,
-    /// That other line's name, when the answer waited for it.
+    /// The line the answer reads that was caught in `turn`: the one it
+    /// waited for when `made` is earlier, and meaningless when it is not.
     waited: Option<String>,
 }
 
