@@ -169,3 +169,34 @@ impl Applied {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Applied;
+    use crate::eval::Unresolved;
+
+    fn note(reason: &str) -> Unresolved {
+        Unresolved { reason: reason.to_owned(), expression: None, span: None }
+    }
+
+    /// What was lost is said once among the notes and once as not applied,
+    /// whether or not the value's own notes already carried it — which they
+    /// do, when the value is undecided only because of the removal.
+    #[test]
+    fn what_is_lost_is_said_once_and_marked_once() {
+        let why = note("removed");
+        let mut carried = Applied { unresolved: vec![why.clone()], ..Applied::default() };
+        carried.lose(Some(why.clone()));
+        assert_eq!(carried.unresolved, vec![why.clone()]);
+        assert_eq!(carried.unapplied, vec![why.clone()]);
+
+        let mut fresh = Applied { unresolved: vec![note("other")], ..Applied::default() };
+        fresh.lose(Some(why.clone()));
+        assert_eq!(fresh.unresolved, vec![note("other"), why.clone()]);
+        assert_eq!(fresh.unapplied, vec![why]);
+
+        let mut nothing = Applied::default();
+        nothing.lose(None);
+        assert_eq!(nothing, Applied::default());
+    }
+}

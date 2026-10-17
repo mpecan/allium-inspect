@@ -229,6 +229,14 @@ rule Ask {
     ensures: Flag.created(had: upload.is_named("x"))
 }
 
+-- Settled whatever the removed upload held: `or true` decides it, so though
+-- the read of `upload.big` has nothing to read, nothing is left unapplied.
+rule Settle {
+    when: Settle(upload)
+    ensures: not exists upload
+    ensures: Flag.created(had: upload.big or true)
+}
+
 -- Whether the upload is there, in the state the rule leaves: it is not.
 rule Check {
     when: Check(upload)
@@ -310,6 +318,7 @@ surface Desk {
         NamesHeld(u)
         Ask(u)
         Check(u)
+        Settle(u)
         Announce(u)
         ShadowedByLoop(u)
         FinishRemovingFirst(u)

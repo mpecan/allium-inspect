@@ -475,6 +475,34 @@ fn what_the_rule_removes_does_not_exist_in_the_state_it_leaves() {
     assert!(check.unresolved.is_empty(), "{check:#?}");
 }
 
+/// A value that reads what the rule removes but is settled anyway — `or
+/// true` decides it — is not something the rule failed to apply. The read
+/// still says why it had nothing to read, but the act is not marked.
+#[test]
+fn a_value_settled_whatever_the_removed_instance_held_is_not_left_unapplied() {
+    let (outcome, ..) = fired("Settle", false);
+    let settle = rule(&outcome, "Settle");
+    assert_eq!(flag(&outcome), Value::Bool(true), "{outcome:#?}");
+    assert!(settle.unapplied.is_empty(), "{settle:#?}");
+    removal_note(settle);
+}
+
+/// The reason a removed read gives is said once on the rule, though it is
+/// both why the value is undecided and what the act did not apply.
+#[test]
+fn the_removal_note_is_said_once_on_the_rule() {
+    for (trigger, name) in
+        [("CompleteRemovingFirst", "CompleteRemovingFirst"), ("Discard", "Discard")]
+    {
+        let (outcome, ..) = fired(trigger, false);
+        let fired = rule(&outcome, name);
+        let note = removal_note(fired);
+        let said = fired.unresolved.iter().filter(|it| *it == note).count();
+        assert_eq!(said, 1, "{trigger}: {fired:#?}");
+        assert_eq!(fired.unapplied.iter().filter(|it| *it == note).count(), 1, "{fired:#?}");
+    }
+}
+
 /// A removal decided by a value read from what it removes never settles:
 /// removed, the value is undecided and nothing removes it; kept, the value
 /// says to remove it. No pass's answer is taken for the rule's — whichever
