@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.4](https://github.com/mpecan/allium-inspect/compare/allium-inspect-v0.1.3...allium-inspect-v0.1.4) (2026-10-17)
+
+
+### Bug Fixes
+
+* **journey:** answer a module-qualified call in the module it names ([#32](https://github.com/mpecan/allium-inspect/issues/32)) ([c45775e](https://github.com/mpecan/allium-inspect/commit/c45775eefab6d3bd95c71118cf35dfbe2a2f1cb5))
+* **journey:** bind every `creating` line under an act to its own name ([#31](https://github.com/mpecan/allium-inspect/issues/31)) ([c45775e](https://github.com/mpecan/allium-inspect/commit/c45775eefab6d3bd95c71118cf35dfbe2a2f1cb5))
+* **sim:** read what a rule removes the same way whichever ensures line comes first ([#33](https://github.com/mpecan/allium-inspect/issues/33)) ([c45775e](https://github.com/mpecan/allium-inspect/commit/c45775eefab6d3bd95c71118cf35dfbe2a2f1cb5))
+
 ## [0.1.3](https://github.com/mpecan/allium-inspect/compare/allium-inspect-v0.1.2...allium-inspect-v0.1.3) (2026-10-16)
 
 
