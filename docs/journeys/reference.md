@@ -652,6 +652,39 @@ the person as the actor is then the one thing that settles it. Two contexts of
 the type on one surface, and which one is meant is not picked for you: it is
 undecided, naming the ambiguity.
 
+An act that carries something *belonging* to the context rather than the
+context itself — reading a message carries the message, not its group — says
+which one through a **guard on its `provides` line**, written once on the
+surface:
+
+```allium
+surface Conversation {
+    facing reader: Member
+    context group: Group
+    provides:
+        MemberPosts(group, reader)
+        PersonReadsMessage(message, reader) when message.group = group
+        MemberLeaves(membership, successor) when membership.group = group
+}
+```
+
+The guard is read for a *tie*: `group = …` or `… = group`, on its own or as
+one side of an `and`. The other side is evaluated with the line's parameters
+bound to the act's arguments, so `ada does PersonReadsMessage(note, ada) on
+Conversation` is at `note.group`, and Ada is asked whether she is a `Member`
+of *that* group. A member of another group only is refused, with the condition
+quoted. A `note` whose `group` nothing set leaves the act undecided, naming
+the field — "`Conversation` passes `group` as `message.group`, and `note` has
+no `group` set". Nothing looser is read as a tie: under an `or` the act is
+offered at a group the tie does not name, an inequality names none, a tie
+that lands on something other than a `Group` names none, and two ties landing
+on different groups leave the choice to the walk. Each is undecided, saying
+which. An act on a line with no guard is undecided as before, and the reason
+names the guard that would settle it.
+
+Only the tie is read. Whether the guard as a whole holds — whether the
+operation is offered at all — is not something the walk asks yet.
+
 A specification that restates every permission as a rule's `requires` as well is
 still a good one — a rule should not trust its caller — but it no longer has to,
 for a journey to notice that a surface is closed to somebody.
@@ -1398,7 +1431,10 @@ be this tool deciding which room somebody has open, which is a fact about their
 afternoon and not about the specification. So the tool asks, and the reason on
 an undecided `sees` names the surface and the type it wants.
 
-`in` is for `sees` alone. An act names which one with its arguments.
+`in` is for `sees` alone. An act names which one with its arguments — or,
+when it carries something of the context rather than the context, through
+[a guard on its `provides` line](#does--somebody-acts). A `sees` has no
+`provides` line to read, so it names one with `in`.
 
 **A surface shows nothing to somebody it does not face.** The actor's
 condition is asked of whoever is looking, the same as

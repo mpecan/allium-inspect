@@ -1,0 +1,100 @@
+-- allium: 3
+-- rooms.allium
+--
+-- An actor identified `within` a context, at a surface whose acts mostly do
+-- not carry that context but something belonging to it — the shape of a group
+-- conversation, where reading a message is an act about the message and not
+-- about the group. `MemberPosts` passes the group itself. The rest say which
+-- group they are at only through a guard on their `provides` line, or do not:
+-- `PersonReadsMessage` ties it through the message, `GroupGreets` writes the
+-- tie the other way round, `MemberLeaves` ties it beside a second condition,
+-- `MemberShouts` has no guard at all, `MemberPins` ties it only under an `or`,
+-- `MemberHides` with an inequality, `MemberMoves` ties it twice, and
+-- `MemberQuotes` ties it to somebody rather than to a group.
+
+entity Group {
+    quiet: Boolean
+}
+
+entity Identity {
+    name: String
+}
+
+entity Membership {
+    group: Group
+    member: Identity
+    left: Boolean
+}
+
+entity Message {
+    group: Group
+    read: Boolean
+    pinned: Boolean
+}
+
+actor Member {
+    within: Group
+    identified_by: Identity where exists Membership{group: within, member: this}
+}
+
+rule MemberPosts {
+    when: MemberPosts(group, author)
+    ensures: group.quiet = false
+}
+
+rule MarkRead {
+    when: PersonReadsMessage(message, reader)
+    ensures: message.read = true
+}
+
+rule GroupGreets {
+    when: GroupGreets(message, reader)
+    ensures: message.read = true
+}
+
+rule MemberLeaves {
+    when: MemberLeaves(membership, successor)
+    ensures: membership.left = true
+}
+
+rule MemberShouts {
+    when: MemberShouts(message, reader)
+    ensures: message.read = true
+}
+
+rule MemberPins {
+    when: MemberPins(message, reader)
+    ensures: message.pinned = true
+}
+
+rule MemberHides {
+    when: MemberHides(message, reader)
+    ensures: message.read = true
+}
+
+rule MemberMoves {
+    when: MemberMoves(message, other, reader)
+    ensures: message.read = true
+}
+
+rule MemberQuotes {
+    when: MemberQuotes(membership, reader)
+    ensures: membership.left = false
+}
+
+surface Conversation {
+    facing reader: Member
+    context group: Group
+    exposes:
+        group.quiet
+    provides:
+        MemberPosts(group, reader)
+        PersonReadsMessage(message, reader) when message.group = group
+        GroupGreets(message, reader) when group = message.group
+        MemberLeaves(membership, successor) when membership.left = false and membership.group = group
+        MemberShouts(message, reader)
+        MemberPins(message, reader) when message.group = group or message.pinned = true
+        MemberHides(message, reader) when message.group != group
+        MemberMoves(message, other, reader) when message.group = group and other.group = group
+        MemberQuotes(membership, reader) when group = membership.member
+}

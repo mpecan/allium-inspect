@@ -217,6 +217,15 @@ pub struct Boundary {
     pub lets: Vec<(String, Expr)>,
     /// The `exposes:` block, whose items are paths and `for` iterations.
     pub exposes: Option<Expr>,
+    /// The `when` of each guarded `provides` operation, by the bare name of
+    /// the trigger it fires.
+    ///
+    /// `PersonReadsMessage(message, reader) when message.group = group` is
+    /// the surface saying which of its contexts an act carrying only a message
+    /// is at, and a walk settling who the surface faces needs that as an
+    /// expression. The first operation for a trigger is the one kept, which is
+    /// the one the graph's parameters are read from.
+    pub guards: BTreeMap<String, Expr>,
 }
 
 /// Who an actor is, as an expression rather than as text.
