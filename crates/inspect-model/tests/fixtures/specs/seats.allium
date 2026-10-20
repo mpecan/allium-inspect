@@ -1,0 +1,50 @@
+-- allium: 3
+-- seats.allium
+--
+-- A loop over a `->` projection. `people` maps the seats a room keeps live to
+-- whoever sits in them, and `Shout` pings each of them; `ShoutSeats` is the
+-- same loop over the seats themselves, which was always settled.
+
+entity Person {
+    name: String
+}
+
+entity Room {
+    name: String
+    seats: Seat with room = this
+    live_seats: seats where status = active
+    people: live_seats -> person
+}
+
+entity Seat {
+    room: Room
+    person: Person
+    status: active | gone
+}
+
+entity Ping {
+    room: Room
+    to: Person
+}
+
+rule Shout {
+    when: Shout(room)
+    ensures:
+        for p in room.people:
+            Ping.created(room: room, to: p)
+}
+
+rule ShoutSeats {
+    when: ShoutSeats(room)
+    ensures:
+        for s in room.live_seats:
+            Ping.created(room: room, to: s.person)
+}
+
+surface Hall {
+    facing p: Person
+    context room: Room
+    provides:
+        Shout(room)
+        ShoutSeats(room)
+}

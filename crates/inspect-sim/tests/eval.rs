@@ -144,6 +144,15 @@ fn filtered(source: Expr, condition: Expr) -> Expr {
     Expr::Where { span: NOWHERE, source: Box::new(source), condition: Box::new(condition) }
 }
 
+/// `source -> field`.
+fn projected(source: Expr, field: &str) -> Expr {
+    Expr::ProjectionMap {
+        span: NOWHERE,
+        source: Box::new(source),
+        field: Ident { span: NOWHERE, name: field.to_owned() },
+    }
+}
+
 // --- building worlds -----------------------------------------------------
 
 /// A library world: two copies, one on loan, and a member holding it.
@@ -687,6 +696,81 @@ fn filtering_something_that_is_not_a_collection_says_so() {
     let node = filtered(ident("n"), compare(number("1"), "Eq", number("1")));
     assert_eq!(value_of(&node, &env), Value::Unknown);
     assert!(reasons(&node, &env)[0].contains("cannot be filtered"));
+}
+
+// --- projections -----------------------------------------------------------
+
+/// `live_seats -> person`: each kept member mapped to its field. It came back
+/// undecided as "a projection" whatever it was over, so every loop over one
+/// was never settled (`for m in group.members`, `members: active -> member`).
+#[test]
+fn a_projection_maps_each_member_of_a_filtered_collection_to_its_field() {
+    let world = library();
+    let env = env(&world, "catalogue");
+    let available = filtered(ident("Copy"), compare(ident("status"), "Eq", ident("available")));
+    let node = projected(available, "shelfmark");
+    assert_eq!(value_of(&node, &env), Value::Set(vec![Value::Str("QA76".to_owned())]));
+    assert!(reasons(&node, &env).is_empty(), "{:?}", reasons(&node, &env));
+}
+
+/// A set, as the language's collections are: two copies sharing a status are
+/// one status.
+#[test]
+fn a_projection_holds_each_value_once() {
+    let mut world = library();
+    let another = world.create("Copy", "catalogue");
+    world.set_field(&another, "status", Value::Enum("available".to_owned()));
+    let env = env(&world, "catalogue");
+    let Value::Set(statuses) = value_of(&projected(ident("Copy"), "status"), &env) else {
+        panic!("a projection yields a collection")
+    };
+    assert_eq!(statuses.len(), 2, "{statuses:?}");
+}
+
+/// A member whose field nobody set is left out of the projection and said,
+/// so whatever reads it knows it may be missing members — the same as a
+/// filter that could not decide about one.
+#[test]
+fn a_member_whose_projected_field_is_unset_is_left_out_and_said() {
+    let mut world = library();
+    world.create("Copy", "catalogue");
+    let env = env(&world, "catalogue");
+    let node = projected(ident("Copy"), "shelfmark");
+    assert_eq!(
+        value_of(&node, &env),
+        Value::Set(vec![Value::Str("QA76".to_owned()), Value::Str("QA77".to_owned())])
+    );
+    assert_eq!(reasons(&node, &env), ["`Copy#3` has no `shelfmark` set"]);
+    // And so a count over it is a lower bound, not a count.
+    assert_eq!(value_of(&field(node, "count"), &env), Value::Unknown);
+}
+
+/// Members with no fields to read, or that are not in the world, are left
+/// out and said, never projected to an unknown nobody can iterate.
+#[test]
+fn a_member_with_no_field_to_project_is_left_out_and_said() {
+    let world = library();
+    let ghost = EntityId::new("Copy", 9);
+    let env =
+        env(&world, "catalogue").bind("odd", Value::Set(vec![Value::Int(1), Value::Ref(ghost)]));
+    let node = projected(ident("odd"), "shelfmark");
+    assert_eq!(value_of(&node, &env), Value::Set(Vec::new()));
+    assert_eq!(
+        reasons(&node, &env),
+        [
+            "`shelfmark` was read from an integer, which has no fields",
+            "`Copy#9` is not in this world"
+        ]
+    );
+}
+
+#[test]
+fn projecting_something_that_is_not_a_collection_says_so() {
+    let world = library();
+    let env = env(&world, "catalogue").bind("n", Value::Int(1));
+    let node = projected(ident("n"), "shelfmark");
+    assert_eq!(value_of(&node, &env), Value::Unknown);
+    assert_eq!(reasons(&node, &env), ["an integer cannot be projected"]);
 }
 
 // --- the contract --------------------------------------------------------
