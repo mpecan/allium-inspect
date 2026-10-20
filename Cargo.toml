@@ -10,7 +10,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/mpecan/allium-inspect"
@@ -21,10 +21,10 @@ rust-version = "1.96"
 # Published under `allium-inspect-*` and imported under their own names. The
 # versions are release-please's to move: `extra-files` names every workspace
 # dependency with a `path`.
-inspect-model = { path = "crates/inspect-model", version = "0.1.4", package = "allium-inspect-model" }
-inspect-sim = { path = "crates/inspect-sim", version = "0.1.4", package = "allium-inspect-sim" }
-inspect-journey = { path = "crates/inspect-journey", version = "0.1.4", package = "allium-inspect-journey" }
-inspect-server = { path = "crates/inspect-server", version = "0.1.4", package = "allium-inspect-server" }
+inspect-model = { path = "crates/inspect-model", version = "0.1.5", package = "allium-inspect-model" }
+inspect-sim = { path = "crates/inspect-sim", version = "0.1.5", package = "allium-inspect-sim" }
+inspect-journey = { path = "crates/inspect-journey", version = "0.1.5", package = "allium-inspect-journey" }
+inspect-server = { path = "crates/inspect-server", version = "0.1.5", package = "allium-inspect-server" }
 # allium-parser: allium's own parser and analyser, as a library. Pinned exactly
 # to the version whose CLI the fixtures were recorded from — the two have to
 # agree. From crates.io rather than the git tag it used to come from, because a

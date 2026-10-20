@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.5](https://github.com/mpecan/allium-inspect/compare/allium-inspect-v0.1.4...allium-inspect-v0.1.5) (2026-10-20)
+
+
+### Features
+
+* **journey:** settle an act's context from its provides guard, and iterate `->` projections ([#37](https://github.com/mpecan/allium-inspect/issues/37)) ([e8d049e](https://github.com/mpecan/allium-inspect/commit/e8d049e60daa87324f98557203afaa17c41d81bf))
+
 ## [0.1.4](https://github.com/mpecan/allium-inspect/compare/allium-inspect-v0.1.3...allium-inspect-v0.1.4) (2026-10-17)
 
 
