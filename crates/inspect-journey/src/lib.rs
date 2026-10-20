@@ -34,6 +34,7 @@ mod shapes;
 mod standing;
 mod states;
 mod terms;
+mod tie;
 pub mod title;
 mod words;
 mod world;

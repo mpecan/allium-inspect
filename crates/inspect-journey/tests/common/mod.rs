@@ -88,6 +88,15 @@ pub const FANOUT: &[&str] = &["fanout"];
 /// turns it on.
 pub const SWITCHES: &[&str] = &["switches"];
 
+/// The seats fixture, alone: a loop over a `->` projection of a filtered
+/// collection, beside the same loop over the collection itself.
+pub const SEATS: &[&str] = &["seats"];
+
+/// The rooms fixture, alone: an actor identified within a group, at a
+/// surface whose acts carry something of the group rather than the group, and
+/// say which one through a guard on their `provides` line.
+pub const ROOMS: &[&str] = &["rooms"];
+
 /// The admins fixture and the module that faces its actor from outside: who a
 /// surface faces, and whether somebody is one.
 pub const FACING: &[&str] = &["admins", "portal"];

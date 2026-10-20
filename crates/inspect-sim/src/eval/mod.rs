@@ -449,7 +449,7 @@ pub fn eval(expr: &Expr, env: &Env<'_>) -> Evaluation {
             unsupported("a type annotation", expr, env)
         }
         Expr::NullCoalesce { left, right, .. } => coalesce(left, right, env),
-        Expr::ProjectionMap { .. } => unsupported("a projection", expr, env),
+        Expr::ProjectionMap { source, field, .. } => member::projection(expr, source, field, env),
         Expr::TransitionsTo { .. } => unsupported("a `transitions_to` assertion", expr, env),
         Expr::Becomes { .. } => unsupported("a `becomes` assertion", expr, env),
         Expr::WhenGuard { .. } => unsupported("a `when` guard", expr, env),

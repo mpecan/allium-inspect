@@ -89,10 +89,10 @@ pub fn ingest(ast: &Ast, module: &str, graph: &SpecGraph, program: &mut Program)
 
 /// What one surface shows, as expressions.
 ///
-/// Three things out of the block and nothing else: every `context` and every
-/// `let`, because the `exposes` items refer to them by name, and `exposes`
-/// itself. `provides` and `@guarantee` are the graph's business — a panel draws
-/// them and nothing evaluates them.
+/// Every `context` and every `let`, because the `exposes` items refer to them
+/// by name, and `exposes` itself. Of `provides`, only the guards: the
+/// operations themselves are the graph's business, but a guard tying a context
+/// to an act's arguments is something a walk evaluates. `@guarantee` is prose.
 fn boundary(block: &allium_parser::ast::BlockDecl) -> Boundary {
     let mut boundary = Boundary::default();
 
@@ -123,11 +123,29 @@ fn boundary(block: &allium_parser::ast::BlockDecl) -> Boundary {
                 }
             }
             "exposes" => boundary.exposes = Some(value.clone()),
+            "provides" => {
+                let operations = match value {
+                    Expr::Block { items, .. } => items.as_slice(),
+                    single => std::slice::from_ref(single),
+                };
+                for operation in operations {
+                    if let Some((trigger, guard)) = guarded(operation) {
+                        boundary.guards.entry(trigger).or_insert_with(|| guard.clone());
+                    }
+                }
+            }
             _ => {}
         }
     }
 
     boundary
+}
+
+/// `Trigger(…) when condition`, as the trigger's bare name and the condition.
+fn guarded(operation: &Expr) -> Option<(String, &Expr)> {
+    let Expr::WhenGuard { action, condition, .. } = operation else { return None };
+    let Expr::Call { function, .. } = action.as_ref() else { return None };
+    Some((entity_named(function)?, condition.as_ref()))
 }
 
 /// Who one actor is, as expressions.
@@ -619,14 +637,35 @@ surface MyLoans {
         assert!(matches!(items[1], Expr::For { .. }));
     }
 
-    /// `provides` and `@guarantee` are the graph's business — a panel draws
-    /// them and nothing evaluates them — so they must not arrive here as
-    /// exposures that would then be matched against.
+    /// `provides` operations are the graph's business — a panel draws them —
+    /// so they must not arrive here as exposures that would then be matched
+    /// against, and an unguarded one leaves no guard behind.
     #[test]
     fn nothing_but_contexts_lets_and_exposes_is_kept() {
         let boundary = boundary_of(SHELF);
         let printed = format!("{:?}", boundary.exposes);
         assert!(!printed.contains("MemberReturns"), "{printed}");
+        assert!(boundary.guards.is_empty(), "{:?}", boundary.guards);
+    }
+
+    /// A guard on a `provides` line is kept, by the trigger it guards, in
+    /// both shapes the clause comes in: a block of several and one alone.
+    #[test]
+    fn a_surface_keeps_the_guard_of_each_guarded_operation() {
+        let several = boundary_of(
+            "\nsurface MyLoans {\n    facing reader: Reader\n    context borrower: Member\n\n    \
+             provides:\n        MemberReturns(loan) when loan.borrower = borrower\n        \
+             MemberRenews(loan)\n}\n",
+        );
+        let triggers: Vec<&str> = several.guards.keys().map(String::as_str).collect();
+        assert_eq!(triggers, ["MemberReturns"]);
+        assert!(matches!(several.guards["MemberReturns"], Expr::Comparison { .. }));
+
+        let alone = boundary_of(
+            "\nsurface MyLoans {\n    facing reader: Reader\n    context borrower: Member\n\n    \
+             provides: MemberReturns(loan) when loan.borrower = borrower\n}\n",
+        );
+        assert_eq!(alone.guards.keys().collect::<Vec<_>>(), ["MemberReturns"]);
     }
 
     /// A context declared across a module boundary is the same declaration.

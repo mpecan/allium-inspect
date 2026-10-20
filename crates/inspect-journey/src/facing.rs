@@ -47,6 +47,7 @@ use crate::{
     check::Verdict,
     run::{Act, Outcome, Undecided, Walker},
     shapes::{CastMember, Origin},
+    tie::{Offer, Placing, Untied},
 };
 
 /// Whether a surface faces somebody.
@@ -64,8 +65,9 @@ pub(crate) enum Facing {
 /// context of the surface placed so far, by entity.
 pub(crate) enum At<'a> {
     /// An act, placed by the arguments its surface's `provides` passes each
-    /// context in as — `provides: Archive(workspace)` puts the workspace first.
-    Acting(&'a [(String, EntityId)]),
+    /// context in as — `provides: Archive(workspace)` puts the workspace first
+    /// — or by a guard on that line tying the context to one of them.
+    Acting(&'a Placing),
     /// A `sees`, placed by `in` and by whoever is looking.
     Looking(&'a [(String, EntityId)]),
 }
@@ -73,7 +75,16 @@ pub(crate) enum At<'a> {
 impl At<'_> {
     fn placed(&self) -> &[(String, EntityId)] {
         match self {
-            At::Acting(placed) | At::Looking(placed) => placed,
+            At::Acting(placing) => &placing.placed,
+            At::Looking(placed) => placed,
+        }
+    }
+
+    /// Why the act placed no `context`, when a guard on its line was asked.
+    fn untied(&self, context: &str) -> Option<&Untied> {
+        match self {
+            At::Acting(placing) => placing.untied.get(context),
+            At::Looking(_) => None,
         }
     }
 }
@@ -169,6 +180,7 @@ impl Walker<'_> {
                     context,
                     declared: self.declares_context(surface, context),
                     acting: matches!(at, At::Acting(_)),
+                    untied: at.untied(context),
                 }),
                 None => format!(
                     "whether `{who}` is the `{actor}` `{surface}` faces could not be settled — \
@@ -237,41 +249,56 @@ impl Walker<'_> {
     }
 
     /// Where an act stands: each context of its surface that the surface's
-    /// `provides` passes to this trigger, bound to the argument at that place.
+    /// `provides` passes to this trigger, bound to the argument at that place,
+    /// and each it does not pass, bound to what the line's guard ties it to.
     ///
     /// `provides: Archive(workspace)` and `seat does Archive(desk) on
     /// WorkspacePanel` say together that the seat is at `desk`. That is the
-    /// surface's own sentence, not a guess about which argument is which.
-    fn placed_by(&self, act: &Act<'_>) -> Vec<(String, EntityId)> {
+    /// surface's own sentence, not a guess about which argument is which; and
+    /// so is `PersonReadsMessage(message, reader) when message.group = group`.
+    fn placed_by(&self, act: &Act<'_>) -> Placing {
         let bare = |name: &str| name.rsplit('/').next().unwrap_or(name).to_owned();
+        let mut placing = Placing::default();
         let Some(node) =
             self.spec.nodes_of(NodeKind::Surface).find(|node| node.name == act.surface)
         else {
-            return Vec::new();
+            return placing;
         };
         let (Some(boundary), Some(detail)) =
             (self.program.boundary(node.id.as_str()), node.detail.as_surface())
         else {
-            return Vec::new();
+            return placing;
         };
         let Some(operation) =
             detail.provides.iter().find(|op| bare(&op.trigger) == bare(act.trigger))
         else {
-            return Vec::new();
+            return placing;
         };
-        let mut placed = Vec::new();
+        let offer = Offer {
+            surface: act.surface,
+            module: &node.module,
+            parameters: &operation.parameters,
+            facing: detail.actor_binding.as_deref(),
+            guard: boundary.guards.get(&bare(act.trigger)),
+        };
         for context in &boundary.contexts {
             let Some(at) = operation.parameters.iter().position(|it| *it == context.name) else {
+                match self.tied(act, &offer, (&context.name, &context.entity)) {
+                    Ok(id) => placing.placed.push((context.entity.clone(), id)),
+                    Err(why) => {
+                        placing.untied.insert(context.entity.clone(), why);
+                    }
+                }
                 continue;
             };
             if let Some(argument) = act.arguments.get(at)
                 && let Value::Ref(id) = self.value_of(argument)
                 && self.world.instance(&id).is_some_and(|it| it.entity == context.entity)
             {
-                placed.push((context.entity.clone(), id));
+                placing.placed.push((context.entity.clone(), id));
             }
         }
-        placed
+        placing
     }
 }
 
@@ -398,6 +425,8 @@ struct Unplaced<'a> {
     /// The surface's own context of that type, by binding name, if it has one.
     declared: Option<String>,
     acting: bool,
+    /// Why the act's `provides` guard did not say which, when it was asked.
+    untied: Option<&'a Untied>,
 }
 
 /// Why `within` is unbound, as the remedy rather than the evaluator's sentence
@@ -405,18 +434,31 @@ struct Unplaced<'a> {
 /// so a surface with none of that type is told so, with the one thing that
 /// does settle it.
 fn unplaced(unplaced: &Unplaced<'_>) -> String {
-    let Unplaced { surface, actor, who, context, acting, .. } = *unplaced;
+    let Unplaced { surface, actor, who, context, acting, untied, .. } = *unplaced;
     let lead = format!("`{actor}` is identified within a `{context}`");
+    let unsettled = format!("so whether `{who}` is the `{actor}` it faces is not settled");
     match (&unplaced.declared, acting) {
+        (Some(_), true) if let Some(Untied::Unsettled(why)) = untied => {
+            format!("{lead}, and {why}, {unsettled}")
+        }
         (None, _) => format!(
             "{lead}, and `{surface}` is not at any `{context}`, so nothing can say which one \
              `{who}` is at — whether `{who}` is the `{actor}` it faces is settled only by casting \
              `{who}` as a `{actor}`"
         ),
-        (Some(name), true) => format!(
-            "{lead}, and no argument of this act is the `{context}` `{surface}` passes as \
-             `{name}`, so whether `{who}` is the `{actor}` it faces is not settled"
-        ),
+        (Some(name), true) => {
+            let said = format!(
+                "{lead}, and no argument of this act is the `{context}` `{surface}` passes as \
+                 `{name}`, {unsettled}"
+            );
+            match untied {
+                Some(Untied::Unsaid { example }) => format!(
+                    "{said} — a guard on its `provides` line such as `when {example}` would say \
+                     which"
+                ),
+                _ => said,
+            }
+        }
         (Some(_), false) => format!(
             "{lead}, and nothing said which `{context}` `{who}` is at — say which one with `… on \
              {surface} in <the {context}>`"
@@ -436,6 +478,7 @@ mod tests {
             context: "Workspace",
             declared: declared.map(str::to_owned),
             acting,
+            untied: None,
         })
     }
 

@@ -138,3 +138,77 @@ pub(super) fn member(whole: &Expr, object: &Expr, field: &Ident, env: &Env<'_>) 
         .carrying(unresolved),
     }
 }
+
+/// `source -> field`: each member of a collection mapped to its field.
+///
+/// A member whose field comes back undecided is left out *and* said, the same
+/// judgement `filtered` makes about a member its condition could not decide:
+/// whatever reads the result — a loop, `count`, `in` — then knows it may be
+/// short of members, rather than holding an unknown nobody can iterate.
+pub(super) fn projection(whole: &Expr, source: &Expr, field: &Ident, env: &Env<'_>) -> Evaluation {
+    let base = eval(source, env);
+    let mut unresolved = base.unresolved;
+    let Value::Set(items) = base.value else {
+        return Evaluation::unknown(
+            format!("{} cannot be projected", base.value.described()),
+            source,
+            env.source,
+        )
+        .carrying(unresolved);
+    };
+    let mut kept = Vec::with_capacity(items.len());
+    for item in &items {
+        let Value::Ref(id) = item else {
+            unresolved.push(told::anchored_at(
+                Unresolved {
+                    reason: format!(
+                        "`{}` was read from {}, which has no fields",
+                        field.name,
+                        item.described()
+                    ),
+                    expression: None,
+                    span: None,
+                },
+                whole,
+                env.source,
+            ));
+            continue;
+        };
+        let instance = match env.instance(id) {
+            Err(removal) => return removed_here(id, removal, whole, env).carrying(unresolved),
+            Ok(None) => {
+                unresolved.push(told::anchored_at(
+                    Unresolved {
+                        reason: format!("`{id}` is not in this world"),
+                        expression: None,
+                        span: None,
+                    },
+                    whole,
+                    env.source,
+                ));
+                continue;
+            }
+            Ok(Some(instance)) => instance,
+        };
+        let read = field_of(instance, &field.name, env);
+        if read.value.is_unknown() {
+            if read.unresolved.is_empty() {
+                unresolved.push(told::anchored_at(
+                    Unresolved {
+                        reason: unset_field(id, &field.name),
+                        expression: None,
+                        span: None,
+                    },
+                    whole,
+                    env.source,
+                ));
+            } else {
+                unresolved.extend(read.unresolved);
+            }
+            continue;
+        }
+        unresolved.extend(read.unresolved);
+        kept.push(read.value);
+    }
+    Evaluation { value: Value::set_of(kept), unresolved }
+}
