@@ -461,6 +461,46 @@ fn a_clause_written_before_any_step_is_refused_rather_than_absorbed() {
     assert!(error.contains("belongs under a step"), "{error}");
 }
 
+/// The reproduction as filed: the goal wraps onto a line whose first word is
+/// `then`, and the line is prose (issue #43).
+#[test]
+fn a_goal_wrapping_onto_then_is_still_prose() {
+    let source = "journey GoalWrapsOntoThen {\n    goal: The member prints a card, and the desk\n          then hands it over.\n    cast:\n        ada: s/Member\n    1. print\n        ada does PrintCard(ada) on Desk\n}\n";
+    let journeys = parse(source).expect("a wrapped goal is prose");
+    assert_eq!(journeys[0].goal, ["The member prints a card, and the desk", "then hands it over."]);
+    assert_eq!(journeys[0].steps.len(), 1);
+}
+
+/// The same for `ends:`, and for the other two words.
+#[test]
+fn ends_wrapping_onto_any_clause_word_is_still_prose() {
+    for word in ["then", "after", "stipulate"] {
+        let source = format!(
+            "journey J {{\n    1. s\n        then a.b = c\n    ends: and somebody\n        {word} reads it twice\n}}\n"
+        );
+        let journeys = parse(&source).unwrap_or_else(|error| panic!("{word}: {error:?}"));
+        assert_eq!(journeys[0].ends[1], format!("{word} reads it twice"));
+    }
+}
+
+/// Deeper than the key is not enough to be prose: a line that reads as a
+/// clause is one, written before any step, and is refused.
+#[test]
+fn a_clause_indented_under_the_goal_is_still_refused() {
+    for clause in ["then loan.status = open", "after 1.day", "stipulate a.b = c"] {
+        let error = refuse(&format!("journey J {{\n    goal: g\n        {clause}\n}}\n"));
+        assert!(error.contains("belongs under a step"), "{clause}: {error}");
+    }
+}
+
+/// Level with the key, a clause word is refused whether or not the rest
+/// reads as a clause: it is not a wrapped line.
+#[test]
+fn a_clause_word_level_with_the_goal_is_refused() {
+    let error = refuse("journey J {\n    goal: g\n    then hands it over\n}\n");
+    assert!(error.contains("belongs under a step"), "{error}");
+}
+
 #[test]
 fn prose_that_merely_reads_like_a_clause_is_still_prose() {
     // "she sees" and "he does" are how anybody writes a goal, and only the

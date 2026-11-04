@@ -174,6 +174,9 @@ fn body(name: &str, opened: usize, lines: &mut Lines<'_>) -> Result<Journey, Par
     // on across lines because they are prose; `cast:` and `given:` because they
     // are lists.
     let mut block = Block::None;
+    // How far the `goal:` or `ends:` key was indented, which a line of its
+    // prose has to be deeper than to be read as prose whatever its first word.
+    let mut key_indent = 0;
 
     for (line, text) in lines.by_ref() {
         let trimmed = strip_comment(text);
@@ -187,11 +190,13 @@ fn body(name: &str, opened: usize, lines: &mut Lines<'_>) -> Result<Journey, Par
 
         if let Some(rest) = trimmed.strip_prefix("goal:") {
             block = Block::Goal;
+            key_indent = indent_of(text);
             push_prose(&mut journey.goal, rest);
             continue;
         }
         if let Some(rest) = trimmed.strip_prefix("ends:") {
             block = Block::Ends;
+            key_indent = indent_of(text);
             push_prose(&mut journey.ends, rest);
             continue;
         }
@@ -251,9 +256,14 @@ fn body(name: &str, opened: usize, lines: &mut Lines<'_>) -> Result<Journey, Par
                 // before any step would be quietly absorbed into it — and a
                 // journey that runs with fewer assertions than somebody wrote
                 // is the false green this whole design exists to refuse. The
-                // three words below open a clause and open nothing else.
+                // three words below open a clause, so a line starting with one
+                // is refused when it is level with the key, or when it reads
+                // as a clause. Deeper and not a clause, it is the prose
+                // wrapping onto an ordinary English word: "and the desk / then
+                // hands it over" (issue #43).
                 if let Some(word) = trimmed.split_whitespace().next()
                     && matches!(word, "then" | "after" | "stipulate")
+                    && (indent_of(text) <= key_indent || clause(trimmed, line).is_ok())
                 {
                     return fail(
                         line,
