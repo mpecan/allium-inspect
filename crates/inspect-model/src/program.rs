@@ -178,6 +178,19 @@ pub struct Derivations {
     /// a comparison against a state takes it for the state `other`. The answer
     /// was `true`, about a field nobody had set (issue #21).
     pub stored: BTreeSet<String>,
+    /// The relationships whose name says they hold at most one entity, by
+    /// [`derived_key`]: `allowance: Allowance with plan = this` is the
+    /// allowance or `null`, not a set of one (issue #39). See
+    /// [`crate::cardinality::names_one`].
+    pub singular: BTreeSet<String>,
+    /// Config parameters whose default is in a calendar unit, keyed
+    /// `module.parameter`, with the default as written: `13.months`.
+    ///
+    /// Nothing can read one into a length (see [`crate::units`]), so the world
+    /// starts with it unset. Kept so the evaluator can say *why*, and so a
+    /// deadline moved by one off a `null` is still known to be no deadline
+    /// (issue #41).
+    pub calendar: BTreeMap<String, String>,
     /// Every word the spec set declares as a state, in any enumeration.
     ///
     /// What a bare word in a definition means when it names nothing in scope:
@@ -311,6 +324,17 @@ impl Program {
     /// Record `function` as the derived value `name` on `entity`.
     pub fn add_function(&mut self, module: &str, entity: &str, name: &str, function: Function) {
         self.derived.functions.insert(derived_key(module, entity, name), function);
+    }
+
+    /// Record the relationship `field` on `entity` as holding at most one.
+    pub fn add_singular(&mut self, module: &str, entity: &str, field: &str) {
+        self.derived.singular.insert(derived_key(module, entity, field));
+    }
+
+    /// Record that `parameter` in `module` defaults to `written`, a calendar
+    /// duration.
+    pub fn add_calendar_default(&mut self, module: &str, parameter: &str, written: &str) {
+        self.derived.calendar.insert(format!("{module}.{parameter}"), written.trim().to_owned());
     }
 
     /// Record `field` as a field `entity` stores rather than computes.

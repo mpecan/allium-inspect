@@ -1,0 +1,37 @@
+-- allium: 3
+-- Issue #40: optional navigation on a lookup that matched nothing
+-- short-circuits to null. `badge?.colour` with no badge is null, not a read
+-- from a null; `badge.colour` still is one, and stays undecided.
+
+entity Member { name: String }
+
+entity Badge {
+    member: Member
+    colour: String
+}
+
+entity Card {
+    member: Member
+    colour: String?
+}
+
+rule PrintCard {
+    when: PrintCard(member)
+    let badge = Badge{member}
+    ensures: Card.created(member: member, colour: badge?.colour)
+}
+
+rule PrintStrict {
+    when: PrintStrict(member)
+    let badge = Badge{member}
+    ensures: Card.created(member: member, colour: badge.colour)
+}
+
+actor Clerk { identified_by: Member }
+
+surface Desk {
+    facing clerk: Clerk
+    provides:
+        PrintCard(clerk)
+        PrintStrict(clerk)
+}

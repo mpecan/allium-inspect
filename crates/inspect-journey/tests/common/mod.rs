@@ -138,6 +138,18 @@ pub const SIBLINGS: &[&str] = &["siblings"];
 /// lists and enumeration values (issue #25).
 pub const DEFAULTS: &[&str] = &["defaults"];
 
+/// The allowances fixture, alone: a relationship with a singular name beside
+/// the same one with a plural name (issue #39).
+pub const ALLOWANCES: &[&str] = &["allowances"];
+
+/// The badges fixture, alone: `?.` on a lookup that matched nothing (issue
+/// #40).
+pub const BADGES: &[&str] = &["badges"];
+
+/// The retention fixture, alone: config defaults and literals in calendar
+/// units (issue #41).
+pub const RETENTION: &[&str] = &["retention"];
+
 /// The kinds fixture, alone: a set literal of words a rule iterates (issue
 /// #26).
 pub const KINDS: &[&str] = &["kinds"];

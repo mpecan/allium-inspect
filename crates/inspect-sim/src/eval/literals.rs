@@ -48,7 +48,10 @@ pub fn duration(raw: &str, at: &Expr, env: &Env<'_>) -> Evaluation {
     let Ok(amount) = amount.replace('_', "").parse::<i64>() else {
         return Evaluation::unknown(format!("`{raw}` has no amount"), at, env.source);
     };
-    let Some(millis) = unit_millis(unit) else {
+    let Some(millis) = inspect_model::units::millis(unit) else {
+        if inspect_model::units::is_calendar(unit) {
+            return Evaluation::unknown(calendar(raw), at, env.source);
+        }
         return Evaluation::unknown(
             format!("`{unit}` is not a unit of time this evaluator knows"),
             at,
@@ -61,17 +64,14 @@ pub fn duration(raw: &str, at: &Expr, env: &Env<'_>) -> Evaluation {
     }
 }
 
-/// Milliseconds in one of `unit`, singular or plural.
-fn unit_millis(unit: &str) -> Option<i64> {
-    match unit.trim_end_matches('s') {
-        "millisecond" | "ms" => Some(1),
-        "second" | "sec" => Some(1_000),
-        "minute" | "min" => Some(60_000),
-        "hour" | "hr" => Some(3_600_000),
-        "day" => Some(86_400_000),
-        "week" => Some(604_800_000),
-        _ => None,
-    }
+/// Why a duration in calendar units is undecided: `13.months` is a length
+/// that depends on which months, and the clock here is not a date.
+#[must_use]
+pub fn calendar(written: &str) -> String {
+    format!(
+        "`{written}` is in calendar units, which have no fixed length, and this simulator does \
+         not model the calendar"
+    )
 }
 
 /// `{a, b, c}`, and the ordered `[a, b, c]` beside it.
@@ -231,6 +231,25 @@ mod tests {
         let evaluated = evaluate("DurationLiteral", "3.fortnights");
         assert_eq!(evaluated.value, Value::Unknown);
         assert!(evaluated.unresolved[0].reason.contains("fortnight"), "{:?}", evaluated.unresolved);
+    }
+
+    /// `ms` once de-pluralised into `m`, which is no unit, in rules only: the
+    /// config default's copy of the table had the guard and this one did not.
+    #[test]
+    fn milliseconds_are_a_unit_in_a_rule_too() {
+        assert_eq!(evaluate("DurationLiteral", "250.ms").value, Value::Duration(250));
+    }
+
+    /// A calendar unit is not unrecognised; it is unmeasured, and says so.
+    #[test]
+    fn a_calendar_unit_says_it_is_the_calendar() {
+        let evaluated = evaluate("DurationLiteral", "13.months");
+        assert_eq!(evaluated.value, Value::Unknown);
+        assert!(
+            evaluated.unresolved[0].reason.contains("`13.months` is in calendar units"),
+            "{:?}",
+            evaluated.unresolved
+        );
     }
 
     #[test]

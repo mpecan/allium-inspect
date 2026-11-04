@@ -287,6 +287,42 @@ pub(super) fn filtered(source: &Expr, condition: &Expr, env: &Env<'_>) -> Evalua
     Evaluation { value: Value::Set(kept), unresolved }
 }
 
+/// A singular relationship's matches, as the one entity or `null`.
+///
+/// `allowance: Allowance with plan = this` is at most one allowance, and the
+/// language says so by the name (see `inspect_model::cardinality`). Left as
+/// the set `with` produces, `high in allowance.levels` read membership in a
+/// set of sets and came back `false` — a refusal of a correct spec, not an
+/// undecided step (issue #39).
+///
+/// Several matches is the spec in error, and a candidate the filter could not
+/// decide on may be the one that matched, so neither is answered.
+pub(super) fn at_most_one(field: &str, read: Evaluation, at: &Expr, env: &Env<'_>) -> Evaluation {
+    let Value::Set(items) = &read.value else { return read };
+    match items.as_slice() {
+        [one] => Evaluation { value: one.clone(), unresolved: read.unresolved },
+        [] if read.unresolved.is_empty() => Evaluation::known(Value::Null),
+        [] => Evaluation::unknown(
+            format!(
+                "`{field}` holds at most one, and a candidate it could not decide on may be it"
+            ),
+            at,
+            env.source,
+        )
+        .carrying(read.unresolved),
+        several => Evaluation::unknown(
+            format!(
+                "`{field}` is singular, so it holds at most one, and {} match it: the \
+                 specification is in error",
+                several.len()
+            ),
+            at,
+            env.source,
+        )
+        .carrying(read.unresolved),
+    }
+}
+
 /// `for x in Collection: condition` — universal quantification.
 ///
 /// This is what every invariant in a real spec is made of. Read as *all*

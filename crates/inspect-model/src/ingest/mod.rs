@@ -223,6 +223,16 @@ pub fn ingest<R: AlliumRunner, S: SourceReader>(
     // a definition in one module may return a word another module's
     // enumeration declares.
     into.program.declare_states(into.graph.declared_states());
+    for node in into.graph.nodes_of(crate::NodeKind::Config) {
+        let crate::NodeDetail::Config(detail) = &node.detail else { continue };
+        for parameter in &detail.parameters {
+            if let Some(written) = &parameter.default_expr
+                && crate::units::is_calendar_duration(written)
+            {
+                into.program.add_calendar_default(&node.module, &parameter.name, written);
+            }
+        }
+    }
 
     // After linking, because an emission in one module wakes a listener in
     // another, and only the whole set has both.

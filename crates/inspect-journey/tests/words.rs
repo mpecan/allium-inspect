@@ -249,7 +249,9 @@ fn configuration_is_left_to_the_walk() {
 fn the_fixtures_own_journeys_report_no_word() {
     let sets: &[(&str, &[&str])] = &[
         ("absence", LENDING),
+        ("allowances", common::ALLOWANCES),
         ("audience", common::AUDIENCE),
+        ("badges", common::BADGES),
         ("chains", common::CHAINS),
         ("cleanup", common::CLEANUP),
         ("deadlines", common::DEADLINES),
@@ -274,6 +276,7 @@ fn the_fixtures_own_journeys_report_no_word() {
         ("qualified_grants", common::GRANTS_AND_PARCELS),
         ("qualified_world", common::QUALIFIED),
         ("reservations", LENDING),
+        ("retention", common::RETENTION),
         ("reviews", common::REVIEWS),
         ("runs", common::RUNS),
         ("siblings", common::SIBLINGS),

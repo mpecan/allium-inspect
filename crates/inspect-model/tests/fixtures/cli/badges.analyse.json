@@ -1,0 +1,1 @@
+{"command":"analyse","diagnostics":[{"code":"allium.field.unused","location":{"col":17,"file":"badges.allium","line":6},"message":"Field 'Member.name' is declared but not referenced elsewhere.","severity":"info"}],"findings":[],"spec_file":"badges.allium"}

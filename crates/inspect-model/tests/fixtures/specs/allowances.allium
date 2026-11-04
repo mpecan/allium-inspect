@@ -1,0 +1,24 @@
+-- allium: 3
+-- Issue #39: a relationship whose name is singular holds at most one entity,
+-- or null. Read as a set, `high in allowance.levels` was membership in a set
+-- of sets, and `fits` came back false over an allowance that has `high`.
+--
+-- `grants` is the same relationship with a plural name, and stays a
+-- collection. `spare` has no allowance at all, and `crowded` has two, which a
+-- singular name says cannot happen.
+
+enum Level { low | high }
+
+entity Plan {
+    name: String
+    allowance: Allowance with plan = this
+    grants: Allowance with plan = this
+    fits: high in allowance.levels
+    bare: allowance = null
+    granted: grants.count
+}
+
+entity Allowance {
+    plan: Plan
+    levels: Set<Level>
+}

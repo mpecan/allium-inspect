@@ -21,6 +21,7 @@
 #![forbid(unsafe_code)]
 
 pub mod binding;
+pub mod cardinality;
 pub mod diagnostic;
 pub mod graph;
 pub mod ingest;
@@ -28,6 +29,7 @@ pub mod listening;
 pub mod program;
 pub mod runner;
 pub mod span;
+pub mod units;
 
 pub use diagnostic::{Diagnostic, Finding, Location, Severity};
 pub use graph::{

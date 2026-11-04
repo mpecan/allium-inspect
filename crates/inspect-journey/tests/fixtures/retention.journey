@@ -1,0 +1,50 @@
+-- Issue #41: a retention period in months or years, beside a deadline that
+-- has not started and one that has.
+
+journey ArchivesAfterKeep {
+    cast:
+        o: Order
+    given:
+        o.closed_at = null
+        o.archived = false
+    1. a day passes
+        after 1.day
+        then o.archived = false
+}
+
+journey ALedgerNobodyOpenedIsNeverPurged {
+    cast:
+        l: Ledger
+    given:
+        l.opened_at = null
+        l.purged = false
+    1. a day passes
+        after 1.day
+        then l.purged = false
+}
+
+journey AClosedOrderMeetsACalendarPeriod {
+    cast:
+        o: Order
+    given:
+        o.closed_at = now
+        o.archived = false
+    1. a day passes
+        after 1.day
+        then o.archived = false
+}
+
+journey APeriodRestatedInDaysIsDecided {
+    cast:
+        o: Order
+    given:
+        config.keep = 396.days
+        o.closed_at = now
+        o.archived = false
+    1. a day passes
+        after 1.day
+        then o.archived = false
+    2. and the rest of the period
+        after 396.days
+        then o.archived = true
+}

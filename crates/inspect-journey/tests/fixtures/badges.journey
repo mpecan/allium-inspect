@@ -1,0 +1,32 @@
+-- Issue #40: `badge?.colour` on a lookup that matched nothing is null.
+
+journey NoBadgeMeansNoColour {
+    cast:
+        ada: Member
+    1. a card for someone with no badge
+        ada does PrintCard(ada) on Desk
+            creating card: Card
+        then card.colour = null
+}
+
+journey ABadgeGivesItsColour {
+    cast:
+        ada: Member
+        b: Badge
+    given:
+        b.member = ada
+        b.colour = "teal"
+    1. a card for someone with a badge
+        ada does PrintCard(ada) on Desk
+            creating card: Card
+        then card.colour = "teal"
+}
+
+journey PlainNavigationOnNullIsStillUndecided {
+    cast:
+        ada: Member
+    1. a card read through a plain dot
+        ada does PrintStrict(ada) on Desk
+            creating card: Card
+        then card.colour = null
+}

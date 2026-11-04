@@ -255,6 +255,33 @@ impl<'a> Env<'a> {
         self.derived.fields.get(key.as_str()).map(|expr| (expr, key))
     }
 
+    /// The default `config.{parameter}` is written with, when it is in
+    /// calendar units and nothing has set the parameter since.
+    #[must_use]
+    pub fn calendar_default(&self, parameter: &str) -> Option<&'a str> {
+        if self.world.has_config(self.module, parameter) {
+            return None;
+        }
+        self.derived.calendar.get(&format!("{}.{parameter}", self.module)).map(String::as_str)
+    }
+
+    /// `field` on `instance`, computed from its `definition`.
+    ///
+    /// The one place a definition is evaluated, so a singular relationship is
+    /// the one entity or `null` however it is reached: `p.allowance`, a bare
+    /// `allowance` inside `p`'s own definitions, or a filter's element.
+    fn derive(
+        &self,
+        instance: &Instance,
+        field: &str,
+        definition: &Expr,
+        key: String,
+    ) -> Evaluation {
+        let singular = self.derived.singular.contains(key.as_str());
+        let read = eval(definition, &self.computing(instance, key));
+        if singular { collections::at_most_one(field, read, definition, self) } else { read }
+    }
+
     /// The function `name` defined on `instance`, under the same guard.
     fn function(&self, instance: &Instance, name: &str) -> Option<(&'a Function, String)> {
         let key = inspect_model::derived_key(&instance.module, &instance.entity, name);
@@ -501,7 +528,7 @@ pub fn field_of(instance: &Instance, field: &str, env: &Env<'_>) -> Evaluation {
         return Evaluation { value, unresolved };
     }
     match env.derivation(instance, field) {
-        Some((definition, key)) => eval(definition, &env.computing(instance, key)),
+        Some((definition, key)) => env.derive(instance, field, definition, key),
         None => match env.function(instance, field) {
             Some((function, _)) => calls::read_bare(field, function, env),
             None => Evaluation::known(instance.field(field)),
@@ -535,7 +562,7 @@ fn ident(ident: &Ident, env: &Env<'_>) -> Evaluation {
         && let Some(instance) = env.world.instance(id)
     {
         if let Some((definition, key)) = env.derivation(instance, name) {
-            return eval(definition, &env.computing(instance, key));
+            return env.derive(instance, name, definition, key);
         }
         if let Some((function, _)) = env.function(instance, name) {
             return calls::read_bare(name, function, env);

@@ -229,9 +229,15 @@ fn derived(
     for item in &block.items {
         match &item.kind {
             BlockItemKind::Assignment { name, value } => {
-                if detail.field(&name.name).is_some_and(|field| field.derived || field.relationship)
-                {
+                let Some(field) = detail.field(&name.name) else { continue };
+                if field.derived || field.relationship {
                     program.add_derived(module, entity, &name.name, value.clone());
+                }
+                if field.relationship
+                    && matches!(value, Expr::With { .. })
+                    && crate::cardinality::names_one(&name.name)
+                {
+                    program.add_singular(module, entity, &name.name);
                 }
             }
             // `is_used_by(who): who in filed_on_by` takes an argument, so it is

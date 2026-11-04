@@ -25,7 +25,17 @@ pub(super) fn member(whole: &Expr, object: &Expr, field: &Ident, env: &Env<'_>) 
         // would be false on both counts.
         return match env.world.config(env.module, field) {
             Value::Unknown => Evaluation::unknown(
-                env.world.why_config_is_undecided(env.module, field, &format!("config.{field}")),
+                match env.calendar_default(field) {
+                    Some(written) => format!(
+                        "`config.{field}` defaults to {}",
+                        super::literals::calendar(written)
+                    ),
+                    None => env.world.why_config_is_undecided(
+                        env.module,
+                        field,
+                        &format!("config.{field}"),
+                    ),
+                },
                 whole,
                 env.source,
             ),
@@ -67,6 +77,13 @@ pub(super) fn member(whole: &Expr, object: &Expr, field: &Ident, env: &Env<'_>) 
     }
 
     match &base.value {
+        // `badge?.colour` with no badge: the language says `?.` short-circuits
+        // to `null`. Read as `.`, it was a read from a null, and a step the
+        // spec settles came back undecided (issue #40). `.` on a null is left
+        // to the arm below, which declines it and says why.
+        Value::Null if matches!(whole, Expr::OptionalAccess { .. }) => {
+            Evaluation { value: Value::Null, unresolved }
+        }
         Value::Ref(id) => match env.instance(id) {
             Err(removal) => removed_here(id, removal, whole, env).carrying(unresolved),
             Ok(Some(instance)) => {

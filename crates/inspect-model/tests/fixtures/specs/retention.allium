@@ -1,0 +1,36 @@
+-- allium: 3
+-- Issue #41: a Duration written in calendar units. `.months` and `.years`
+-- are units the language lists and gives no length, so neither is read into
+-- one. What that must not do is make every rule guarded by one undecided:
+-- `closed_at + config.keep` with `closed_at` null is no deadline whatever a
+-- month is, and the clock moving leaves `Archive` unfired, decided.
+--
+-- Once `closed_at` is set the question is a real one, and the simulator says
+-- what it could not answer: a length in calendar units. A journey that wants
+-- an answer states the period in days.
+
+entity Order {
+    closed_at: Timestamp?
+    archived: Boolean
+}
+
+entity Ledger {
+    opened_at: Timestamp?
+    purged: Boolean
+}
+
+config {
+    keep: Duration = 13.months
+}
+
+rule Archive {
+    when: order: Order.closed_at + config.keep <= now
+    requires: not order.archived
+    ensures: order.archived = true
+}
+
+rule Purge {
+    when: ledger: Ledger.opened_at + 2.years <= now
+    requires: not ledger.purged
+    ensures: ledger.purged = true
+}
