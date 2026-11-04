@@ -1,6 +1,9 @@
 //! What the binary accepts, and how spec files are found.
 
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+};
 
 use clap::Parser;
 
@@ -126,32 +129,24 @@ fn either(yes: bool, no: bool) -> Option<bool> {
 
 /// Every `.journey` file under `path`, sorted.
 ///
-/// One level deep, like the spec search and for the same reason: a directory of
-/// journeys is a directory of journeys, and recursing sweeps in whatever else
-/// happens to be under it.
+/// Recursive, by the same rules as the spec search: see [`resolve`].
 #[must_use]
 pub fn journeys(path: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
-    if path.is_dir() {
-        let Ok(entries) = std::fs::read_dir(path) else { return found };
-        for entry in entries.flatten() {
-            let candidate = entry.path();
-            if candidate.extension().is_some_and(|extension| extension == "journey") {
-                found.push(candidate);
-            }
-        }
-    } else if path.extension().is_some_and(|extension| extension == "journey") {
-        found.push(path.to_owned());
-    }
+    collect(path, "journey", &mut found, &mut BTreeSet::new(), 0);
     found.sort();
+    found.dedup();
     found
 }
 
 /// Every `.allium` file under `paths`, sorted.
 ///
-/// Directories are searched one level deep rather than recursively. A spec set
-/// is a directory of files; recursing would sweep in vendored copies and
-/// examples from a `node_modules` or a `target` and present them as one system.
+/// Directories are searched recursively, the way `allium check` searches
+/// them, so one path works for every tool: a repository that keeps a spec set
+/// per area under `specs/` names `specs/`, and a new area is not silently
+/// left out until somebody edits the configuration (issue #42). This was one
+/// level deep, so that pointing the tool at a checkout did not sweep in
+/// vendored copies and build output; that is now what [`SKIPPED`] is for.
 ///
 /// Sorted because the ingestion order decides nothing but the graph is compared
 /// between runs, and an unsorted directory read is a different order on a
@@ -159,26 +154,62 @@ pub fn journeys(path: &Path) -> Vec<PathBuf> {
 #[must_use]
 pub fn resolve(paths: &[PathBuf]) -> Vec<PathBuf> {
     let mut found = Vec::new();
+    let mut seen = BTreeSet::new();
     for path in paths {
-        if path.is_dir() {
-            let Ok(entries) = std::fs::read_dir(path) else { continue };
-            for entry in entries.flatten() {
-                let candidate = entry.path();
-                if is_spec(&candidate) {
-                    found.push(candidate);
-                }
-            }
-        } else if is_spec(path) {
-            found.push(path.clone());
-        }
+        collect(path, "allium", &mut found, &mut seen, 0);
     }
     found.sort();
     found.dedup();
     found
 }
 
-fn is_spec(path: &Path) -> bool {
-    path.is_file() && path.extension().is_some_and(|extension| extension == "allium")
+/// Directories a search does not descend into: build output and installed
+/// packages, which hold copies of specs rather than the specs themselves.
+/// Directories whose name starts with `.` are skipped as well — `.git`, a
+/// `.venv`. Each is still searched when it is the path given: being named is
+/// being asked for.
+const SKIPPED: &[&str] = &["target", "node_modules"];
+
+/// How deep a search goes: a backstop for a link to one of its own parents,
+/// not a limit any spec set reaches. `seen` stops the cycle; this stops a tree
+/// that is merely very deep from running out of stack.
+const DEEPEST: usize = 64;
+
+fn collect(
+    path: &Path,
+    extension: &str,
+    into: &mut Vec<PathBuf>,
+    seen: &mut BTreeSet<PathBuf>,
+    depth: usize,
+) {
+    if path.is_dir() {
+        if depth >= DEEPEST {
+            return;
+        }
+        // Canonicalised, so a directory reached twice by different routes —
+        // a link, or `specs/` beside `specs/shop/` — is read once.
+        let Ok(real) = path.canonicalize() else { return };
+        if !seen.insert(real) {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(path) else { return };
+        for entry in entries.flatten() {
+            let candidate = entry.path();
+            if candidate.is_dir() && skipped(&candidate) {
+                continue;
+            }
+            collect(&candidate, extension, into, seen, depth + 1);
+        }
+    } else if path.is_file() && path.extension().is_some_and(|it| it == extension) {
+        into.push(path.to_owned());
+    }
+}
+
+fn skipped(directory: &Path) -> bool {
+    directory
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with('.') || SKIPPED.contains(&name))
 }
 
 #[cfg(test)]
@@ -228,13 +259,55 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 
+    /// `specs/shop/shop.allium` is found from `specs/`, as `allium check`
+    /// finds it (issue #42).
     #[test]
-    fn the_search_does_not_recurse() {
-        // A spec set is a directory of files. Recursing sweeps in vendored
-        // copies and examples and presents them as one system.
+    fn the_search_recurses() {
         let dir = tree("nested", &["a.allium", "nested/deep.allium"]);
         let found = resolve(std::slice::from_ref(&dir));
-        assert_eq!(found, [dir.join("a.allium")]);
+        assert_eq!(found, [dir.join("a.allium"), dir.join("nested/deep.allium")]);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// Build output, installed packages and hidden directories hold copies,
+    /// and are not descended into.
+    #[test]
+    fn the_search_skips_build_output_packages_and_hidden_directories() {
+        let dir = tree("skipped", &["a.allium"]);
+        for skipped in ["target/debug", "node_modules/pkg", ".git"] {
+            fs::create_dir_all(dir.join(skipped)).expect("scratch dir");
+            fs::write(dir.join(skipped).join("copy.allium"), "-- allium: 3\n").expect("write");
+        }
+        assert_eq!(resolve(std::slice::from_ref(&dir)), [dir.join("a.allium")]);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// A skipped name is still searched when it is the path given.
+    #[test]
+    fn a_skipped_directory_named_outright_is_searched() {
+        let dir = tree("named-hidden", &[]);
+        fs::create_dir_all(dir.join(".specs")).expect("scratch dir");
+        fs::write(dir.join(".specs/a.allium"), "-- allium: 3\n").expect("write");
+        assert_eq!(resolve(&[dir.join(".specs")]), [dir.join(".specs/a.allium")]);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// Journeys are found the same way.
+    #[test]
+    fn journeys_are_found_recursively_too() {
+        let dir = tree("journeys", &["a.journey", "nested/b.journey", "nested/c.allium"]);
+        assert_eq!(journeys(&dir), [dir.join("a.journey"), dir.join("nested/b.journey")]);
+        assert_eq!(journeys(&dir.join("a.journey")), [dir.join("a.journey")]);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// A directory that links to its own parent is read once, not forever.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_to_a_parent_does_not_recurse_forever() {
+        let dir = tree("cycle", &["a.allium"]);
+        std::os::unix::fs::symlink(&dir, dir.join("nested/up")).expect("symlink");
+        assert_eq!(resolve(std::slice::from_ref(&dir)), [dir.join("a.allium")]);
         let _ = fs::remove_dir_all(dir);
     }
 

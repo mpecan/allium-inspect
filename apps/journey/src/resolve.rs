@@ -7,10 +7,9 @@
 //! when the journeys live under the spec set, and
 //! `allium-journey walk specs/ journeys/` when they do not.
 //!
-//! Recursive, unlike `allium-inspect`, which searches one level on purpose so
-//! that pointing it at a checkout does not sweep in a `target` directory. A
-//! command run against named paths is being told where to look, and allium's
-//! own commands recurse.
+//! Recursive, as allium's own commands are and as `allium-inspect` now is
+//! (issue #42). A command run against named paths is being told where to
+//! look.
 
 use std::{
     collections::BTreeSet,
