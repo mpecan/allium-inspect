@@ -50,7 +50,7 @@ pub fn duration(raw: &str, at: &Expr, env: &Env<'_>) -> Evaluation {
     };
     let Some(millis) = inspect_model::units::millis(unit) else {
         if inspect_model::units::is_calendar(unit) {
-            return Evaluation::unknown(calendar(raw), at, env.source);
+            return Evaluation::unknown(format!("`{raw}` {CALENDAR}"), at, env.source);
         }
         return Evaluation::unknown(
             format!("`{unit}` is not a unit of time this evaluator knows"),
@@ -64,15 +64,10 @@ pub fn duration(raw: &str, at: &Expr, env: &Env<'_>) -> Evaluation {
     }
 }
 
-/// Why a duration in calendar units is undecided: `13.months` is a length
-/// that depends on which months, and the clock here is not a date.
-#[must_use]
-pub fn calendar(written: &str) -> String {
-    format!(
-        "`{written}` is in calendar units, which have no fixed length, and this simulator does \
-         not model the calendar"
-    )
-}
+/// Why a duration in calendar units is undecided, said of something already
+/// named: `13.months` is a length that depends on which months, and the clock
+/// here is not a date.
+pub const CALENDAR: &str = "is in calendar units: they have no fixed length, and this simulator does not model the calendar";
 
 /// `{a, b, c}`, and the ordered `[a, b, c]` beside it.
 ///

@@ -27,8 +27,8 @@ pub(super) fn member(whole: &Expr, object: &Expr, field: &Ident, env: &Env<'_>) 
             Value::Unknown => Evaluation::unknown(
                 match env.calendar_default(field) {
                     Some(written) => format!(
-                        "`config.{field}` defaults to {}",
-                        super::literals::calendar(written)
+                        "`config.{field}` defaults to `{written}`, which {}",
+                        super::literals::CALENDAR
                     ),
                     None => env.world.why_config_is_undecided(
                         env.module,
