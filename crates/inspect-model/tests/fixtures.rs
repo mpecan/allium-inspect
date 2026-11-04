@@ -658,3 +658,30 @@ fn the_program_knows_the_declared_states_and_the_stored_fields() {
     );
     assert!(derived.fields.contains_key(&inspect_model::derived_key("runs", "Run", "agg_d")));
 }
+
+/// A relationship is recorded singular by its name, and nothing else is:
+/// not the same relationship under a plural name, not a stored field whose
+/// name is singular, not a derived value (issue #39).
+#[test]
+fn only_a_relationship_with_a_singular_name_is_recorded_singular() {
+    let (runner, reader, paths) = replay_of(&["allowances"]);
+    let ingested = ingest(&runner, &reader, &paths).expect("ingests");
+    let singular = &ingested.program.derivations().singular;
+    let key = |field| inspect_model::derived_key("allowances", "Plan", field);
+    assert!(singular.contains(&key("allowance")), "{singular:?}");
+    for not in ["grants", "name", "fits", "bare", "granted"] {
+        assert!(!singular.contains(&key(not)), "{not}: {singular:?}");
+    }
+    assert_eq!(singular.len(), 1, "{singular:?}");
+}
+
+/// A config default in calendar units is recorded with its words, and one in
+/// days is not (issue #41).
+#[test]
+fn a_calendar_default_is_recorded_as_written() {
+    let (runner, reader, paths) = replay_of(&["retention", "deadlines"]);
+    let ingested = ingest(&runner, &reader, &paths).expect("ingests");
+    let calendar = &ingested.program.derivations().calendar;
+    assert_eq!(calendar.get("retention.keep").map(String::as_str), Some("13.months"));
+    assert_eq!(calendar.len(), 1, "{calendar:?}");
+}

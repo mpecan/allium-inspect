@@ -58,6 +58,11 @@ mod tests {
         assert_eq!(millis("days"), Some(86_400_000));
         assert_eq!(millis("weeks"), Some(604_800_000));
         assert_eq!(millis("seconds"), Some(1_000));
+        assert_eq!(millis("sec"), Some(1_000));
+        assert_eq!(millis("minutes"), Some(60_000));
+        assert_eq!(millis("min"), Some(60_000));
+        assert_eq!(millis("hours"), Some(3_600_000));
+        assert_eq!(millis("hr"), Some(3_600_000));
     }
 
     #[test]

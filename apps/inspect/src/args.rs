@@ -301,6 +301,21 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 
+    /// A tree deeper than the cap stops there rather than running out of
+    /// stack: the shallow spec is found and the one past the cap is not.
+    #[test]
+    fn a_tree_deeper_than_the_cap_stops() {
+        let dir = tree("deep", &["shallow.allium"]);
+        let mut deep = dir.clone();
+        for level in 0..(DEEPEST + 2) {
+            deep = deep.join(format!("l{level}"));
+        }
+        fs::create_dir_all(&deep).expect("a deep tree");
+        fs::write(deep.join("buried.allium"), "-- allium: 3\n").expect("write");
+        assert_eq!(resolve(std::slice::from_ref(&dir)), [dir.join("shallow.allium")]);
+        let _ = fs::remove_dir_all(dir);
+    }
+
     /// A directory that links to its own parent is read once, not forever.
     #[cfg(unix)]
     #[test]

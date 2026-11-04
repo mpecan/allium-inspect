@@ -3709,3 +3709,113 @@ fn an_instance_the_rule_removes_is_undecided_wherever_the_world_holds_it() {
     let plain = env(&gone, "lending").bind("member", Value::Ref(member));
     assert!(reasons(&node, &plain).iter().any(|it| it.contains("is not in this world")));
 }
+
+// --- a singular relationship, and `?.` (issues #39, #40) ---------------------
+
+/// A plan whose `allowance: Allowance with plan = this` is singular, and the
+/// allowances given, each with its `plan` set to the plan or left unset.
+fn allowance_of(placed: &[Option<bool>]) -> (World, EntityId, inspect_model::Derivations) {
+    let mut world = World::new();
+    let plan = world.create("Plan", "m");
+    for placed in placed {
+        let allowance = world.create("Allowance", "m");
+        if let Some(here) = placed {
+            let to = if *here { Value::Ref(plan.clone()) } else { Value::Null };
+            world.set_field(&allowance, "plan", to);
+        }
+    }
+    let mut derived = inspect_model::Derivations::default();
+    derived.stored.insert(inspect_model::derived_key("m", "Allowance", "plan"));
+    let key = inspect_model::derived_key("m", "Plan", "allowance");
+    derived.fields.insert(
+        key.clone(),
+        Expr::With {
+            span: NOWHERE,
+            source: Box::new(ident("Allowances")),
+            predicate: Box::new(compare(ident("plan"), "Eq", ident("this"))),
+        },
+    );
+    derived.singular.insert(key);
+    (world, plan, derived)
+}
+
+/// One match is that allowance; none is `null`.
+#[test]
+fn a_singular_relationship_is_its_one_match_or_null() {
+    let (world, plan, derived) = allowance_of(&[Some(true), Some(false)]);
+    let here = env(&world, "m").deriving(&derived).bind("p", Value::Ref(plan));
+    let Value::Ref(id) = value_of(&field(ident("p"), "allowance"), &here) else {
+        panic!("one allowance, not a set of one");
+    };
+    assert_eq!(world.instance(&id).map(|it| it.entity.as_str()), Some("Allowance"));
+
+    let (world, plan, derived) = allowance_of(&[Some(false)]);
+    let here = env(&world, "m").deriving(&derived).bind("p", Value::Ref(plan));
+    assert_eq!(value_of(&field(ident("p"), "allowance"), &here), Value::Null);
+}
+
+/// No match decided, but a candidate whose `plan` nobody set may be it.
+#[test]
+fn a_singular_relationship_with_an_undecided_candidate_is_undecided() {
+    let (world, plan, derived) = allowance_of(&[None]);
+    let here = env(&world, "m").deriving(&derived).bind("p", Value::Ref(plan));
+    let node = field(ident("p"), "allowance");
+    assert_eq!(value_of(&node, &here), Value::Unknown);
+    let said = reasons(&node, &here);
+    assert!(said.iter().any(|it| it.contains("may be it")), "{said:?}");
+}
+
+/// Two matches for a singular name is the spec in error, and says so.
+#[test]
+fn a_singular_relationship_with_two_matches_is_undecided() {
+    let (world, plan, derived) = allowance_of(&[Some(true), Some(true)]);
+    let here = env(&world, "m").deriving(&derived).bind("p", Value::Ref(plan));
+    let node = field(ident("p"), "allowance");
+    assert_eq!(value_of(&node, &here), Value::Unknown);
+    let said = reasons(&node, &here);
+    assert!(said.iter().any(|it| it.contains("2 match it")), "{said:?}");
+}
+
+/// `x?.colour` with `x` null is null; `x.colour` is a read from a null.
+#[test]
+fn optional_navigation_on_null_is_null_and_plain_navigation_is_not() {
+    let world = World::new();
+    let here = env(&world, "m").bind("x", Value::Null);
+    let optional = Expr::OptionalAccess {
+        span: NOWHERE,
+        object: Box::new(ident("x")),
+        field: Ident { span: NOWHERE, name: "colour".to_owned() },
+    };
+    assert_eq!(value_of(&optional, &here), Value::Null);
+    assert!(reasons(&optional, &here).is_empty());
+    let plain = field(ident("x"), "colour");
+    assert_eq!(value_of(&plain, &here), Value::Unknown);
+    assert!(reasons(&plain, &here).iter().any(|it| it.contains("from a null")));
+}
+
+// --- a config default in calendar units (issue #41) ----------------------------
+
+/// Unset, `config.keep` says it is the calendar; set, it is what was set.
+#[test]
+fn a_calendar_default_says_it_is_the_calendar_until_something_sets_it() {
+    let mut derived = inspect_model::Derivations::default();
+    derived.calendar.insert("m.keep".to_owned(), "13.months".to_owned());
+    let node = field(ident("config"), "keep");
+
+    let world = World::new();
+    let here = env(&world, "m").deriving(&derived);
+    assert_eq!(value_of(&node, &here), Value::Unknown);
+    let said = reasons(&node, &here);
+    assert!(
+        said.iter().any(|it| it.contains("defaults to `13.months`, which is in calendar units")),
+        "{said:?}"
+    );
+    // Another module's parameter of the same name is not this one.
+    let elsewhere = env(&world, "other").deriving(&derived);
+    assert!(reasons(&node, &elsewhere).iter().all(|it| !it.contains("calendar")));
+
+    let mut world = World::new();
+    world.set_config("m", "keep", Value::Duration(1));
+    let here = env(&world, "m").deriving(&derived);
+    assert_eq!(value_of(&node, &here), Value::Duration(1));
+}
