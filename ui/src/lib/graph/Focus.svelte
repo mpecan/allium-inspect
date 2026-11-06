@@ -15,7 +15,10 @@
   import type { Edge } from "../api/Edge";
   import type { Node } from "../api/Node";
   import type { Severity } from "../api/Severity";
+  import { onDestroy } from "svelte";
+
   import Canvas from "./Canvas.svelte";
+  import { browserEngine } from "./elk";
   import { applies, FORMS, walkForm, type Form } from "./forms";
   import { narrow } from "./trace";
   import { project } from "./views";
@@ -39,6 +42,11 @@
   }
 
   const { node, nodes, edges, severities, onselect, onopen, onclose }: Props = $props();
+
+  // One engine for the pop-up's life: the canvas below is re-keyed per form,
+  // and an engine of its own would mean a worker started on every switch.
+  const engine = browserEngine();
+  onDestroy(() => engine.dispose());
 
   let form = $state<Form>("near");
   let panel = $state<HTMLDialogElement | null>(null);
@@ -144,6 +152,7 @@
     {:else}
       {#key form}
         <Canvas
+          {engine}
           view={laidOutAs}
           nodes={graph.nodes}
           edges={graph.edges}

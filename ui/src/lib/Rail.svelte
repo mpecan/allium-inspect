@@ -33,6 +33,13 @@
     grouped: boolean;
     onmode: (mode: Mode) => void;
     onmodule: (name: string) => void;
+    /**
+     * Switch every module on, or every one off.
+     *
+     * On a set of two hundred files, narrowing to the three worth reading was
+     * a hundred and ninety-seven clicks. Off-then-on is three more.
+     */
+    onmodules?: (shown: boolean) => void;
     ongrouping: () => void;
     ontrace: (mode: TraceMode) => void;
     onfind: (id: string) => void;
@@ -53,6 +60,7 @@
     grouped,
     onmode,
     onmodule,
+    onmodules,
     ongrouping,
     ontrace,
     onfind,
@@ -228,6 +236,18 @@
         ? "Which triggers to offer. Switching one off hides it here; it does not stop its rules firing."
         : "What to draw."}
     </p>
+    {#if onmodules && modules.length > 1}
+      <div class="every">
+        <button type="button" disabled={hidden.size === 0} onclick={() => onmodules(true)}
+          >Show every</button
+        >
+        <button
+          type="button"
+          disabled={hidden.size === modules.length}
+          onclick={() => onmodules(false)}>Show none</button
+        >
+      </div>
+    {/if}
     <ul class="modules">
       {#each modules as module (module.name)}
         <li>
@@ -401,20 +421,35 @@
 
   /* The count used to be a paragraph, which meant the five conflicts the
    * analyser found were reachable only by guessing which construct to select. */
-  .reports {
-    width: 100%;
-    text-align: left;
-    padding: 2px 0;
+  /* A quiet text button: the reports count, and switching every module. */
+  .reports,
+  .every button {
     font-size: var(--t-micro);
     letter-spacing: var(--track-tight);
     color: var(--ink-dim);
   }
-  .reports:not(:disabled):hover {
+  .reports {
+    width: 100%;
+    text-align: left;
+    padding: 2px 0;
+  }
+  .reports:not(:disabled):hover,
+  .every button:not(:disabled):hover {
     color: var(--ink);
   }
-  .reports:disabled {
+  .reports:disabled,
+  .every button:disabled {
     color: var(--ink-faint);
     cursor: default;
+  }
+
+  .every {
+    display: flex;
+    gap: var(--gap-2);
+    margin-bottom: var(--gap-1);
+  }
+  .every button {
+    padding: 0;
   }
 
   .modules-hint {

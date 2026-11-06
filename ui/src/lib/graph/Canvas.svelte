@@ -18,7 +18,6 @@
     MarkerType,
     type Node as FlowNode,
   } from "@xyflow/svelte";
-  import ELK from "elkjs/lib/elk.bundled.js";
   import { untrack } from "svelte";
 
   import type { Edge } from "../api/Edge";
@@ -26,6 +25,7 @@
   import type { Severity } from "../api/Severity";
   import type { ViewKind } from "../client";
   import ConstructNode from "./ConstructNode.svelte";
+  import type { Engine } from "./engine";
   import ModuleHull from "./ModuleHull.svelte";
   import { hullId } from "./hulls";
   import RoutedEdge from "./RoutedEdge.svelte";
@@ -60,6 +60,12 @@
      * screen and the map covers part of it.
      */
     bare?: boolean;
+    /**
+     * The ELK to lay out with. Owned by the caller rather than the canvas,
+     * because a canvas is remounted — Focus re-keys it per form, App drops it
+     * for the simulator — and each remount would start a worker of its own.
+     */
+    engine: Engine;
   }
 
   const {
@@ -74,6 +80,7 @@
     onselect,
     onopen,
     bare = false,
+    engine,
   }: Props = $props();
 
   /**
@@ -88,7 +95,6 @@
     return element?.getAttribute("data-id") ?? null;
   }
 
-  const elk = new ELK();
   const nodeTypes = { construct: ConstructNode, hull: ModuleHull };
   /**
    * Low enough that "fit" means fit.
@@ -128,7 +134,7 @@
     let cancelled = false;
     placing = true;
 
-    const settling = layout(elk, view, nodes, edges, grouped && view !== "modules");
+    const settling = layout(engine, view, nodes, edges, grouped && view !== "modules");
     void settling.then((result) => {
       if (cancelled) {
         return;

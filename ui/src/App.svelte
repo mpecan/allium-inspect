@@ -1,9 +1,12 @@
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { onDestroy, untrack } from "svelte";
 
   import type { Severity } from "./lib/api/Severity";
+  import { affordable } from "./lib/graph/budget";
   import Canvas from "./lib/graph/Canvas.svelte";
+  import { browserEngine } from "./lib/graph/elk";
   import Focus from "./lib/graph/Focus.svelte";
+  import Refusal from "./lib/graph/Refusal.svelte";
   import {
     carriesAChain,
     isMeaningful,
@@ -52,6 +55,18 @@
   let selectedId = $state<string | null>(null);
   /** Whether the canvas rings each file. Experimental; off by default. */
   let grouped = $state(false);
+  /**
+   * The heaviest each view has been drawn after the reader said to draw it
+   * anyway. Here rather than in the canvas, which is dropped whenever the
+   * simulator or the journeys are open: a consent should outlive a detour.
+   */
+  let allowed = $state.raw<Map<ViewKind, number>>(new Map());
+  /**
+   * The canvas's layout engine, a worker kept for the life of the page rather
+   * than started again each time the canvas remounts. See `graph/engine.ts`.
+   */
+  const engine = browserEngine();
+  onDestroy(() => engine.dispose());
   let hidden = $state.raw<Set<string>>(new Set());
   let traceMode = $state<"off" | "forward" | "backward" | "near">("off");
   let sourceOpen = $state(false);
@@ -169,6 +184,10 @@
   const visible = $derived(project(view, nodes, edges, hidden));
   const visibleNodes = $derived(visible.nodes);
   const visibleEdges = $derived(visible.edges);
+
+  /** Whether the view may be drawn without asking. See `graph/budget.ts`. */
+  const heft = $derived(visibleNodes.length + visibleEdges.length);
+  const drawing = $derived(affordable(heft, allowed.get(view) ?? 0));
 
   const severities = $derived<Map<string, Severity>>(
     graph ? worstByNode(graph) : new Map(),
@@ -317,6 +336,14 @@
     hidden = next;
   }
 
+  /** Switch mode, remembering it as the view when it is one. */
+  function choose(next: Mode) {
+    mode = next;
+    if (next !== "simulate" && next !== "journeys") {
+      view = next;
+    }
+  }
+
   function select(id: string | null) {
     // A state pill on the lifecycle canvas stands for its entity: the state is
     // a value inside a transition list, not a construct with source of its own.
@@ -350,8 +377,7 @@
     if (mode === "simulate" || !inView(node, view)) {
       const home = VIEWS.find((candidate) => inView(node, candidate));
       if (home) {
-        view = home;
-        mode = home;
+        choose(home);
       }
     }
     select(id);
@@ -394,13 +420,11 @@
     hasSelection={selectedId !== null}
     reports={findings.length + loose.length}
     version={graph?.allium_version ?? ""}
-    onmode={(next) => {
-      mode = next;
-      if (next !== "simulate" && next !== "journeys") {
-        view = next;
-      }
-    }}
+    onmode={choose}
     onmodule={toggleModule}
+    onmodules={(shown) => {
+      hidden = shown ? new Set() : new Set(modules.map((module) => module.name));
+    }}
     {grouped}
     ongrouping={() => (grouped = !grouped)}
     ontrace={(mode) => (traceMode = mode)}
@@ -443,8 +467,19 @@
         <p class="eyebrow">Reading the specification</p>
         <p class="prose">Running allium over the spec set.</p>
       </div>
+    {:else if !drawing}
+      <Refusal
+        nodes={visibleNodes.length}
+        edges={visibleEdges.length}
+        modules={new Set(visibleNodes.map((node) => node.module)).size}
+        onoverview={view === "modules" ? undefined : () => choose("modules")}
+        ondraw={() => {
+          allowed = new Map(allowed).set(view, heft);
+        }}
+      />
     {:else}
       <Canvas
+        {engine}
         {view}
         {grouped}
         nodes={visibleNodes}

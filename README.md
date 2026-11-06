@@ -149,6 +149,15 @@ between two handles: ELK reserves channels between the layers as it places the
 nodes, and drawing along those is the difference between a diagram and a bowl of
 spaghetti on any view with more than a dozen constructs.
 
+**A large spec set does not lock the page.** ELK runs in a worker, so the rail,
+search and the view buttons keep answering while it places a big view, and
+switching views mid-layout abandons the old one instead of queueing behind it.
+Drawing is the part that has to happen on the page, and it costs roughly in
+proportion to what is drawn — so a view of more than 4,000 constructs and
+relationships is not drawn until you say so. The canvas says how big it is and
+offers the modules view, or *Show none* in the rail and the few files worth
+reading, or drawing it anyway. It never draws part of a view without saying so.
+
 **The prose comes with it.** More than half of a real spec set is comment: most
 of `friend-mesh`'s entities open with a paragraph saying why they exist, many of
 its fields carry one, and a hundred-odd rules have a `@guidance` block. That

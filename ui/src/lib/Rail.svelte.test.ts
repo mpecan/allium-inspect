@@ -95,3 +95,32 @@ describe("what it says when a trace found nothing", () => {
     expect(screen.getByText(/no chain here to follow/)).toBeTruthy();
   });
 });
+
+describe("switching every module at once", () => {
+  const modules = ["a", "b", "c"].map((name) => ({ name, path: `${name}.allium`, imports: [] }));
+
+  it("shows every module, or none, in one click", async () => {
+    const onmodules = vi.fn();
+    const { button } = rail({ modules, onmodules, hidden: new Set(["b"]) });
+    button("Show every").click();
+    button("Show none").click();
+    expect(onmodules.mock.calls).toEqual([[true], [false]]);
+  });
+
+  it("offers neither when it would do nothing", () => {
+    const all = rail({ modules, onmodules: vi.fn(), hidden: new Set<string>() });
+    expect(all.off("Show every")).toBe(true);
+    expect(all.off("Show none")).toBe(false);
+  });
+
+  it("turns off 'none' when nothing is shown", () => {
+    const { off } = rail({ modules, onmodules: vi.fn(), hidden: new Set(["a", "b", "c"]) });
+    expect(off("Show none")).toBe(true);
+    expect(off("Show every")).toBe(false);
+  });
+
+  it("is not there for a single module", () => {
+    rail({ modules: modules.slice(0, 1), onmodules: vi.fn() });
+    expect(screen.queryByRole("button", { name: /Show every/ })).toBeNull();
+  });
+});
