@@ -421,18 +421,24 @@
 
   /* The count used to be a paragraph, which meant the five conflicts the
    * analyser found were reachable only by guessing which construct to select. */
-  .reports {
-    width: 100%;
-    text-align: left;
-    padding: 2px 0;
+  /* A quiet text button: the reports count, and switching every module. */
+  .reports,
+  .every button {
     font-size: var(--t-micro);
     letter-spacing: var(--track-tight);
     color: var(--ink-dim);
   }
-  .reports:not(:disabled):hover {
+  .reports {
+    width: 100%;
+    text-align: left;
+    padding: 2px 0;
+  }
+  .reports:not(:disabled):hover,
+  .every button:not(:disabled):hover {
     color: var(--ink);
   }
-  .reports:disabled {
+  .reports:disabled,
+  .every button:disabled {
     color: var(--ink-faint);
     cursor: default;
   }
@@ -443,16 +449,7 @@
     margin-bottom: var(--gap-1);
   }
   .every button {
-    font-size: var(--t-micro);
-    color: var(--ink-dim);
     padding: 0;
-  }
-  .every button:hover:not(:disabled) {
-    color: var(--ink);
-  }
-  .every button:disabled {
-    color: var(--ink-faint);
-    cursor: default;
   }
 
   .modules-hint {

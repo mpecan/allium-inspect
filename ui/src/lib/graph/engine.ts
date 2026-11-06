@@ -76,21 +76,18 @@ export function engine(spawn: Spawners): Engine {
   }
 
   function instance(): Promise<Instance> {
-    if (local) {
-      return local;
+    // With no worker to spawn, `local` was set at construction.
+    if (local || !spawn.worker) {
+      return local ?? spawn.local();
     }
-    if (current) {
-      return Promise.resolve(current);
-    }
-    const spawned = spawn.worker?.((reason) => {
+    current ??= spawn.worker((reason) => {
       // Whatever was in flight on it is not coming back, and nor is anything
       // sent to a worker that cannot start. Hand both to this thread.
       stop();
       local = spawn.local();
       abandon?.(reason);
     });
-    current = spawned ?? null;
-    return spawned ? Promise.resolve(spawned) : (local = spawn.local());
+    return Promise.resolve(current);
   }
 
   return {
@@ -105,15 +102,13 @@ export function engine(spawn: Spawners): Engine {
         stop();
       }
       return await new Promise<ElkGraph>((resolve, reject) => {
-        let settled = false;
+        // Settled is the same as no longer being the request in flight: a
+        // newer one replaced `abandon`, or this one already cleared it.
         const finish = (outcome: () => void) => {
-          if (settled) {
+          if (abandon !== fail) {
             return;
           }
-          settled = true;
-          if (abandon === fail) {
-            abandon = null;
-          }
+          abandon = null;
           outcome();
         };
         const fail = (reason: unknown) => {

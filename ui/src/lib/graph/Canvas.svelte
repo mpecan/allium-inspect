@@ -18,15 +18,14 @@
     MarkerType,
     type Node as FlowNode,
   } from "@xyflow/svelte";
-  import { onDestroy, untrack } from "svelte";
+  import { untrack } from "svelte";
 
   import type { Edge } from "../api/Edge";
   import type { Node } from "../api/Node";
   import type { Severity } from "../api/Severity";
   import type { ViewKind } from "../client";
   import ConstructNode from "./ConstructNode.svelte";
-  import { affordable, overBudget, weight } from "./budget";
-  import { browserEngine } from "./elk";
+  import type { Engine } from "./engine";
   import ModuleHull from "./ModuleHull.svelte";
   import { hullId } from "./hulls";
   import RoutedEdge from "./RoutedEdge.svelte";
@@ -62,11 +61,11 @@
      */
     bare?: boolean;
     /**
-     * Switch to the modules view. Offered when a view is too large to draw
-     * without asking, because one box per file is the overview a reader picks
-     * the files from.
+     * The ELK to lay out with. Owned by the caller rather than the canvas,
+     * because a canvas is remounted — Focus re-keys it per form, App drops it
+     * for the simulator — and each remount would start a worker of its own.
      */
-    onoverview?: () => void;
+    engine: Engine;
   }
 
   const {
@@ -81,7 +80,7 @@
     onselect,
     onopen,
     bare = false,
-    onoverview,
+    engine,
   }: Props = $props();
 
   /**
@@ -96,10 +95,6 @@
     return element?.getAttribute("data-id") ?? null;
   }
 
-  // Off the page's thread: see `engine.ts`. Disposed with the canvas, because a
-  // worker outlives the component that made it unless somebody stops it.
-  const elk = browserEngine();
-  onDestroy(() => elk.dispose());
   const nodeTypes = { construct: ConstructNode, hull: ModuleHull };
   /**
    * Low enough that "fit" means fit.
@@ -122,15 +117,6 @@
   let flowEdges = $state.raw<FlowEdge[]>([]);
   let placing = $state(true);
 
-  // The drawing budget: see `budget.ts`. A consent is remembered per view and
-  // by size, so it covers that view at that size or smaller and nothing more.
-  let allowed = $state.raw<Map<ViewKind, number>>(new Map());
-  const heft = $derived(weight(nodes.length, edges.length));
-  const drawing = $derived(affordable(heft, allowed.get(view) ?? 0));
-  const refusal = $derived(
-    drawing ? null : overBudget(nodes.length, edges.length, new Set(nodes.map((node) => node.module)).size),
-  );
-
   // Re-laying out on every render would fight the user's pan and zoom, so the
   // key is what actually changes the picture: which view, and which nodes.
   // `grouped` is part of the key because the boundaries are built inside the
@@ -146,21 +132,9 @@
     // selection does — highlighting is a class change, not a new layout.
     void shape;
     let cancelled = false;
-    // Not drawn, so not laid out either: a layout of a view nobody agreed to
-    // draw is minutes of a worker's time on a large enough set. And the last
-    // view's nodes go, or agreeing would flash them up before the new layout.
-    if (!drawing) {
-      placed = [];
-      routes = new Map();
-      placing = false;
-      return;
-    }
     placing = true;
 
-    const settling = layout(elk, view, nodes, edges, grouped && view !== "modules");
-    // One chain, not a `then` and a separate `catch`: the promise `then` returns
-    // rejects too, and with nothing handling it every superseded layout was an
-    // uncaught error in the console.
+    const settling = layout(engine, view, nodes, edges, grouped && view !== "modules");
     void settling.then((result) => {
       if (cancelled) {
         return;
@@ -197,7 +171,8 @@
       });
       placed = [...boxes, ...placed];
       placing = false;
-    }, (error: unknown) => {
+    });
+    settling.catch((error: unknown) => {
       // A rejected layout used to leave `placing` set for good, and `placing`
       // is what holds the canvas at 35% opacity while ELK thinks. So the
       // failure showed up not as an error but as a graph that had gone ghostly
@@ -302,23 +277,6 @@
     <p class="empty prose">
       Nothing to draw in this view. Try another view, or turn a module back on.
     </p>
-  {:else if refusal}
-    <div class="refusal" role="status">
-      <p class="eyebrow">Not drawn yet</p>
-      <p class="prose headline">{refusal.headline}</p>
-      <p class="prose">{refusal.detail}</p>
-      <div class="choices">
-        {#if onoverview && view !== "modules"}
-          <button type="button" class="primary" onclick={onoverview}>Open the modules view</button>
-        {/if}
-        <button
-          type="button"
-          onclick={() => {
-            allowed = new Map(allowed).set(view, heft);
-          }}>Draw it anyway</button
-        >
-      </div>
-    </div>
   {:else}
     <!-- `zoomOnDoubleClick` is off because double-clicking opens a construct. -->
     <SvelteFlow
@@ -446,44 +404,6 @@
   }
   .canvas :global(.svelte-flow__attribution a) {
     color: var(--ink-faint);
-  }
-
-  .refusal {
-    position: absolute;
-    inset: 0;
-    display: grid;
-    align-content: center;
-    justify-items: start;
-    gap: var(--gap-2);
-    max-width: 46ch;
-    margin: auto;
-    padding: var(--gap-3);
-  }
-  .refusal p {
-    margin: 0;
-  }
-  .refusal .headline {
-    color: var(--ink);
-  }
-  .choices {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--gap-2);
-    margin-top: var(--gap-2);
-  }
-  .choices button {
-    padding: 3px var(--gap-3);
-    border: 1px solid var(--line-strong);
-    border-radius: var(--radius);
-    font-size: var(--t-small);
-  }
-  .choices button:hover {
-    color: var(--ink);
-    border-color: var(--ink-dim);
-  }
-  .choices button.primary {
-    border-color: var(--behaviour);
-    color: var(--behaviour);
   }
 
   .empty {

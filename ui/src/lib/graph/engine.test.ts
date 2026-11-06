@@ -98,6 +98,28 @@ describe("the layout engine", () => {
     await expect(fresh).resolves.toMatchObject({ id: "lifecycle" });
   });
 
+  // A dead worker's answer can still arrive. It must not be mistaken for the
+  // current request finishing, or that request could no longer be replaced.
+  it("ignores a late answer from a replaced layout", async () => {
+    const worker = fakeWorker();
+    const elk = engine({ worker: worker.spawn, local: localEngine().local });
+
+    const first = elk.layout(graph("a"));
+    await tick();
+    const second = elk.layout(graph("b"));
+    await expect(first).rejects.toBeInstanceOf(Superseded);
+    await tick();
+    worker.pending[0]?.resolve(graph("a"));
+    await tick();
+
+    const third = elk.layout(graph("c"));
+    await expect(second).rejects.toBeInstanceOf(Superseded);
+    expect(worker.terminated).toEqual([0, 1]);
+    await tick();
+    worker.pending[2]?.resolve(graph("c"));
+    await expect(third).resolves.toMatchObject({ id: "c" });
+  });
+
   it("passes ELK's own rejection through, without killing the worker", async () => {
     const worker = fakeWorker();
     const elk = engine({ worker: worker.spawn, local: localEngine().local });

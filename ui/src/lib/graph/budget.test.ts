@@ -1,12 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { affordable, DRAW_BUDGET, overBudget, weight } from "./budget";
+import { affordable, DRAW_BUDGET, overBudget } from "./budget";
 
 describe("the drawing budget", () => {
-  it("counts nodes and edges alike", () => {
-    expect(weight(3, 4)).toBe(7);
-  });
-
   it("draws anything up to the budget without asking", () => {
     expect(affordable(DRAW_BUDGET)).toBe(true);
     expect(affordable(DRAW_BUDGET + 1)).toBe(false);
@@ -22,11 +18,6 @@ describe("the drawing budget", () => {
 
   it("never lowers the budget below the default", () => {
     expect(affordable(DRAW_BUDGET, 10)).toBe(true);
-  });
-
-  it("takes a budget of its own", () => {
-    expect(affordable(11, 0, 10)).toBe(false);
-    expect(affordable(10, 0, 10)).toBe(true);
   });
 
   it("says how large the view is, in words a reader can act on", () => {

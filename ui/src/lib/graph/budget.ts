@@ -25,11 +25,6 @@
  */
 export const DRAW_BUDGET = 4000;
 
-/** How heavy a view is to draw. */
-export function weight(nodes: number, edges: number): number {
-  return nodes + edges;
-}
-
 /**
  * Whether a view of this weight is drawn without asking.
  *
@@ -38,8 +33,8 @@ export function weight(nodes: number, edges: number): number {
  * switching a module back on after drawing a larger set does not ask again;
  * a view heavier than any the reader agreed to does.
  */
-export function affordable(heft: number, allowed = 0, budget = DRAW_BUDGET): boolean {
-  return heft <= Math.max(budget, allowed);
+export function affordable(heft: number, allowed = 0): boolean {
+  return heft <= Math.max(DRAW_BUDGET, allowed);
 }
 
 /** The words the canvas uses for a view it has not drawn. */
