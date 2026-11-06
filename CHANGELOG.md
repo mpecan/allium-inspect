@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.6](https://github.com/mpecan/allium-inspect/compare/allium-inspect-v0.1.5...allium-inspect-v0.1.6) (2026-11-06)
+
+
+### Features
+
+* **ui:** keep the page responsive on large spec sets ([#47](https://github.com/mpecan/allium-inspect/issues/47)) ([c3ec916](https://github.com/mpecan/allium-inspect/commit/c3ec91632f21a18825311c4b81bcae9e40a5f864))
+
+
+### Bug Fixes
+
+* **server:** take tokio 1.53.3 for RUSTSEC-2026-0386 ([#45](https://github.com/mpecan/allium-inspect/issues/45)) ([2801144](https://github.com/mpecan/allium-inspect/commit/28011440f200531592b7bd5ea3c6528e33422cef))
+* singular relationships, `?.` on null, calendar durations, recursive search, wrapped goals ([#39](https://github.com/mpecan/allium-inspect/issues/39)–[#43](https://github.com/mpecan/allium-inspect/issues/43)) ([#44](https://github.com/mpecan/allium-inspect/issues/44)) ([d3e015b](https://github.com/mpecan/allium-inspect/commit/d3e015bcd8271fe1095346f985fbb6570cc624d0))
+
 ## [0.1.5](https://github.com/mpecan/allium-inspect/compare/allium-inspect-v0.1.4...allium-inspect-v0.1.5) (2026-10-20)
 
 
