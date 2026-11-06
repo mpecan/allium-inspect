@@ -401,6 +401,9 @@
       }
     }}
     onmodule={toggleModule}
+    onmodules={(shown) => {
+      hidden = shown ? new Set() : new Set(modules.map((module) => module.name));
+    }}
     {grouped}
     ongrouping={() => (grouped = !grouped)}
     ontrace={(mode) => (traceMode = mode)}
@@ -457,6 +460,10 @@
         onopen={(id) => {
           select(id);
           focused = id;
+        }}
+        onoverview={() => {
+          view = "modules";
+          mode = "modules";
         }}
       />
 

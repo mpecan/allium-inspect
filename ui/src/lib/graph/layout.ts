@@ -18,6 +18,7 @@ import type { Edge } from "../api/Edge";
 import type { Node } from "../api/Node";
 import type { NodeKind } from "../api/NodeKind";
 import type { ViewKind } from "../client";
+import { Superseded } from "./engine";
 import { summaryRows, type Row } from "./rows";
 import type { Point } from "./route";
 
@@ -251,7 +252,8 @@ export function optionsFor(view: ViewKind): Record<string, string> {
  *
  * Returns nodes in the order given, each with a position. On failure every node
  * is still returned, placed on a simple grid: a canvas that cannot lay itself
- * out should still show what it holds.
+ * out should still show what it holds. The one rejection passed through is
+ * `Superseded`, which is not a failure but a newer request.
  */
 export async function layout(
   elk: ElkLike,
@@ -313,7 +315,12 @@ export async function layout(
     return grouped
       ? collectGrouped(result.children ?? [], sized, result.edges ?? [], home)
       : collect(result.children ?? [], sized, result.edges ?? []);
-  } catch {
+  } catch (error: unknown) {
+    // A layout that was replaced did not fail, and a grid for it would be work
+    // done for a picture nobody is going to look at.
+    if (error instanceof Superseded) {
+      throw error;
+    }
     return grid(sized);
   }
 }

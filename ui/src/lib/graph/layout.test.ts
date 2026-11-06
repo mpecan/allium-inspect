@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import type { Edge } from "../api/Edge";
 import type { Node } from "../api/Node";
 import type { NodeKind } from "../api/NodeKind";
+import { Superseded } from "./engine";
 import { familyOf, layout, measure, optionsFor } from "./layout";
 import type { ElkLike } from "./layout";
 import { summaryRows } from "./rows";
@@ -323,6 +324,15 @@ describe("edge routing", () => {
     const placed = await layout(broken, "domain", [node({ id: "a", kind: "entity", name: "A" })], []);
     expect(placed.routes.size).toBe(0);
     expect(placed.nodes).toHaveLength(1);
+  });
+
+  // A replaced layout is not a failed one. Gridding it would be work for a
+  // picture nobody is going to look at, and it would look like an answer.
+  it("passes a superseded layout through rather than gridding it", async () => {
+    const replaced: ElkLike = { layout: () => Promise.reject(new Superseded()) };
+    await expect(
+      layout(replaced, "domain", [node({ id: "a", kind: "entity", name: "A" })], []),
+    ).rejects.toBeInstanceOf(Superseded);
   });
 });
 
