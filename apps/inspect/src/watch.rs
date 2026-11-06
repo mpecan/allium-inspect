@@ -97,8 +97,15 @@ pub fn watch(
         if watched.contains(&directory.to_path_buf()) {
             continue;
         }
+        // The journey root recursively, because journeys are found below it
+        // (issue #42). A spec is watched by its own directory, found already.
+        let mode = if journey_directory.as_deref() == Some(directory) {
+            RecursiveMode::Recursive
+        } else {
+            RecursiveMode::NonRecursive
+        };
         watcher
-            .watch(directory, RecursiveMode::NonRecursive)
+            .watch(directory, mode)
             .map_err(|error| format!("could not watch {}: {error}", directory.display()))?;
         watched.push(directory.to_path_buf());
     }

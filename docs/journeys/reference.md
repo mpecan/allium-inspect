@@ -52,6 +52,13 @@ the clause above it continues that clause. That is how a long act wraps.
             creating loan: Loan
 ```
 
+`goal:` and `ends:` wrap the same way, onto any word — including `then`,
+`after` and `stipulate`, which open clauses. A line starting with one of those
+is still refused when it is level with its `goal:` or `ends:`, or when it reads
+as a whole clause (`then loan.status = open`): that is a clause written before
+any step, and absorbing it into the prose would run the journey with one
+assertion fewer than somebody wrote.
+
 ## `cast` — who is in it
 
 ```

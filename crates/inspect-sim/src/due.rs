@@ -81,7 +81,9 @@ fn reads_the_clock(expr: &Expr) -> bool {
 fn absent(expr: &Expr, env: &Env<'_>) -> bool {
     match expr {
         Expr::BinaryOp { left, op, right, .. } => {
-            let duration = |side: &Expr| matches!(eval(side, env).value, Value::Duration(_));
+            let duration = |side: &Expr| {
+                matches!(eval(side, env).value, Value::Duration(_)) || calendar(side, env)
+            };
             match op {
                 BinaryOp::Add => {
                     (absent(left, env) && duration(right)) || (duration(left) && absent(right, env))
@@ -92,6 +94,24 @@ fn absent(expr: &Expr, env: &Env<'_>) -> bool {
             }
         }
         _ => eval(expr, env).value == Value::Null,
+    }
+}
+
+/// A duration in calendar units: `13.months`, or a `config` parameter whose
+/// default is one and that nothing has set.
+///
+/// Its length is not known, but that it *is* a duration is, and that is all
+/// [`absent`] asks of an offset: `null + 13.months` is no deadline whatever a
+/// month is. Without this, one retention period written in months left every
+/// rule it guarded undecided each time the clock moved (issue #41).
+fn calendar(expr: &Expr, env: &Env<'_>) -> bool {
+    match expr {
+        Expr::DurationLiteral { value, .. } => inspect_model::units::is_calendar_duration(value),
+        Expr::MemberAccess { object, field, .. } => {
+            matches!(object.as_ref(), Expr::Ident(name) if name.name == "config")
+                && env.calendar_default(&field.name).is_some()
+        }
+        _ => false,
     }
 }
 
@@ -233,5 +253,54 @@ mod tests {
         let moved =
             compare(name("stopped"), ComparisonOp::LtEq, plus(name("started"), name("ttl")));
         assert_eq!(read(&moved), (Truth::Unknown, 1));
+    }
+
+    /// `stopped` null, `other` null, and `config.keep` defaulting to
+    /// `13.months` in module `m`, unset.
+    fn read_calendar(condition: &Expr) -> (Truth, usize) {
+        let mut world = World::new();
+        world.now = 10 * 3_600_000;
+        let derived: &'static inspect_model::Derivations = Box::leak(Box::new({
+            let mut derived = inspect_model::Derivations::default();
+            derived.calendar.insert("m.keep".to_owned(), "13.months".to_owned());
+            derived
+        }));
+        let mut env = Env::new(&world, "m", "").deriving(derived);
+        env.bindings.insert("stopped".to_owned(), Value::Null);
+        env.bindings.insert("other".to_owned(), Value::Null);
+        let evaluated = trigger(condition, &env);
+        (evaluated.truth(), evaluated.unresolved.len())
+    }
+
+    fn member(object: &str, field: &str) -> Expr {
+        Expr::MemberAccess {
+            span: AT,
+            object: Box::new(name(object)),
+            field: Ident { span: AT, name: field.to_owned() },
+        }
+    }
+
+    /// A null deadline moved by a length in calendar units is no deadline,
+    /// written in the rule or as a config default (issue #41).
+    #[test]
+    fn a_null_deadline_moved_by_a_calendar_unit_has_not_passed() {
+        let literal = Expr::DurationLiteral { span: AT, value: "13.months".to_owned() };
+        let due = compare(plus(name("stopped"), literal), ComparisonOp::LtEq, now());
+        assert_eq!(read_calendar(&due), (Truth::False, 0));
+        let due =
+            compare(plus(name("stopped"), member("config", "keep")), ComparisonOp::LtEq, now());
+        assert_eq!(read_calendar(&due), (Truth::False, 0));
+    }
+
+    /// Only `config.` names a parameter: `other.keep` is a field of a null,
+    /// not a calendar default, and stays the evaluator's to answer.
+    #[test]
+    fn a_field_named_like_a_calendar_default_is_not_one() {
+        let due =
+            compare(plus(name("stopped"), member("other", "keep")), ComparisonOp::LtEq, now());
+        assert_eq!(read_calendar(&due).0, Truth::Unknown);
+        let unknown_unit = Expr::DurationLiteral { span: AT, value: "3.fortnights".to_owned() };
+        let due = compare(plus(name("stopped"), unknown_unit), ComparisonOp::LtEq, now());
+        assert_eq!(read_calendar(&due).0, Truth::Unknown);
     }
 }

@@ -1,0 +1,63 @@
+-- Issue #39: a singular relationship is the one entity or null, and a
+-- derived value navigating through it reads that entity's fields.
+
+journey TheAllowanceFits {
+    cast:
+        p: Plan
+        a: Allowance
+    given:
+        a.plan = p
+        a.levels = {low, high}
+    1. read it back
+        then p.allowance = a
+        then p.fits = true
+        then p.bare = false
+}
+
+journey NoAllowanceIsNull {
+    cast:
+        p: Plan
+    1. read it back
+        then p.allowance = null
+        then p.bare = true
+        then p.granted = 0
+}
+
+journey APluralNameStaysACollection {
+    cast:
+        p: Plan
+        a: Allowance
+        b: Allowance
+    given:
+        a.plan = p
+        a.levels = {low}
+        b.plan = p
+        b.levels = {high}
+    1. read it back
+        then p.granted = 2
+        then a in p.grants
+}
+
+journey TwoForASingularNameIsAnError {
+    cast:
+        p: Plan
+        a: Allowance
+        b: Allowance
+    given:
+        a.plan = p
+        a.levels = {low}
+        b.plan = p
+        b.levels = {high}
+    1. read it back
+        then p.fits = true
+}
+
+journey ACandidateNobodyPlacedMayBeTheOne {
+    cast:
+        p: Plan
+        a: Allowance
+    given:
+        a.levels = {high}
+    1. read it back
+        then p.allowance = null
+}

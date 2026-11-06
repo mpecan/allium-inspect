@@ -91,7 +91,7 @@ pub(super) fn unset_element_field(ident: &Ident, env: &Env<'_>) -> Option<Evalua
 pub(super) fn computed_element_field(ident: &Ident, env: &Env<'_>) -> Option<Evaluation> {
     let element = env.world.instance(env.element.as_ref()?)?;
     if let Some((definition, key)) = env.derivation(element, &ident.name) {
-        return Some(super::eval(definition, &env.computing(element, key)));
+        return Some(env.derive(element, &ident.name, definition, key));
     }
     let (function, _) = env.function(element, &ident.name)?;
     Some(super::calls::read_bare(&ident.name, function, env))

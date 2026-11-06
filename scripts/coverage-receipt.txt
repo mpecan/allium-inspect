@@ -5,4 +5,4 @@
 # rust_fingerprint in scripts/common.sh); <commit> is where to find them. After
 # a squash-merge drops <commit>, the gate finds the commit on main with the same
 # sources. Receipts without a fingerprint are still read.
-bfe75e2300bece03b21247eac3d1373869459714 96 2026-10-17T01:21:12Z 6ff0a1f92651484b61c3e9d0b7b6cdc535e3eb10
+356d84cac7f550c7a2fec617df695b0d8e5097f1 96 2026-11-04T09:35:57Z 2f900b0d4e92b2d6af500dba0c98bb61e583c8f4

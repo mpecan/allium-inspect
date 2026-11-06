@@ -198,7 +198,9 @@ pub fn literal(text: &str) -> Option<Value> {
     }
 
     if let Some((amount, unit)) = cleaned.split_once('.') {
-        if let (Ok(amount), Some(millis)) = (amount.parse::<i64>(), unit_millis(unit)) {
+        if let (Ok(amount), Some(millis)) =
+            (amount.parse::<i64>(), inspect_model::units::millis(unit))
+        {
             return amount.checked_mul(millis).map(Value::Duration);
         }
         // `1.5` is a decimal, not a duration with a unit called `5`.
@@ -208,21 +210,6 @@ pub fn literal(text: &str) -> Option<Value> {
     }
 
     None
-}
-
-fn unit_millis(unit: &str) -> Option<i64> {
-    // One `s`, not every trailing `s`: `ms` is a unit in its own right and
-    // de-pluralising it leaves `m`, which is nothing.
-    let singular = if unit == "ms" { unit } else { unit.strip_suffix('s').unwrap_or(unit) };
-    match singular {
-        "millisecond" | "ms" => Some(1),
-        "second" | "sec" => Some(1_000),
-        "minute" | "min" => Some(60_000),
-        "hour" | "hr" => Some(3_600_000),
-        "day" => Some(86_400_000),
-        "week" => Some(604_800_000),
-        _ => None,
-    }
 }
 
 #[cfg(test)]
